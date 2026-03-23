@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/arjungandhi/tobor/pkg/agent"
 	"github.com/arjungandhi/tobor/pkg/config"
@@ -18,10 +20,15 @@ import (
 	"github.com/arjungandhi/tobor/pkg/memory"
 	"github.com/arjungandhi/tobor/pkg/socket"
 	"github.com/arjungandhi/tobor/pkg/tools"
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	level := slog.LevelInfo
+	if strings.EqualFold(os.Getenv("TOBOR_LOG_LEVEL"), "debug") {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
@@ -30,15 +37,51 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.MkdirAll(cfg.WorkDir, 0o700); err != nil {
-		slog.Error("create work_dir", "err", err)
+	root := &cobra.Command{
+		Use:   "tobor",
+		Short: "Tobor personal assistant daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runServe(cfg)
+		},
+	}
+
+	var evType, roomID, sender, text string
+	sendCmd := &cobra.Command{
+		Use:   "send",
+		Short: "Send an event to tobor via the socket",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if roomID == "" {
+				roomID = cfg.DefaultRoom
+			}
+			if sender == "" {
+				sender = cfg.AuthSender
+			}
+			if evType == "" {
+				evType = "message"
+			}
+			return runSend(cfg.SocketPath, evType, sender, roomID, text)
+		},
+	}
+	sendCmd.Flags().StringVar(&evType, "type", "", "event type (default: message)")
+	sendCmd.Flags().StringVar(&roomID, "room", "", "room ID (default: config default_room)")
+	sendCmd.Flags().StringVar(&sender, "sender", "", "sender ID (default: config auth_sender)")
+	sendCmd.Flags().StringVar(&text, "text", "", "message text")
+
+	root.AddCommand(sendCmd)
+
+	if err := root.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+func runServe(cfg *config.Config) error {
+	if err := os.MkdirAll(cfg.WorkDir, 0o700); err != nil {
+		return fmt.Errorf("create work_dir: %w", err)
 	}
 
 	system, err := loadSystem(cfg.WorkDir)
 	if err != nil {
-		slog.Error("load system prompt", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("load system prompt: %w", err)
 	}
 
 	eventLog := memory.NewEventLog(filepath.Join(cfg.WorkDir, "log.jsonl.gz"))
@@ -48,8 +91,7 @@ func main() {
 
 	toolList, err := tools.LoadDir(filepath.Join(cfg.WorkDir, "tools"))
 	if err != nil {
-		slog.Error("load tools", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("load tools: %w", err)
 	}
 	slog.Info("loaded tools", "count", len(toolList))
 
@@ -57,7 +99,6 @@ func main() {
 	llmClient := llm.NewAnthropic(cfg.AnthropicAPIKey)
 	ag := agent.New(llmClient, system, cfg.MaxTurns, toolList...)
 
-	// per-room mutexes to serialize goroutines within a room
 	var roomMu sync.Map
 
 	listener := socket.New(cfg.SocketPath)
@@ -75,11 +116,18 @@ func main() {
 			ctx := context.Background()
 			history := shortMem.Get(ev.RoomID)
 
-			slog.Info("processing event", "type", ev.Type, "room", ev.RoomID, "sender", ev.Sender)
+			slog.Info("processing event",
+				"type", ev.Type,
+				"room", ev.RoomID,
+				"sender", ev.Sender,
+				"text_len", len(ev.Text),
+				"history_msgs", len(history),
+			)
 
+			start := time.Now()
 			response, err := ag.Run(ctx, history, ev.Text)
 			if err != nil {
-				slog.Error("agent run failed", "room", ev.RoomID, "err", err)
+				slog.Error("agent run failed", "room", ev.RoomID, "err", err, "duration_ms", time.Since(start).Milliseconds())
 				errOut := struct {
 					RoomID string `json:"room_id"`
 					Text   string `json:"text"`
@@ -90,9 +138,12 @@ func main() {
 				return
 			}
 
-			slog.Info("agent responded", "room", ev.RoomID, "response_len", len(response))
+			slog.Info("agent responded",
+				"room", ev.RoomID,
+				"response_len", len(response),
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
 
-			// print to stdout — piped to `messages send` by the caller
 			out := struct {
 				RoomID string `json:"room_id"`
 				Text   string `json:"text"`
@@ -101,13 +152,11 @@ func main() {
 				slog.Error("encode response", "err", err)
 			}
 
-			// update conversation history
 			shortMem.Append(ev.RoomID,
 				llm.Message{Role: "user", Content: ev.Text},
 				llm.Message{Role: "assistant", Content: response},
 			)
 
-			// write log entry
 			if err := eventLog.Append(memory.LogEntry{
 				Timestamp: ev.Timestamp,
 				EventType: ev.Type,
@@ -131,10 +180,32 @@ func main() {
 	}()
 
 	slog.Info("tobor listening", "socket", cfg.SocketPath)
-	if err := listener.Listen(handler); err != nil {
-		slog.Error("socket listener failed", "err", err)
-		os.Exit(1)
+	return listener.Listen(handler)
+}
+
+func runSend(socketPath, evType, sender, roomID, text string) error {
+	ev := socket.Event{
+		Type:      evType,
+		RoomID:    roomID,
+		Sender:    sender,
+		Text:      text,
+		Timestamp: time.Now(),
 	}
+
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("marshal event: %w", err)
+	}
+	data = append(data, '\n')
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("connect to socket %s: %w", socketPath, err)
+	}
+	defer conn.Close()
+
+	_, err = conn.Write(data)
+	return err
 }
 
 func loadSystem(workDir string) (string, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/arjungandhi/tobor/pkg/llm"
@@ -39,6 +40,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 	var pendingResults []llm.ToolResult
 
 	for turn := 0; turn < a.maxTurns; turn++ {
+		slog.Debug("agent turn", "turn", turn+1, "max_turns", a.maxTurns, "messages", len(messages))
+
 		req := llm.Request{
 			System:      a.system,
 			Messages:    messages,
@@ -52,11 +55,26 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 			return "", err
 		}
 
+		slog.Debug("agent turn result",
+			"turn", turn+1,
+			"stop_reason", resp.StopReason,
+			"tool_calls", len(resp.ToolCalls),
+			"input_tokens", resp.InputTokens,
+			"output_tokens", resp.OutputTokens,
+		)
+
 		switch resp.StopReason {
 		case "end_turn":
+			slog.Debug("agent complete", "turns_used", turn+1)
 			return resp.Text, nil
 
 		case "tool_use":
+			names := make([]string, len(resp.ToolCalls))
+			for i, tc := range resp.ToolCalls {
+				names[i] = tc.Name
+			}
+			slog.Info("agent dispatching tools", "turn", turn+1, "tools", names)
+
 			results, err := a.dispatchTools(ctx, resp.ToolCalls)
 			if err != nil {
 				return "", err
@@ -111,21 +129,33 @@ func (a *Agent) dispatchTools(ctx context.Context, calls []llm.ToolCall) ([]llm.
 func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
 	t, ok := a.tools[call.Name]
 	if !ok {
+		slog.Warn("unknown tool", "tool", call.Name)
 		return llm.ToolResult{
 			ID:      call.ID,
 			Content: fmt.Sprintf("error: unknown tool %q", call.Name),
 		}, nil
 	}
 
+	slog.Info("tool call", "tool", call.Name, "input", truncate(string(call.Input), 200))
 	out, err := t.Call(ctx, json.RawMessage(call.Input))
 	if err != nil {
+		slog.Warn("tool call failed", "tool", call.Name, "err", err)
 		// return error as tool result content so the LLM can reason about it
 		return llm.ToolResult{
 			ID:      call.ID,
 			Content: fmt.Sprintf("error: %s", err),
 		}, nil
 	}
+	slog.Info("tool result", "tool", call.Name, "output", truncate(out, 200))
 	return llm.ToolResult{ID: call.ID, Content: out}, nil
+}
+
+// truncate shortens s to at most n bytes, appending "…" if truncated.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func (a *Agent) toolDefs() []llm.ToolDef {

@@ -33,9 +33,11 @@ type ToolDef struct {
 }
 
 type Response struct {
-	Text       string
-	ToolCalls  []ToolCall
-	StopReason string // "end_turn" | "tool_use" | "max_tokens"
+	Text         string
+	ToolCalls    []ToolCall
+	StopReason   string // "end_turn" | "tool_use" | "max_tokens"
+	InputTokens  int
+	OutputTokens int
 }
 
 type LLM interface {

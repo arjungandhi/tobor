@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,11 +44,30 @@ func (s *ShellTool) Call(ctx context.Context, params json.RawMessage) (string, e
 		args[i] = arg
 	}
 
+	slog.Debug("shell exec", "tool", s.name, "cmd", args)
+	start := time.Now()
+
 	out, err := exec.CommandContext(ctx, args[0], args[1:]...).Output()
+	dur := time.Since(start)
+
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			slog.Warn("shell exec failed",
+				"tool", s.name,
+				"exit_code", exitErr.ExitCode(),
+				"duration_ms", dur.Milliseconds(),
+				"stderr", strings.TrimSpace(string(exitErr.Stderr)),
+			)
+		} else {
+			slog.Warn("shell exec failed", "tool", s.name, "err", err, "duration_ms", dur.Milliseconds())
+		}
 		return "", fmt.Errorf("%s: %w", s.name, err)
 	}
-	return strings.TrimSpace(string(out)), nil
+
+	result := strings.TrimSpace(string(out))
+	slog.Debug("shell exec ok", "tool", s.name, "duration_ms", dur.Milliseconds(), "output_len", len(result))
+	return result, nil
 }
 
 // toolFile is the parsed structure of a tool markdown file's frontmatter.

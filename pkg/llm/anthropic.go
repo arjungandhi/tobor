@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -35,12 +37,23 @@ func (a *AnthropicLLM) Complete(ctx context.Context, req Request) (Response, err
 		Tools:    tools,
 	}
 
+	slog.Debug("llm request", "model", string(a.model), "messages", len(msgs), "tools", len(tools))
+	start := time.Now()
+
 	resp, err := a.client.Messages.New(ctx, params)
 	if err != nil {
 		return Response{}, fmt.Errorf("anthropic: %w", err)
 	}
 
-	return parseResponse(resp), nil
+	r := parseResponse(resp)
+	slog.Debug("llm response",
+		"model", string(a.model),
+		"stop_reason", r.StopReason,
+		"input_tokens", r.InputTokens,
+		"output_tokens", r.OutputTokens,
+		"latency_ms", time.Since(start).Milliseconds(),
+	)
+	return r, nil
 }
 
 func buildMessages(req Request) []anthropic.MessageParam {
@@ -102,6 +115,8 @@ func buildTools(defs []ToolDef) []anthropic.ToolUnionParam {
 func parseResponse(resp *anthropic.Message) Response {
 	var r Response
 	r.StopReason = string(resp.StopReason)
+	r.InputTokens = int(resp.Usage.InputTokens)
+	r.OutputTokens = int(resp.Usage.OutputTokens)
 
 	for _, block := range resp.Content {
 		switch v := block.AsAny().(type) {
