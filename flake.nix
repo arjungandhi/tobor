@@ -22,7 +22,7 @@
           pname = "tobor";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-P+yyB0H1+UMeeFA1uT5W21+OuDU4OPK20kCVz9WGeX8=";
+          vendorHash = "sha256-Y4aV+9tQFqU2tgE/ymeHCKRSfyeGdZdMyqn7BshVeDE=";
           subPackages = [ "cmd/tobor" ];
 
           meta = with pkgs.lib; {
