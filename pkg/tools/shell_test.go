@@ -128,6 +128,22 @@ func TestShellToolCallWithParams(t *testing.T) {
 	}
 }
 
+func TestShellToolCallOmitsOptionalFlag(t *testing.T) {
+	tool := &ShellTool{
+		name: "add",
+		cmd:  []string{"echo", "add", "{name}", "{value}", "-d", "{day}"},
+	}
+	params, _ := json.Marshal(map[string]string{"name": "weight", "value": "180"})
+	out, err := tool.Call(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// "-d" and "{day}" should both be absent
+	if out != "add weight 180" {
+		t.Errorf("expected 'add weight 180', got %q", out)
+	}
+}
+
 func TestLoadDirMissingDir(t *testing.T) {
 	tools, err := LoadDir("/tmp/tobor-nonexistent-tools-dir")
 	if err != nil {

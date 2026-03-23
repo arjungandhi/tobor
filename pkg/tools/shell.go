@@ -36,12 +36,25 @@ func (s *ShellTool) Call(ctx context.Context, params json.RawMessage) (string, e
 		}
 	}
 
-	args := make([]string, len(s.cmd))
+	substituted := make([]string, len(s.cmd))
 	for i, arg := range s.cmd {
 		for k, v := range p {
 			arg = strings.ReplaceAll(arg, "{"+k+"}", v)
 		}
-		args[i] = arg
+		substituted[i] = arg
+	}
+
+	// Drop unresolved placeholders (optional params not provided) and their
+	// preceding flag (e.g. "-d" before "{day}").
+	args := make([]string, 0, len(substituted))
+	for _, arg := range substituted {
+		if strings.Contains(arg, "{") && strings.Contains(arg, "}") {
+			if len(args) > 0 && strings.HasPrefix(args[len(args)-1], "-") {
+				args = args[:len(args)-1]
+			}
+			continue
+		}
+		args = append(args, arg)
 	}
 
 	slog.Debug("shell exec", "tool", s.name, "cmd", args)
