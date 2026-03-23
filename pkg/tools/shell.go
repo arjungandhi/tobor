@@ -21,9 +21,9 @@ type ShellTool struct {
 	cmd         []string
 }
 
-func (s *ShellTool) Name() string             { return s.name }
-func (s *ShellTool) Description() string      { return s.description }
-func (s *ShellTool) Schema() json.RawMessage  { return s.schema }
+func (s *ShellTool) Name() string            { return s.name }
+func (s *ShellTool) Description() string     { return s.description }
+func (s *ShellTool) Schema() json.RawMessage { return s.schema }
 
 func (s *ShellTool) Call(ctx context.Context, params json.RawMessage) (string, error) {
 	var p map[string]string
@@ -50,13 +50,13 @@ func (s *ShellTool) Call(ctx context.Context, params json.RawMessage) (string, e
 
 // toolFile is the parsed structure of a tool markdown file's frontmatter.
 type toolFile struct {
-	Name        string               `yaml:"name"`
-	Description string               `yaml:"description"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
 	Requires    struct {
 		Bins []string `yaml:"bins"`
 	} `yaml:"requires"`
-	Cmd    []string             `yaml:"cmd"`
-	Params map[string]paramDef  `yaml:"params"`
+	Cmd    []string            `yaml:"cmd"`
+	Params map[string]paramDef `yaml:"params"`
 }
 
 type paramDef struct {
