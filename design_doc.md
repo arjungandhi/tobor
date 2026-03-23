@@ -95,7 +95,42 @@ After the loop exits (final `"end_turn"` response):
 
 ### Tools
 
-Thin Go wrappers implementing a common `Tool` interface:
+Tools are defined as markdown files with YAML frontmatter in `$work_dir/tools/`. Each file describes a shell command tobor can invoke. At startup tobor loads all `tools/*.md` files, skipping any whose `requires.bins` are not on PATH.
+
+```
+$work_dir/tools/
+├── metrics_list.md
+└── metrics_get.md
+```
+
+Example tool definition:
+
+```markdown
+---
+name: metrics_get
+description: Get data points for a named metric. Use when the user asks about tracked data like calories, weight, steps, etc.
+requires:
+  bins: [metrics]
+cmd: [metrics, get, "{name}"]
+params:
+  name:
+    type: string
+    description: The metric name to retrieve
+---
+
+Returns timestamped data points. Use metrics_list first if you don't know the metric name.
+```
+
+Fields:
+- `name` — tool identifier passed to the LLM
+- `description` — when/how to use this tool (shown to the LLM)
+- `requires.bins` — binaries that must be on PATH; tool is skipped if any are missing
+- `cmd` — command and arguments; `{param}` placeholders are substituted from call params
+- `params` — input parameters; used to generate the JSON schema for the LLM
+
+The markdown body (after the frontmatter) is appended to the description, allowing richer guidance without cluttering the frontmatter.
+
+The `Tool` interface remains the same:
 
 ```go
 type Tool interface {
@@ -106,8 +141,7 @@ type Tool interface {
 }
 ```
 
-Initial tools:
-- `metrics` - wraps `arjungandhi/metrics`
+`ShellTool` is the single implementation — a generic wrapper that execs a command with param substitution. Tools are loaded via `tools.LoadDir(dir)` at startup.
 
 ### Memory
 
@@ -168,6 +202,7 @@ tobor keeps its data files in `work_dir`. Within that directory it expects:
 - `soul.md` — tobor's personality and values, injected into the system prompt
 - `style.md` — communication style guidelines, injected into the system prompt
 - `log.jsonl.gz` — event log
+- `tools/` — tool definitions (markdown with YAML frontmatter, one file per tool)
 
 ```yaml
 socket_path: /run/tobor.sock
@@ -198,7 +233,7 @@ tobor/
 │   │   └── log.go           # append-only event log (gzip JSONL)
 │   ├── tools/
 │   │   ├── tool.go          # Tool interface
-│   │   └── metrics.go       # wraps arjungandhi/metrics
+│   │   └── shell.go         # ShellTool implementation + LoadDir
 │   └── socket/              # unix domain socket listener
 └── go.mod
 ```

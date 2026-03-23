@@ -16,6 +16,7 @@ import (
 	"github.com/arjungandhi/tobor/pkg/llm"
 	"github.com/arjungandhi/tobor/pkg/memory"
 	"github.com/arjungandhi/tobor/pkg/socket"
+	"github.com/arjungandhi/tobor/pkg/tools"
 )
 
 func main() {
@@ -44,9 +45,16 @@ func main() {
 		slog.Warn("prune log", "err", err)
 	}
 
+	toolList, err := tools.LoadDir(filepath.Join(cfg.WorkDir, "tools"))
+	if err != nil {
+		slog.Error("load tools", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("loaded tools", "count", len(toolList))
+
 	shortMem := memory.NewShortTerm(cfg.ContextTokenBudget, cfg.IdleTimeout)
 	llmClient := llm.NewAnthropic(cfg.AnthropicAPIKey)
-	ag := agent.New(llmClient, system, cfg.MaxTurns /* tools will be added here */)
+	ag := agent.New(llmClient, system, cfg.MaxTurns, toolList...)
 
 	// per-room mutexes to serialize goroutines within a room
 	var roomMu sync.Map
