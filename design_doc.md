@@ -69,17 +69,29 @@ type Request struct {
 }
 
 type Response struct {
-    Text      string
-    ToolCalls []ToolCall
+    Text       string
+    ToolCalls  []ToolCall
+    StopReason string // "end_turn" | "tool_use" | "max_tokens"
 }
 ```
 
-The agent loop:
-1. Send event + conversation history + tools to LLM
-2. If response contains tool calls, dispatch them and append results
-3. Repeat until LLM returns a text response
-4. Send response via `messages send`
-5. Write entry to event log
+The agent loop runs up to `max_turns` iterations (default 10) to prevent runaway loops on buggy tool results:
+
+```
+for turn := 0; turn < maxTurns; turn++:
+    1. Send accumulated messages + tools to LLM
+    2. If StopReason == "end_turn": send response, write log entry, return
+    3. If StopReason == "tool_use": dispatch all tool calls concurrently,
+       append results to message history, continue loop
+    4. If StopReason == "max_tokens": return error
+return ErrMaxTurns
+```
+
+Tool calls within a single turn are dispatched concurrently (Go goroutines) since the LLM may request multiple tools at once. Results are collected and appended as a batch before the next LLM call.
+
+After the loop exits (final `"end_turn"` response):
+- Send response via `messages send`
+- Write entry to event log
 
 ### Tools
 
@@ -163,6 +175,7 @@ work_dir: ~/.local/share/tobor             # tobor data directory
 log_retention_days: 90                     # prune entries older than this on startup
 context_token_budget: 8000                   # max tokens allocated to conversation history per request
 idle_timeout: 30m                            # evict room history after this period of inactivity
+max_turns: 10                                # max LLM iterations per event before giving up
 auth_sender: "@user:matrix.org"              # only respond to this Matrix ID
 default_room: "!abc:matrix.org"              # room for proactive messages
 anthropic_api_key: sk-...                    # or set ANTHROPIC_API_KEY
