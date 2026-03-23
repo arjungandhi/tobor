@@ -70,7 +70,10 @@ func buildMessages(req Request) []anthropic.MessageParam {
 func buildTools(defs []ToolDef) []anthropic.ToolUnionParam {
 	tools := make([]anthropic.ToolUnionParam, 0, len(defs))
 	for _, d := range defs {
-		var schema map[string]any
+		var schema struct {
+			Properties any      `json:"properties"`
+			Required   []string `json:"required"`
+		}
 		if len(d.Schema) > 0 {
 			_ = json.Unmarshal(d.Schema, &schema)
 		}
@@ -78,11 +81,8 @@ func buildTools(defs []ToolDef) []anthropic.ToolUnionParam {
 			Name:        d.Name,
 			Description: anthropic.String(d.Description),
 			InputSchema: anthropic.ToolInputSchemaParam{
-				Properties: schema["properties"],
-				ExtraFields: map[string]any{
-					"type":     schema["type"],
-					"required": schema["required"],
-				},
+				Properties: schema.Properties,
+				Required:   schema.Required,
 			},
 		}
 		tools = append(tools, anthropic.ToolUnionParam{OfTool: &t})
