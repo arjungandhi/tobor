@@ -63,8 +63,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 			}
 			// record the assistant turn with its tool calls in history
 			messages = append(messages, llm.Message{
-				Role:    "assistant",
-				Content: resp.Text, // may be empty
+				Role:      "assistant",
+				Content:   resp.Text,
+				ToolCalls: resp.ToolCalls,
 			})
 			pendingResults = results
 

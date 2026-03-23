@@ -51,7 +51,16 @@ func buildMessages(req Request) []anthropic.MessageParam {
 		case "user":
 			msgs = append(msgs, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
 		case "assistant":
-			msgs = append(msgs, anthropic.NewAssistantMessage(anthropic.NewTextBlock(m.Content)))
+			var blocks []anthropic.ContentBlockParamUnion
+			if m.Content != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
+			}
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, anthropic.NewToolUseBlock(tc.ID, json.RawMessage(tc.Input), tc.Name))
+			}
+			if len(blocks) > 0 {
+				msgs = append(msgs, anthropic.NewAssistantMessage(blocks...))
+			}
 		}
 	}
 

@@ -3,8 +3,9 @@ package llm
 import "context"
 
 type Message struct {
-	Role    string // "user" | "assistant"
-	Content string
+	Role      string // "user" | "assistant"
+	Content   string
+	ToolCalls []ToolCall // only set on assistant messages with tool_use
 }
 
 type ToolCall struct {
