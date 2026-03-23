@@ -3,9 +3,10 @@ package llm
 import "context"
 
 type Message struct {
-	Role      string // "user" | "assistant"
-	Content   string
-	ToolCalls []ToolCall // only set on assistant messages with tool_use
+	Role        string // "user" | "assistant"
+	Content     string
+	ToolCalls   []ToolCall   // only set on assistant messages
+	ToolResults []ToolResult // only set on user messages carrying tool results
 }
 
 type ToolCall struct {
@@ -20,10 +21,9 @@ type ToolResult struct {
 }
 
 type Request struct {
-	System      string
-	Messages    []Message
-	ToolResults []ToolResult // results from previous turn's tool calls
-	Tools       []ToolDef
+	System   string
+	Messages []Message
+	Tools    []ToolDef
 }
 
 type ToolDef struct {

@@ -37,18 +37,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 	messages = append(messages, llm.Message{Role: "user", Content: userMsg})
 
 	toolDefs := a.toolDefs()
-	var pendingResults []llm.ToolResult
 
 	for turn := 0; turn < a.maxTurns; turn++ {
 		slog.Debug("agent turn", "turn", turn+1, "max_turns", a.maxTurns, "messages", len(messages))
 
 		req := llm.Request{
-			System:      a.system,
-			Messages:    messages,
-			ToolResults: pendingResults,
-			Tools:       toolDefs,
+			System:   a.system,
+			Messages: messages,
+			Tools:    toolDefs,
 		}
-		pendingResults = nil
 
 		resp, err := a.llm.Complete(ctx, req)
 		if err != nil {
@@ -79,13 +76,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 			if err != nil {
 				return "", err
 			}
-			// record the assistant turn with its tool calls in history
-			messages = append(messages, llm.Message{
-				Role:      "assistant",
-				Content:   resp.Text,
-				ToolCalls: resp.ToolCalls,
-			})
-			pendingResults = results
+			messages = append(messages,
+				llm.Message{Role: "tobor", Content: resp.Text, ToolCalls: resp.ToolCalls},
+				llm.Message{Role: "user", ToolResults: results},
+			)
 
 		case "max_tokens":
 			return "", fmt.Errorf("agent: LLM hit max_tokens limit")

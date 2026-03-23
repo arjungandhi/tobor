@@ -62,8 +62,16 @@ func buildMessages(req Request) []anthropic.MessageParam {
 	for _, m := range req.Messages {
 		switch m.Role {
 		case "user":
-			msgs = append(msgs, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
-		case "assistant":
+			if len(m.ToolResults) > 0 {
+				var blocks []anthropic.ContentBlockParamUnion
+				for _, tr := range m.ToolResults {
+					blocks = append(blocks, anthropic.NewToolResultBlock(tr.ID, tr.Content, false))
+				}
+				msgs = append(msgs, anthropic.NewUserMessage(blocks...))
+			} else {
+				msgs = append(msgs, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
+			}
+		case "tobor":
 			var blocks []anthropic.ContentBlockParamUnion
 			if m.Content != "" {
 				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
@@ -75,15 +83,6 @@ func buildMessages(req Request) []anthropic.MessageParam {
 				msgs = append(msgs, anthropic.NewAssistantMessage(blocks...))
 			}
 		}
-	}
-
-	// append tool results from the previous turn as a user message
-	if len(req.ToolResults) > 0 {
-		var blocks []anthropic.ContentBlockParamUnion
-		for _, tr := range req.ToolResults {
-			blocks = append(blocks, anthropic.NewToolResultBlock(tr.ID, tr.Content, false))
-		}
-		msgs = append(msgs, anthropic.NewUserMessage(blocks...))
 	}
 
 	return msgs

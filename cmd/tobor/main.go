@@ -154,7 +154,7 @@ func runServe(cfg *config.Config) error {
 
 			shortMem.Append(ev.RoomID,
 				llm.Message{Role: "user", Content: ev.Text},
-				llm.Message{Role: "assistant", Content: response},
+				llm.Message{Role: "tobor", Content: response},
 			)
 
 			if err := eventLog.Append(memory.LogEntry{
