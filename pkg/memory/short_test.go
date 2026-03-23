@@ -9,9 +9,9 @@ import (
 
 func TestTrim(t *testing.T) {
 	msgs := []llm.Message{
-		{Role: "user", Content: "aaaa"}, // 1 token
+		{Role: "user", Content: "aaaa"},      // 1 token
 		{Role: "assistant", Content: "bbbb"}, // 1 token
-		{Role: "user", Content: "cccc"}, // 1 token
+		{Role: "user", Content: "cccc"},      // 1 token
 	}
 
 	got := trim(msgs, 2)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -79,6 +80,13 @@ func main() {
 			response, err := ag.Run(ctx, history, ev.Text)
 			if err != nil {
 				slog.Error("agent run failed", "room", ev.RoomID, "err", err)
+				errOut := struct {
+					RoomID string `json:"room_id"`
+					Text   string `json:"text"`
+				}{RoomID: ev.RoomID, Text: fmt.Sprintf("error processing message: %v", err)}
+				if encErr := json.NewEncoder(os.Stdout).Encode(errOut); encErr != nil {
+					slog.Error("encode error response", "err", encErr)
+				}
 				return
 			}
 
