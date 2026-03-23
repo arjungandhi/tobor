@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -77,7 +77,13 @@ func main() {
 			slog.Info("agent responded", "room", ev.RoomID, "response_len", len(response))
 
 			// print to stdout — piped to `messages send` by the caller
-			fmt.Printf("%s\n", response)
+			out := struct {
+				RoomID string `json:"room_id"`
+				Text   string `json:"text"`
+			}{RoomID: ev.RoomID, Text: response}
+			if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+				slog.Error("encode response", "err", err)
+			}
 
 			// update conversation history
 			shortMem.Append(ev.RoomID,

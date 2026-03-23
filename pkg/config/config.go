@@ -10,15 +10,15 @@ import (
 )
 
 type Config struct {
-	SocketPath        string        `yaml:"socket_path"`
-	WorkDir           string        `yaml:"work_dir"`
-	LogRetentionDays  int           `yaml:"log_retention_days"`
-	ContextTokenBudget int          `yaml:"context_token_budget"`
-	IdleTimeout       time.Duration `yaml:"idle_timeout"`
-	MaxTurns          int           `yaml:"max_turns"`
-	AuthSender        string        `yaml:"auth_sender"`
-	DefaultRoom       string        `yaml:"default_room"`
-	AnthropicAPIKey   string        `yaml:"anthropic_api_key"`
+	SocketPath         string        `yaml:"socket_path"`
+	WorkDir            string        `yaml:"work_dir"`
+	LogRetentionDays   int           `yaml:"log_retention_days"`
+	ContextTokenBudget int           `yaml:"context_token_budget"`
+	IdleTimeout        time.Duration `yaml:"idle_timeout"`
+	MaxTurns           int           `yaml:"max_turns"`
+	AuthSender         string        `yaml:"auth_sender"`
+	DefaultRoom        string        `yaml:"default_room"`
+	AnthropicAPIKey    string        `yaml:"anthropic_api_key"`
 }
 
 func Load() (*Config, error) {

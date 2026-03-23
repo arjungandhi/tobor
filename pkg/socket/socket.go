@@ -11,7 +11,7 @@ import (
 
 // Event is the common JSON format for all events written to the socket.
 type Event struct {
-	Type      string    `json:"type"`      // "message" | "reminder" | "poll"
+	Type      string    `json:"type"` // "message" | "reminder" | "poll"
 	RoomID    string    `json:"room_id"`
 	Sender    string    `json:"sender"`
 	Text      string    `json:"text"`
