@@ -63,13 +63,24 @@ func (s *ShortTerm) Append(roomID string, msgs ...llm.Message) {
 func trim(msgs []llm.Message, budget int) []llm.Message {
 	total := 0
 	for _, m := range msgs {
-		total += len(m.Content) / 4
+		total += msgTokens(m)
 	}
 	for total > budget && len(msgs) > 0 {
-		total -= len(msgs[0].Content) / 4
+		total -= msgTokens(msgs[0])
 		msgs = msgs[1:]
 	}
 	return msgs
+}
+
+func msgTokens(m llm.Message) int {
+	n := len(m.Content) / 4
+	for _, tr := range m.ToolResults {
+		n += len(tr.Content) / 4
+	}
+	for _, tc := range m.ToolCalls {
+		n += len(tc.Input) / 4
+	}
+	return n
 }
 
 // reapLoop evicts rooms that have been idle longer than idleTimeout.

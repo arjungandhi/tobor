@@ -125,7 +125,7 @@ func runServe(cfg *config.Config) error {
 			)
 
 			start := time.Now()
-			response, err := ag.Run(ctx, history, ev.Text)
+			response, newMsgs, err := ag.Run(ctx, history, ev.Text)
 			if err != nil {
 				slog.Error("agent run failed", "room", ev.RoomID, "err", err, "duration_ms", time.Since(start).Milliseconds())
 				errOut := struct {
@@ -152,10 +152,7 @@ func runServe(cfg *config.Config) error {
 				slog.Error("encode response", "err", err)
 			}
 
-			shortMem.Append(ev.RoomID,
-				llm.Message{Role: "user", Content: ev.Text},
-				llm.Message{Role: "tobor", Content: response},
-			)
+			shortMem.Append(ev.RoomID, newMsgs...)
 
 			if err := eventLog.Append(memory.LogEntry{
 				Timestamp: ev.Timestamp,

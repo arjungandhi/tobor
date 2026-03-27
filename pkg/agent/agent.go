@@ -30,8 +30,10 @@ func New(l llm.LLM, system string, maxTurns int, ts ...tools.Tool) *Agent {
 }
 
 // Run processes a conversation (history + new user message) and returns the
-// assistant's final text response.
-func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) (string, error) {
+// assistant's final text response and the new messages appended during the run
+// (including tool call/result pairs). Callers should persist newMsgs to
+// maintain accurate conversation history across turns.
+func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) (text string, newMsgs []llm.Message, err error) {
 	messages := make([]llm.Message, len(history))
 	copy(messages, history)
 	messages = append(messages, llm.Message{Role: "user", Content: userMsg})
@@ -49,7 +51,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 
 		resp, err := a.llm.Complete(ctx, req)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 
 		slog.Debug("agent turn result",
@@ -63,7 +65,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 		switch resp.StopReason {
 		case "end_turn":
 			slog.Debug("agent complete", "turns_used", turn+1)
-			return resp.Text, nil
+			messages = append(messages, llm.Message{Role: "tobor", Content: resp.Text})
+			return resp.Text, messages[len(history):], nil
 
 		case "tool_use":
 			names := make([]string, len(resp.ToolCalls))
@@ -74,7 +77,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 
 			results, err := a.dispatchTools(ctx, resp.ToolCalls)
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			messages = append(messages,
 				llm.Message{Role: "tobor", Content: resp.Text, ToolCalls: resp.ToolCalls},
@@ -82,14 +85,14 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userMsg string) 
 			)
 
 		case "max_tokens":
-			return "", fmt.Errorf("agent: LLM hit max_tokens limit")
+			return "", nil, fmt.Errorf("agent: LLM hit max_tokens limit")
 
 		default:
-			return "", fmt.Errorf("agent: unexpected stop_reason %q", resp.StopReason)
+			return "", nil, fmt.Errorf("agent: unexpected stop_reason %q", resp.StopReason)
 		}
 	}
 
-	return "", ErrMaxTurns
+	return "", nil, ErrMaxTurns
 }
 
 // dispatchTools runs all tool calls concurrently and collects results.
