@@ -18,7 +18,10 @@ type Config struct {
 	MaxTurns           int           `yaml:"max_turns"`
 	AuthSender         string        `yaml:"auth_sender"`
 	DefaultRoom        string        `yaml:"default_room"`
+	LLMBackend         string        `yaml:"llm_backend"` // "anthropic" or "ollama"
 	AnthropicAPIKey    string        `yaml:"anthropic_api_key"`
+	OllamaURL          string        `yaml:"ollama_url"`
+	OllamaModel        string        `yaml:"ollama_model"`
 }
 
 func Load() (*Config, error) {
@@ -48,6 +51,12 @@ func Load() (*Config, error) {
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
 		cfg.AnthropicAPIKey = v
 	}
+	if v := os.Getenv("OLLAMA_URL"); v != "" {
+		cfg.OllamaURL = v
+	}
+	if v := os.Getenv("OLLAMA_MODEL"); v != "" {
+		cfg.OllamaModel = v
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -64,12 +73,20 @@ func defaults() *Config {
 		ContextTokenBudget: 8000,
 		IdleTimeout:        30 * time.Minute,
 		MaxTurns:           10,
+		LLMBackend:         "anthropic",
 	}
 }
 
 func (c *Config) validate() error {
-	if c.AnthropicAPIKey == "" {
-		return fmt.Errorf("anthropic_api_key is required (or set ANTHROPIC_API_KEY)")
+	switch c.LLMBackend {
+	case "anthropic":
+		if c.AnthropicAPIKey == "" {
+			return fmt.Errorf("anthropic_api_key is required (or set ANTHROPIC_API_KEY)")
+		}
+	case "ollama":
+		// ollama_url and ollama_model have sensible defaults, no required fields
+	default:
+		return fmt.Errorf("llm_backend must be \"anthropic\" or \"ollama\", got %q", c.LLMBackend)
 	}
 	if c.AuthSender == "" {
 		return fmt.Errorf("auth_sender is required")

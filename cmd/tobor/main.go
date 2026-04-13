@@ -99,7 +99,17 @@ func runServe(cfg *config.Config) error {
 	slog.Info("loaded tools", "count", len(toolList))
 
 	shortMem := memory.NewShortTerm(cfg.ContextTokenBudget, cfg.IdleTimeout)
-	llmClient := llm.NewAnthropic(cfg.AnthropicAPIKey)
+
+	var llmClient llm.LLM
+	switch cfg.LLMBackend {
+	case "ollama":
+		llmClient = llm.NewOllama(cfg.OllamaURL, cfg.OllamaModel)
+		slog.Info("using ollama backend", "url", cfg.OllamaURL, "model", cfg.OllamaModel)
+	default:
+		llmClient = llm.NewAnthropic(cfg.AnthropicAPIKey)
+		slog.Info("using anthropic backend")
+	}
+
 	ag := agent.New(llmClient, system, cfg.MaxTurns, toolList...)
 
 	var roomMu sync.Map
