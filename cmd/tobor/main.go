@@ -93,6 +93,9 @@ func runServe(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("load tools: %w", err)
 	}
+
+	// Add built-in read_file tool scoped to work_dir.
+	toolList = append(toolList, tools.NewReadFileTool(cfg.WorkDir))
 	slog.Info("loaded tools", "count", len(toolList))
 
 	shortMem := memory.NewShortTerm(cfg.ContextTokenBudget, cfg.IdleTimeout)
@@ -217,5 +220,12 @@ func loadSystem(workDir string) (string, error) {
 		}
 		parts = append(parts, string(data))
 	}
+
+	// Append docs index if it exists.
+	indexPath := filepath.Join(workDir, "docs", "index.md")
+	if data, err := os.ReadFile(indexPath); err == nil {
+		parts = append(parts, "# Available Documents\n\nUse the read_file tool to read any of these documents. When referencing information from a document, always cite the document name and quote the relevant passage so the user can verify your source.\n\n"+string(data))
+	}
+
 	return strings.Join(parts, "\n\n"), nil
 }
