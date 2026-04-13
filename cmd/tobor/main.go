@@ -224,7 +224,7 @@ func loadSystem(workDir string) (string, error) {
 	// Append docs index if it exists.
 	indexPath := filepath.Join(workDir, "docs", "index.md")
 	if data, err := os.ReadFile(indexPath); err == nil {
-		parts = append(parts, "# Available Documents\n\nUse the read_file tool to read any of these documents. When referencing information from a document, always cite the document name and quote the relevant passage so the user can verify your source.\n\n"+string(data))
+		parts = append(parts, "# Available Documents\n\nUse the read_file tool to read any of these documents. Document paths are relative to the work directory, so prefix them with \"docs/\" (e.g. read_file with path \"docs/health/example.pdf\"). When referencing information from a document, always cite the document name and quote the relevant passage so the user can verify your source.\n\n"+string(data))
 	}
 
 	return strings.Join(parts, "\n\n"), nil

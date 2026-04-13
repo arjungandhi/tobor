@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -63,6 +64,15 @@ func (r *ReadFileTool) Call(ctx context.Context, params json.RawMessage) (string
 
 	if !strings.HasPrefix(abs, base+string(filepath.Separator)) && abs != base {
 		return "", fmt.Errorf("path escapes work directory")
+	}
+
+	// Use pdftotext for PDF files.
+	if strings.EqualFold(filepath.Ext(abs), ".pdf") {
+		out, err := exec.CommandContext(ctx, "pdftotext", "-layout", abs, "-").Output()
+		if err != nil {
+			return "", fmt.Errorf("pdftotext: %w", err)
+		}
+		return strings.TrimSpace(string(out)), nil
 	}
 
 	data, err := os.ReadFile(abs)
