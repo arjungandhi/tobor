@@ -51,6 +51,16 @@ afterEach(async () => {
 
 type Reply = ReturnType<typeof fauxAssistantMessage>;
 const DEFAULT_TASKS = [{ agent: "helper", name: "h1", task: "say hi", context: "WORKER brief" }];
+/** Director user messages the script maps straight to a tool call. */
+const COMMANDS: Record<string, { tool: string; args: JsonObject }> = {
+	list: { tool: "agent_list", args: {} },
+	stop: { tool: "agent_stop", args: { id: "w1" } },
+	"stop-unknown": { tool: "agent_stop", args: { id: "nope" } },
+	"stop-neither": { tool: "agent_stop", args: {} },
+	steer: { tool: "agent_send", args: { id: "w1", message: "WORKER FOLLOW-UP: change course" } },
+	"steer-late": { tool: "agent_send", args: { id: "w1", message: "too late" } },
+	"steer-unknown": { tool: "agent_send", args: { id: "nope", message: "hello" } },
+};
 
 async function setup(workerReply: (msgs: Message[]) => Reply | Promise<Reply>, options: { tasks?: JsonObject[]; maxWorkers?: number } = {}) {
 	const cwd = realpathSync(mkdtempSync(join(tmpdir(), "tobor-workers-")));
@@ -62,6 +72,8 @@ async function setup(workerReply: (msgs: Message[]) => Reply | Promise<Reply>, o
 		if (msgs.some((m) => m.role === "user" && text(m).includes("WORKER"))) return workerReply(msgs);
 		const last = msgs.at(-1);
 		if (last?.role === "user" && text(last).startsWith("[worker")) return fauxAssistantMessage(`director got: ${text(last)}`);
+		const command = last?.role === "user" ? COMMANDS[text(last)] : undefined;
+		if (command) return fauxAssistantMessage(fauxToolCall(command.tool, command.args), { stopReason: "toolUse" });
 		if (last?.role === "user") {
 			return fauxAssistantMessage(
 				fauxToolCall("task", { tasks: options.tasks ?? DEFAULT_TASKS }),
@@ -106,6 +118,20 @@ async function directorTexts(h: Harness, director: Conversation): Promise<string
 		if (!m) return [];
 		return m.role === "assistant" ? [`A:${assistantText(e)}`] : m.role === "user" ? [`U:${text(m)}`] : [];
 	});
+}
+
+/** The director's tool results for `tool`, oldest first. */
+async function toolResults(director: Conversation, tool: string): Promise<{ text: string; isError: boolean }[]> {
+	const page = await director.entries({ order: "ascending" }, 100, undefined, ctx);
+	return page.items.flatMap((e) => {
+		const m = e.model?.[0];
+		return m?.role === "toolResult" && m.toolName === tool ? [{ text: text(m), isError: m.isError }] : [];
+	});
+}
+
+/** Submit a director message and wait for its turn to settle. */
+async function say(director: Conversation, content: string): Promise<void> {
+	expect((await (await director.submit({ type: "input", content }, ctx)).wait(ctx)).status).toBe("done");
 }
 
 describe("director workers", () => {
@@ -180,5 +206,105 @@ describe("director workers", () => {
 		expect(out).toContain("b: error: max_workers (1) reached");
 		const doc = await h.snapshot(WorkersDoc, director.id, ctx);
 		expect(Object.keys(doc?.workers ?? {})).toEqual(["w1"]);
+	});
+
+	it("agent_list says so when the session has no workers", async () => {
+		const { director } = await setup(() => fauxAssistantMessage("unused"));
+		await say(director, "list");
+		expect(await toolResults(director, "agent_list")).toEqual([{ text: "No workers in this session.", isError: false }]);
+	});
+
+	it("agent_list shows a finished worker's id, name, state and answer", async () => {
+		const { director, harness: h } = await setup(() => fauxAssistantMessage(fauxText("worker says hi")));
+		await say(director, "go");
+		await until(async () => ((await h.snapshot(WorkersDoc, director.id, ctx))?.workers.w1?.state === "done" ? true : undefined));
+		await say(director, "list");
+		const [result] = await toolResults(director, "agent_list");
+		expect(result).toMatchObject({ isError: false });
+		expect(result?.text).toContain("w1");
+		expect(result?.text).toContain("h1");
+		expect(result?.text).toContain("done");
+		expect(result?.text).toContain("worker says hi");
+	});
+
+	it("agent_stop stops a running worker by id and the director gets one abort report", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { director, harness: h } = await setup(async () => {
+			await gate.promise;
+			return fauxAssistantMessage("too late");
+		});
+		await say(director, "go");
+		await until(async () => ((await h.snapshot(WorkersDoc, director.id, ctx))?.workers.w1?.state === "running" ? true : undefined));
+		await say(director, "stop");
+		const [result] = await toolResults(director, "agent_stop");
+		expect(result).toMatchObject({ isError: false });
+		expect(result?.text).toContain("stopping");
+		gate.resolve();
+		const w = await until(async () => {
+			const rec = (await h.snapshot(WorkersDoc, director.id, ctx))?.workers.w1;
+			return rec?.finishedAt !== undefined ? rec : undefined;
+		});
+		expect(w).toMatchObject({ state: "aborted", reason: "stopped" });
+		const texts = await until(async () => {
+			const t = await directorTexts(h, director);
+			return t.some((x) => x.startsWith("U:[worker h1 finished: aborted")) ? t : undefined;
+		});
+		expect(texts.filter((x) => x.startsWith("U:[worker"))).toHaveLength(1);
+	});
+
+	it("agent_stop errors on an unknown id and when given neither id nor all", async () => {
+		const { director } = await setup(() => fauxAssistantMessage("unused"));
+		await say(director, "stop-unknown");
+		await say(director, "stop-neither");
+		const results = await toolResults(director, "agent_stop");
+		expect(results).toHaveLength(2);
+		expect(results[0]).toMatchObject({ isError: true });
+		expect(results[0]?.text).toContain("No worker nope");
+		expect(results[1]).toMatchObject({ isError: true });
+		expect(results[1]?.text).toContain("exactly one of `id` or `all`");
+	});
+
+	it("agent_send steers a live worker and only the steered answer is reported", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { director, harness: h } = await setup(async (msgs) => {
+			if (msgs.some((m) => m.role === "user" && text(m).includes("FOLLOW-UP"))) return fauxAssistantMessage("steered answer");
+			await gate.promise;
+			return fauxAssistantMessage("first answer");
+		});
+		await say(director, "go");
+		await until(async () => {
+			const w = (await h.snapshot(WorkersDoc, director.id, ctx))?.workers.w1;
+			return w?.state === "running" && w.submissionId !== undefined ? w : undefined;
+		});
+		await say(director, "steer");
+		const [sent] = await toolResults(director, "agent_send");
+		expect(sent).toMatchObject({ isError: false });
+		expect(sent?.text).toContain("sent");
+		gate.resolve();
+
+		const done = await until(async () => {
+			const w = (await h.snapshot(WorkersDoc, director.id, ctx))?.workers.w1;
+			return w?.state === "done" ? w : undefined;
+		});
+		expect(done.answer).toBe("steered answer");
+		const texts = await until(async () => {
+			const t = await directorTexts(h, director);
+			return t.some((x) => x.startsWith("A:director got")) ? t : undefined;
+		});
+		expect(texts.filter((x) => x.startsWith("U:[worker"))).toEqual(["U:[worker h1 finished: done]\nsteered answer"]);
+	});
+
+	it("agent_send refuses a finished worker and an unknown id", async () => {
+		const { director, harness: h } = await setup(() => fauxAssistantMessage(fauxText("worker says hi")));
+		await say(director, "go");
+		await until(async () => ((await h.snapshot(WorkersDoc, director.id, ctx))?.workers.w1?.state === "done" ? true : undefined));
+		await say(director, "steer-late");
+		await say(director, "steer-unknown");
+		const results = await toolResults(director, "agent_send");
+		expect(results).toHaveLength(2);
+		expect(results[0]).toMatchObject({ isError: true });
+		expect(results[0]?.text).toContain("already done");
+		expect(results[1]).toMatchObject({ isError: true });
+		expect(results[1]?.text).toContain("No worker nope");
 	});
 });
