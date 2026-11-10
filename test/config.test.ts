@@ -86,6 +86,16 @@ artifacts: { theme: retro-log }
 		expect(parseConfigText("defaults: { mode: solo }", HOME).config.defaults.approval_mode).toBe("auto");
 	});
 
+	it("validates defaults.title_model like worker_model", () => {
+		const ok = parseConfigText("defaults: { title_model: openai/gpt-mini }", HOME);
+		expect(ok.errors).toEqual([]);
+		expect(ok.config.defaults.title_model).toBe("openai/gpt-mini");
+		expect(parseConfigText("", HOME).config.defaults.title_model).toBeUndefined();
+		const bad = parseConfigText("defaults: { title_model: nope }", HOME);
+		expect(bad.errors.map((e) => e.path)).toEqual(["defaults.title_model"]);
+		expect(bad.config.defaults.title_model).toBeUndefined();
+	});
+
 	it("reports every problem with its key path", () => {
 		const { errors } = parseConfigText(
 			"bogus: 1\nenv_file: .tobor/x.env\ndefaults: { idle: 30, mode: x }\nmcp: { approval: { a: 3 } }",

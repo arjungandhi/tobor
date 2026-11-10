@@ -5,6 +5,7 @@ import type {
 	PatchSessionRequest,
 	SessionDetail,
 	SessionId,
+	SessionSummary,
 	SessionState,
 	WatchFrame,
 	WorkerSummary,
@@ -190,6 +191,17 @@ export class SessionScreen {
 		} catch (err) {
 			this.app.flash(`session #${target.id}: ${(err as Error).message}`);
 		}
+		this.app.changed();
+	}
+
+	/** Pick up a retitle (a generated title or a rename elsewhere) of the open session from a fresh session list. */
+	syncTitle(sessions: readonly SessionSummary[]): void {
+		const target = this.target;
+		if (!target || target.worker) return;
+		const title = sessions.find((s) => s.id === target.id)?.title;
+		if (title === undefined || title === target.title) return;
+		target.title = title;
+		if (this.detail) this.detail = { ...this.detail, title };
 		this.app.changed();
 	}
 

@@ -318,8 +318,9 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	}
 
 	const d = root.child("defaults");
-	d.only(["model", "thinking", "approval_mode", "max_turns", "mode", "max_workers", "worker_model", "idle", "approval_timeout"]);
+	d.only(["model", "thinking", "approval_mode", "max_turns", "mode", "max_workers", "worker_model", "title_model", "idle", "approval_timeout"]);
 	const workerModel = d.model("worker_model");
+	const titleModel = d.model("title_model");
 	const defaults: Config["defaults"] = {
 		model: d.model("model") ?? DEFAULT_MODEL,
 		thinking: d.oneOf<ThinkingLevel>("thinking", THINKING_LEVELS) ?? "high",
@@ -328,6 +329,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		mode: d.oneOf<SessionMode>("mode", SESSION_MODES) ?? "director",
 		max_workers: d.positiveInt("max_workers") ?? 8,
 		...(workerModel ? { worker_model: workerModel } : {}),
+		...(titleModel ? { title_model: titleModel } : {}),
 		idle: d.duration("idle") ?? 30 * UNIT_MS.m!,
 		approval_timeout: d.duration("approval_timeout") ?? 12 * UNIT_MS.h!,
 	};
