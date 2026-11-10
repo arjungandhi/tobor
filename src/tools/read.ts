@@ -3,7 +3,7 @@ import { defineTool, type ToolExecutionResult } from "@earendil-works/pi-durable
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { createReadTool } from "@earendil-works/pi-durable/tools";
 import { obj, str } from "@earendil-works/pi-schema";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { FileToolDeps } from "./filetools.js";
 import { decodeLossy, decodeText, ioFailure, isBinary, splitText } from "./hashline/lineio.js";
 import type { ErrorKind } from "./hashline/parse.js";
@@ -110,12 +110,21 @@ const errorResult = (kind: ErrorKind, text: string): ReadResult => ({
 });
 const textResult = (text: string): ReadResult => ({ output: [{ type: "text", text }] });
 
+const SECRET_FILES: Record<string, true> = { "auth.json": true, "agent.env": true, "node.json": true };
+
+/** tobor's secret/state files: the fixed names directly under `home`, and any `*.sqlite*` file (database, WAL, SHM, backups) beneath it. */
+function isSecret(target: string, home: string): boolean {
+	if (!isUnder(target, home)) return false;
+	const name = basename(target);
+	return (dirname(target) === home && Object.hasOwn(SECRET_FILES, name)) || name.includes(".sqlite");
+}
+
 async function denied(env: ExecutionEnv, home: string, abs: string, ctx: Context): Promise<boolean> {
 	const canonHome = await env.canonicalPath(home, ctx);
 	const homes = canonHome.ok && canonHome.value !== home ? [home, canonHome.value] : [home];
 	const canon = await env.canonicalPath(abs, ctx);
 	const targets = canon.ok && canon.value !== abs ? [abs, canon.value] : [abs];
-	return targets.some((t) => homes.some((h) => isUnder(t, h) && !isUnder(t, join(h, ".tobor"))));
+	return targets.some((t) => homes.some((h) => isSecret(t, h)));
 }
 
 /** The hashline `read` tool. */
@@ -137,7 +146,7 @@ export function createHashlineReadTool(deps: FileToolDeps) {
 			const abs = resolved.value;
 			const display = displayPath(path, abs, env.cwd);
 			if (await denied(env, deps.home, abs, ctx)) {
-				return errorResult("io", `Access denied: ${display} is inside $TOBOR_HOME; only $TOBOR_HOME/.tobor/ is readable.`);
+				return errorResult("io", `Access denied: ${display} is a tobor secret/state file (auth.json, agent.env, node.json, tobor.sqlite*) and cannot be read.`);
 			}
 
 			let info = await env.fileInfo(abs, ctx);
