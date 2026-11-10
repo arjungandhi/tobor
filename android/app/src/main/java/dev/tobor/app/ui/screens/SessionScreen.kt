@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EntryRecord
 import dev.tobor.app.api.PendingApproval
+import dev.tobor.app.api.PendingQuestion
 import dev.tobor.app.api.SessionDetail
 import dev.tobor.app.api.ToborApi
 import dev.tobor.app.api.ToborApiException
@@ -220,10 +221,22 @@ fun SessionScreen(
         } catch (_: Exception) {
         }
     }
+    var questions by remember(sessionId) { mutableStateOf<List<PendingQuestion>>(emptyList()) }
+    var questionErrors by remember(sessionId) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var busyQuestions by remember(sessionId) { mutableStateOf<Set<String>>(emptySet()) }
+    suspend fun refetchQuestions() {
+        try {
+            questions = api.questions().filter { it.sessionId == sessionId }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
     LaunchedEffect(api, sessionId, isWorker, status) {
         if (isWorker != false) return@LaunchedEffect
         while (true) {
             refetchApprovals()
+            refetchQuestions()
             delay(3000)
         }
     }
@@ -357,6 +370,32 @@ fun SessionScreen(
             )
         }
 
+        // questions (ask_user)
+        questions.forEach { q ->
+            QuestionCard(
+                q,
+                busy = q.callId in busyQuestions,
+                error = questionErrors[q.callId],
+                showSession = false,
+                onAnswer = { text ->
+                    busyQuestions = busyQuestions + q.callId
+                    questionErrors = questionErrors - q.callId
+                    scope.launch {
+                        try {
+                            api.answerQuestion(q.callId, text, q.conversationId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // 409/404 are non-fatal: show on the card; the refetch drops it if it is gone
+                            questionErrors = questionErrors + (q.callId to e.brief())
+                        }
+                        refetchQuestions()
+                        busyQuestions = busyQuestions - q.callId
+                    }
+                },
+            )
+        }
+
         if (isWorker == false) {
             // workers strip
             if (workers.isNotEmpty()) {
@@ -425,7 +464,7 @@ fun SessionScreen(
                         ),
                     )
                     // the one filled button on screen is approve when an approval is pending
-                    val sendFilled = approvals.isEmpty()
+                    val sendFilled = approvals.isEmpty() && questions.isEmpty()
                     val canSend = draft.isNotBlank() && !sending
                     FilledIconButton(
                         onClick = {

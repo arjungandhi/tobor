@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EventsClient
 import dev.tobor.app.api.PendingApproval
+import dev.tobor.app.api.PendingQuestion
 import dev.tobor.app.api.SessionSummary
 import dev.tobor.app.api.ToborApi
 import dev.tobor.app.api.ToborApiException
@@ -72,6 +73,7 @@ import java.util.Locale
 
 private val RefreshEvents = setOf(
     "session.state", "session.updated", "approval.requested", "approval.resolved",
+    "question.asked", "question.answered",
 )
 
 @Composable
@@ -87,6 +89,8 @@ fun SessionsScreen(
     var showWorkspaceMenu by remember { mutableStateOf(false) }
     var sessions by remember { mutableStateOf<List<SessionSummary>?>(null) }
     var approvals by remember { mutableStateOf<List<PendingApproval>>(emptyList()) }
+    var questions by remember { mutableStateOf<List<PendingQuestion>>(emptyList()) }
+    var questionErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var error by remember { mutableStateOf<String?>(null) }
     var whoami by remember { mutableStateOf<Whoami?>(null) }
     var whoamiFailed by remember { mutableStateOf(false) }
@@ -103,6 +107,13 @@ fun SessionsScreen(
                 throw e
             } catch (_: Exception) {
                 // keep previous approvals
+            }
+            try {
+                questions = api.questions()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // keep previous questions
             }
         } catch (e: CancellationException) {
             throw e
@@ -169,6 +180,26 @@ fun SessionsScreen(
             }
             load()
             busyCalls = busyCalls - p.callId
+        }
+    }
+
+    fun answer(q: PendingQuestion, text: String) {
+        if (q.callId in busyCalls) return
+        busyCalls = busyCalls + q.callId
+        questionErrors = questionErrors - q.callId
+        scope.launch {
+            try {
+                api.answerQuestion(q.callId, text, q.conversationId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ToborApiException) {
+                // 409 (already answered) / 404 (gone): show it, the refetch below drops the card
+                questionErrors = questionErrors + (q.callId to "${e.status} ${e.message}".trim())
+            } catch (e: Exception) {
+                questionErrors = questionErrors + (q.callId to (e.message ?: "error"))
+            }
+            load()
+            busyCalls = busyCalls - q.callId
         }
     }
 
@@ -325,6 +356,15 @@ fun SessionsScreen(
                                     onApprove = { decide(p, "approve") },
                                     onSession = { decide(p, "approve_session") },
                                     onDeny = { decide(p, "deny") },
+                                )
+                            }
+                            items(questions, key = { "q-" + it.callId }) { q ->
+                                QuestionCard(
+                                    q,
+                                    busy = q.callId in busyCalls,
+                                    error = questionErrors[q.callId],
+                                    showSession = true,
+                                    onAnswer = { answer(q, it) },
                                 )
                             }
                             if (list!!.isEmpty()) {
