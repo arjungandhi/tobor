@@ -1,4 +1,5 @@
 import { type Component, Markdown } from "@earendil-works/pi-tui";
+import { sanitizeText } from "../sanitize.js";
 import { c, markdownTheme, thinkingStyle } from "../theme.js";
 
 /** Assistant prose or thinking rendered as Markdown; `update` calls `setText` only when the text changed. */
@@ -9,17 +10,18 @@ export class AssistantBlock implements Component {
 
 	constructor(
 		text: string,
-		private readonly thinking: boolean,
+		readonly thinking: boolean,
 	) {
 		this.text = text;
-		this.markdown = new Markdown(text, thinking ? 2 : 0, 0, markdownTheme, thinking ? thinkingStyle : undefined);
+		this.markdown = new Markdown(sanitizeText(text), thinking ? 2 : 0, 0, markdownTheme, thinking ? thinkingStyle : undefined);
 	}
 
 	/** Set the block's text (a streaming partial grows by appends). */
 	update(text: string): void {
 		if (text === this.text) return;
 		this.text = text;
-		this.markdown.setText(text);
+		// Escape sequences and control characters are stripped, newlines stay: Markdown needs them.
+		this.markdown.setText(sanitizeText(text));
 	}
 
 	invalidate(): void {

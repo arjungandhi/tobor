@@ -1,4 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { oneLineStyled } from "../sanitize.js";
 import { c } from "../theme.js";
 
 /** One status line: styled segments joined by a dim separator on the left, a hint on the right. */
@@ -9,9 +10,11 @@ export class StatusLine implements Component {
 
 	/** Replace the segments (already styled) and the right-hand hint. */
 	set(segments: string[], hint: string): void {
-		if (hint === this.hint && segments.length === this.segments.length && segments.every((s, i) => s === this.segments[i])) return;
-		this.segments = segments;
-		this.hint = hint;
+		const cleanSegments = segments.map(oneLineStyled);
+		const cleanHint = oneLineStyled(hint);
+		if (cleanHint === this.hint && cleanSegments.length === this.segments.length && cleanSegments.every((s, i) => s === this.segments[i])) return;
+		this.segments = cleanSegments;
+		this.hint = cleanHint;
 		this.cache = undefined;
 	}
 

@@ -1,5 +1,6 @@
 import { type Component, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Block } from "../replica.js";
+import { oneLine } from "../sanitize.js";
 import { c } from "../theme.js";
 import { AssistantBlock } from "./assistant-block.js";
 import { ToolSlotView } from "./tool-slot.js";
@@ -34,7 +35,7 @@ class NoticeLine implements Component {
 		const paint = { info: c.dim, warning: c.warning, error: c.error, marker: c.dim }[this.level];
 		const glyph = { info: "·", warning: "!", error: "✗", marker: "↑" }[this.level];
 		const edge = this.selected ? c.accent("▎") : " ";
-		const body = wrapTextWithAnsi(paint(`${glyph} ${this.text}`), Math.max(1, width - 1)).map((line) => truncateToWidth(edge + line, width));
+		const body = wrapTextWithAnsi(paint(`${glyph} ${oneLine(this.text)}`), Math.max(1, width - 1)).map((line) => truncateToWidth(edge + line, width));
 		const lines = ["", ...body];
 		this.cache = { width, lines };
 		return lines;
@@ -90,7 +91,8 @@ export class Transcript implements Component {
 			}
 			case "assistant":
 			case "thinking": {
-				const view = prev instanceof AssistantBlock ? prev : new AssistantBlock(block.text, block.kind === "thinking");
+				const thinking = block.kind === "thinking";
+				const view = prev instanceof AssistantBlock && prev.thinking === thinking ? prev : new AssistantBlock(block.text, thinking);
 				view.update(block.text);
 				return view;
 			}
