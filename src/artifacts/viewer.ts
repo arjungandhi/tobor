@@ -19,6 +19,18 @@ export const ARTIFACT_CSP = [
 	"base-uri 'none'",
 ].join("; ");
 
+/** CSP for the durable-URL wrapper page and its `/rev` endpoint: it must poll same-origin and frame revisions, so it cannot use {@link ARTIFACT_CSP}. */
+export const WRAPPER_CSP = [
+	"default-src 'none'",
+	"script-src 'unsafe-inline'",
+	"style-src 'unsafe-inline'",
+	"frame-src 'self'",
+	"connect-src 'self'",
+	"img-src 'self'",
+	"base-uri 'none'",
+	"form-action 'none'",
+].join("; ");
+
 /** What the viewer needs from the artifact service. */
 export type ViewerService = Pick<ArtifactService, "latest" | "revision" | "revisionDir" | "pdf">;
 
@@ -32,6 +44,7 @@ const REV_BARE = new RegExp(`^/art/r/(${ID})$`);
 const REV_INDEX = new RegExp(`^/art/r/(${ID})/(?:index\\.html)?$`);
 const REV_ASSET = new RegExp(`^/art/r/(${ID})/(assets/.+)$`);
 const LATEST_PDF = new RegExp(`^/art/(${ID})/(${SLUG})\\.pdf$`);
+const LATEST_REV = new RegExp(`^/art/(${ID})/(${SLUG})/rev$`);
 const LATEST = new RegExp(`^/art/(${ID})/(${SLUG})/?$`);
 
 /** Resolve a URL-encoded relative path inside `root`, or `undefined` if it escapes, is malformed or is not a file. */
@@ -62,7 +75,54 @@ function send(res: ServerResponse, status: number, body: string, headers: Record
 	res.end(body);
 }
 
-/** Viewer routes: `/art/<projectId>/<slug>` (redirect to latest), `/art/r/<rev>/`, `/art/r/<rev>/assets/*`, and `.pdf` of both. */
+const escapeHtml = (text: string): string => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Inline JSON for a `<script>`: `<` is escaped so the value cannot close the element. */
+const scriptJson = (value: unknown): string => JSON.stringify(value).replace(/</g, "\\u003c");
+
+/** Wrapper page for the durable URL: frames the current revision and swaps it when `revUrl` reports a new one. */
+function wrapperPage(title: string, rev: string, revUrl: string): string {
+	return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;margin:0;width:100%;height:100%}</style>
+</head><body>
+<iframe id="art" sandbox="allow-scripts allow-popups" src="/art/r/${rev}/"></iframe>
+<script>
+(function () {
+	var frame = document.getElementById("art");
+	var current = ${scriptJson(rev)};
+	var revUrl = ${scriptJson(revUrl)};
+	var timer = 0;
+	var busy = false;
+	function check() {
+		if (busy || document.hidden) return;
+		busy = true;
+		fetch(revUrl, { cache: "no-store" })
+			.then(function (r) { return r.ok ? r.json() : null; })
+			.then(function (data) {
+				if (data && typeof data.rev === "string" && data.rev !== current) {
+					current = data.rev;
+					frame.src = "/art/r/" + encodeURIComponent(current) + "/";
+				}
+			})
+			.catch(function () {})
+			.then(function () { busy = false; });
+	}
+	function start() { if (!timer) timer = setInterval(check, 2000); }
+	function stop() { clearInterval(timer); timer = 0; }
+	document.addEventListener("visibilitychange", function () {
+		if (document.hidden) stop();
+		else { check(); start(); }
+	});
+	if (!document.hidden) start();
+})();
+</script>
+</body></html>
+`;
+}
+
+/** Viewer routes: `/art/<projectId>/<slug>` (live wrapper around the latest revision), `/art/<projectId>/<slug>/rev`, `/art/r/<rev>/`, `/art/r/<rev>/assets/*`, and `.pdf` of both. */
 export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 	const servePdf = async (res: ServerResponse, head: boolean, rev: string, name: string): Promise<void> => {
 		const result: PdfResult = await service.pdf(rev);
@@ -128,10 +188,25 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			else await servePdf(res, head, latest.rev, `${latest.slug}-r${latest.revision}`);
 			return true;
 		}
+		if ((m = LATEST_REV.exec(path))) {
+			const latest = await service.latest(m[1]!, m[2]!);
+			if (!latest) send(res, 404, "Not found\n");
+			else send(res, 200, JSON.stringify({ rev: latest.rev }), { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": WRAPPER_CSP });
+			return true;
+		}
 		if ((m = LATEST.exec(path))) {
 			const latest = await service.latest(m[1]!, m[2]!);
 			if (!latest) send(res, 404, "Not found\n");
-			else send(res, 302, "", { Location: `/art/r/${latest.rev}/`, "Cache-Control": "no-store" });
+			else {
+				const body = wrapperPage(latest.title, latest.rev, `/art/${m[1]}/${m[2]}/rev`);
+				res.writeHead(200, {
+					"Content-Type": "text/html; charset=utf-8",
+					"Content-Length": Buffer.byteLength(body),
+					"Cache-Control": "no-store",
+					"Content-Security-Policy": WRAPPER_CSP,
+				});
+				res.end(head ? undefined : body);
+			}
 			return true;
 		}
 		send(res, 404, "Not found\n");

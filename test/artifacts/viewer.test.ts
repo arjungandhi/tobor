@@ -9,7 +9,7 @@ import { exportHtml, probeChrome } from "../../src/artifacts/export.js";
 import { sanitizeHtml } from "../../src/artifacts/sanitize.js";
 import { createScaffold, htmlScaffold, RUNTIME_SHIM } from "../../src/artifacts/scaffold.js";
 import { ArtifactsService } from "../../src/artifacts/service.js";
-import { ARTIFACT_CSP, containedFile, createArtifactHandler } from "../../src/artifacts/viewer.js";
+import { ARTIFACT_CSP, containedFile, createArtifactHandler, WRAPPER_CSP } from "../../src/artifacts/viewer.js";
 import type { NodeEvent } from "../../src/api/types.js";
 import { EventBus } from "../../src/events.js";
 
@@ -167,14 +167,51 @@ describe("viewer", () => {
 		expect(asset.headers.get("content-security-policy")).toBe(ARTIFACT_CSP);
 	});
 
-	it("redirects bare and latest URLs to the revision directory", async () => {
+	it("redirects bare rev URLs and wraps the latest URL in a live frame", async () => {
 		const bare = await fetch(`${base}/art/r/${rev}`, { redirect: "manual" });
 		expect(bare.status).toBe(301);
 		expect(bare.headers.get("location")).toBe(`/art/r/${rev}/`);
-		const latest = await fetch(`${base}/art/${projectId}/demo`, { redirect: "manual" });
-		expect(latest.status).toBe(302);
-		expect(latest.headers.get("location")).toBe(`/art/r/${rev}/`);
+		for (const path of [`/art/${projectId}/demo`, `/art/${projectId}/demo/`]) {
+			const latest = await fetch(base + path, { redirect: "manual" });
+			expect(latest.status, path).toBe(200);
+			expect(latest.headers.get("content-type")).toContain("text/html");
+			expect(latest.headers.get("cache-control")).toBe("no-store");
+			const body = await latest.text();
+			expect(body).toContain("<title>Demo</title>");
+			expect(body).toContain(`src="/art/r/${rev}/"`);
+			expect(body).toContain('sandbox="allow-scripts allow-popups"');
+			expect(body).toContain(`/art/${projectId}/demo/rev`);
+			expect(body).toContain("visibilitychange");
+		}
+		const headRes = await fetch(`${base}/art/${projectId}/demo`, { method: "HEAD" });
+		expect(headRes.status).toBe(200);
+		expect(await headRes.text()).toBe("");
 		expect((await fetch(`${base}/art/${projectId}/nope`)).status).toBe(404);
+	});
+
+	it("serves the wrapper and /rev with the wrapper CSP, revisions keep the artifact CSP", async () => {
+		expect(WRAPPER_CSP).toContain("connect-src 'self'");
+		expect(WRAPPER_CSP).toContain("frame-src 'self'");
+		expect(WRAPPER_CSP).not.toContain("sandbox");
+		for (const path of [`/art/${projectId}/demo`, `/art/${projectId}/demo/rev`]) {
+			const res = await fetch(base + path);
+			expect(res.headers.get("content-security-policy"), path).toBe(WRAPPER_CSP);
+			expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+			expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+		}
+		for (const path of [`/art/r/${rev}/`, `/art/r/${rev}/assets/p.svg`]) {
+			expect((await fetch(base + path)).headers.get("content-security-policy"), path).toBe(ARTIFACT_CSP);
+		}
+	});
+
+	it("reports the latest rev as JSON and 404s unknown artifacts", async () => {
+		const res = await fetch(`${base}/art/${projectId}/demo/rev`);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("application/json");
+		expect(res.headers.get("cache-control")).toBe("no-store");
+		expect(await res.json()).toEqual({ rev });
+		expect((await fetch(`${base}/art/${projectId}/nope/rev`)).status).toBe(404);
+		expect((await fetch(`${base}/art/${projectId}/rev`)).status).toBe(404);
 	});
 
 	it("keeps paths inside the revision dir", async () => {
@@ -209,4 +246,21 @@ describe("viewer", () => {
 		expect(ready.headers.get("content-disposition")).toBe('attachment; filename="demo-r1.pdf"');
 		expect(Buffer.from(await ready.arrayBuffer()).subarray(0, 5).toString()).toBe("%PDF-");
 	}, 150_000);
+
+	it("moves the durable URL to a new revision while old revisions stay reachable", async () => {
+		const bundle = join(project, ".tobor", "artifacts", "demo");
+		writeFileSync(join(bundle, "index.html"), "<html><head><title>Demo v2</title></head><body>second</body></html>");
+		const next = await service.publish({ cwd: project, slug: "demo", tags: ["t"] });
+		const newRev = next.artifact.rev;
+		expect(newRev).not.toBe(rev);
+		expect(await (await fetch(`${base}/art/${projectId}/demo/rev`)).json()).toEqual({ rev: newRev });
+		const wrapper = await (await fetch(`${base}/art/${projectId}/demo`)).text();
+		expect(wrapper).toContain("<title>Demo v2</title>");
+		expect(wrapper).toContain(`src="/art/r/${newRev}/"`);
+		expect(wrapper).not.toContain(`src="/art/r/${rev}/"`);
+		expect(await (await fetch(`${base}/art/r/${newRev}/`)).text()).toContain("second");
+		const old = await fetch(`${base}/art/r/${rev}/`);
+		expect(old.status).toBe(200);
+		expect(await old.text()).toContain("hi");
+	});
 });
