@@ -80,17 +80,31 @@ fun SchedulesScreen(
     var schedules by remember { mutableStateOf<List<Schedule>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    var actionErrorId by remember { mutableStateOf<String?>(null) }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var busyIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirmDelete by remember { mutableStateOf<Schedule?>(null) }
 
+    // Bumped on every load start; a result is applied only if no newer load has started since.
+    val loadSeq = remember { intArrayOf(0) }
+
     suspend fun load() {
+        val seq = ++loadSeq[0]
         try {
-            schedules = api.schedules()
+            val fresh = api.schedules()
+            if (seq != loadSeq[0]) return
+            schedules = fresh
             error = null
+            // The failed action's schedule is gone, so the error no longer applies.
+            val errId = actionErrorId
+            if (errId != null && fresh.none { it.id == errId }) {
+                actionError = null
+                actionErrorId = null
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (seq != loadSeq[0]) return
             error = e.message ?: e.toString()
         }
     }
@@ -133,6 +147,7 @@ fun SchedulesScreen(
         if (s.id in busyIds) return
         busyIds = busyIds + s.id
         actionError = null
+        actionErrorId = null
         scope.launch {
             try {
                 action()
@@ -140,8 +155,10 @@ fun SchedulesScreen(
                 throw e
             } catch (e: ToborApiException) {
                 actionError = e.message ?: "request failed"
+                actionErrorId = s.id
             } catch (e: Exception) {
                 actionError = e.message ?: e.toString()
+                actionErrorId = s.id
             }
             load()
             busyIds = busyIds - s.id
@@ -218,7 +235,13 @@ fun SchedulesScreen(
                     color = ToborColors.error,
                     fontFamily = FontFamilies.CourierPrime,
                     fontSize = 12.sp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            actionError = null
+                            actionErrorId = null
+                        }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
 
