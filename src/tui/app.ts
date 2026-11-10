@@ -63,6 +63,7 @@ export class Panel implements Component, Focusable {
 	private readonly child: Component | undefined;
 	private hint: string;
 	private readonly onKey: ((data: string) => boolean) | undefined;
+	private fill: (() => number) | undefined;
 
 	constructor(
 		private readonly title: string,
@@ -92,6 +93,11 @@ export class Panel implements Component, Focusable {
 		this.hint = hint;
 	}
 
+	/** Stretch the panel to `rows()` lines (blank bordered rows between body and footer; an overlong body is cut). */
+	stretch(rows: () => number): void {
+		this.fill = rows;
+	}
+
 	/** Replace the body lines. */
 	setLines(lines: string[]): void {
 		this.lines = lines;
@@ -111,12 +117,19 @@ export class Panel implements Component, Focusable {
 		const side = c.accent("│");
 		const row = (line: string): string => `${side} ${truncateToWidth(line, inner, "…", true)} ${side}`;
 		const title = truncateToWidth(` ${this.title} `, Math.max(1, width - 6));
-		const out = [`${c.accent("╭─")}${c.bold(c.accent(title))}${c.accent(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(title)))}╮`)}`];
-		for (const line of this.lines) for (const wrapped of line === "" ? [""] : wrapTextWithAnsi(line, inner)) out.push(row(wrapped));
+		const top = `${c.accent("╭─")}${c.bold(c.accent(title))}${c.accent(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(title)))}╮`)}`;
+		const body: string[] = [];
+		for (const line of this.lines) for (const wrapped of line === "" ? [""] : wrapTextWithAnsi(line, inner)) body.push(row(wrapped));
 		if (this.child) {
-			if (this.lines.length > 0) out.push(row(""));
-			for (const line of this.child.render(inner)) out.push(row(line));
+			if (this.lines.length > 0) body.push(row(""));
+			for (const line of this.child.render(inner)) body.push(row(line));
 		}
+		if (this.fill) {
+			const room = Math.max(1, this.fill() - 2);
+			body.length = Math.min(body.length, room);
+			while (body.length < room) body.push(row(""));
+		}
+		const out = [top, ...body];
 		const hint = this.hint ? truncateToWidth(` ${this.hint} `, Math.max(1, width - 6)) : "";
 		out.push(`${c.accent("╰─")}${c.dim(hint)}${c.accent(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(hint)))}╯`)}`);
 		return out;
@@ -569,9 +582,19 @@ export class App {
 		await this.info("help", lines);
 	}
 
-	/** Show a modal and focus it; `cancel` dismisses it as Esc would (used by `Ctrl+C`). Returns a function that closes it. */
-	openModal(component: Component, cancel: () => void): () => void {
-		const handle = this.tui.showOverlay(component, { width: "80%", minWidth: 40, maxHeight: "85%", anchor: "center" });
+	/**
+	 * Show a modal and focus it; `cancel` dismisses it as Esc would (used by `Ctrl+C`). Returns a function that closes it.
+	 * Two tiers: by default a full-screen menu (a 100% × 100% overlay at the top-left; a Panel stretches to the terminal
+	 * height, so every viewport cell is painted and no transcript shows through); `dialog` is a small centered prompt.
+	 */
+	openModal(component: Component, cancel: () => void, options: { dialog?: boolean } = {}): () => void {
+		if (!options.dialog && component instanceof Panel) component.stretch(() => this.terminal.rows);
+		const handle = this.tui.showOverlay(
+			component,
+			options.dialog
+				? { width: "80%", minWidth: 40, maxHeight: "85%", anchor: "center" }
+				: { width: "100%", maxHeight: "100%", anchor: "top-left" },
+		);
 		this.modals.push({ handle, cancel });
 		this.tui.requestRender();
 		return () => {
@@ -582,16 +605,16 @@ export class App {
 		};
 	}
 
-	/** Rows available for a list inside a modal with `extra` other lines. */
+	/** Rows available for a list inside a full-screen modal with `extra` other lines (border, footer and the gap above the list take 4). */
 	listRows(extra: number): number {
-		return Math.max(3, Math.floor(this.terminal.rows * 0.85) - 4 - extra);
+		return Math.max(3, this.terminal.rows - 4 - extra);
 	}
 
 	/** A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value. */
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
-		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number } = {},
+		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number; dialog?: boolean } = {},
 	): Promise<Picked<T> | undefined> {
 		const { promise, resolve } = Promise.withResolvers<Picked<T> | undefined>();
 		const entries: SelectItem[] = items.map((item, i) => ({
@@ -599,7 +622,7 @@ export class App {
 			label: item.label,
 			...(item.description === undefined ? {} : { description: item.description }),
 		}));
-		const rows = this.listRows(options.lines?.length ?? 0);
+		const rows = (): number => this.listRows(options.lines?.length ?? 0);
 		let close = (): void => {};
 		const finish = (result: Picked<T> | undefined): void => {
 			close();
@@ -613,7 +636,7 @@ export class App {
 		// SelectList has no setItems and its setFilter is a prefix match on value, so a filter rebuilds the list from
 		// the matching entries; their values stay the original indexes, so a choice maps back to `items`.
 		const makeList = (shown: SelectItem[]): SelectList => {
-			const next = new SelectList(shown, rows, selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
+			const next = new SelectList(shown, rows(), selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
 			next.onSelect = () => chosen("enter");
 			next.onCancel = () => finish(undefined);
 			return next;
@@ -684,7 +707,7 @@ export class App {
 				return true;
 			},
 		});
-		close = this.openModal(panel, () => finish(undefined));
+		close = this.openModal(panel, () => finish(undefined), { dialog: options.dialog === true });
 		return promise;
 	}
 
@@ -705,7 +728,7 @@ export class App {
 			child: input,
 			hint: options.hint ?? "Enter confirm · Esc cancel",
 		});
-		close = this.openModal(panel, () => finish(undefined));
+		close = this.openModal(panel, () => finish(undefined), { dialog: true });
 		return promise;
 	}
 
@@ -717,7 +740,7 @@ export class App {
 				{ value: false, label: "no" },
 				{ value: true, label: "yes" },
 			],
-			{ lines },
+			{ lines, dialog: true },
 		);
 		return picked?.value === true;
 	}
