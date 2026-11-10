@@ -113,14 +113,16 @@ const textResult = (text: string): ReadResult => ({ output: [{ type: "text", tex
 const SECRET_FILES: Record<string, true> = { "auth.json": true, "agent.env": true, "node.json": true };
 
 /**
- * tobor's secret/state files: the fixed names directly under `.tobor/state/` (and under `home`, for un-migrated homes),
- * and any `*.sqlite*` file (database, WAL, SHM, backups) beneath `home`.
+ * tobor's secret/state files: everything under `.tobor/state/` except its `artifacts/` store (which stays readable),
+ * the fixed names directly under `home` (un-migrated homes), and any `*.sqlite*` file (database, WAL, SHM, backups)
+ * beneath `home`.
  */
 function isSecret(target: string, home: string): boolean {
 	if (!isUnder(target, home)) return false;
+	const state = join(home, ".tobor", "state");
+	if (isUnder(target, state)) return !isUnder(target, join(state, "artifacts"));
 	const name = basename(target);
-	const dir = dirname(target);
-	return ((dir === home || dir === join(home, ".tobor", "state")) && Object.hasOwn(SECRET_FILES, name)) || name.includes(".sqlite");
+	return (dirname(target) === home && Object.hasOwn(SECRET_FILES, name)) || name.includes(".sqlite");
 }
 
 async function denied(env: ExecutionEnv, home: string, abs: string, ctx: Context): Promise<boolean> {
@@ -150,7 +152,7 @@ export function createHashlineReadTool(deps: FileToolDeps) {
 			const abs = resolved.value;
 			const display = displayPath(path, abs, env.cwd);
 			if (await denied(env, deps.home, abs, ctx)) {
-				return errorResult("io", `Access denied: ${display} is a tobor secret/state file (auth.json, agent.env, node.json, tobor.sqlite* under $TOBOR_HOME/.tobor/state/) and cannot be read.`);
+				return errorResult("io", `Access denied: ${display} is tobor node state (everything under $TOBOR_HOME/.tobor/state/ except artifacts/, plus legacy auth.json, agent.env, node.json and tobor.sqlite* under $TOBOR_HOME) and cannot be read.`);
 			}
 
 			let info = await env.fileInfo(abs, ctx);
