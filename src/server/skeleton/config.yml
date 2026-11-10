@@ -8,7 +8,7 @@
 # public_url: http://localhost:7879
 # notify:
 #   ntfy: { url: https://ntfy.sh, topic: tobor-change-me }
-#   on: [approval, error, settled]
+#   on: [approval, question, error, settled]
 
 defaults:
   model: anthropic/claude-fable-5

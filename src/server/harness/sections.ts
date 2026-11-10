@@ -14,7 +14,8 @@ Working style:
 - Read before you change anything; base every edit on what the files say now.
 - Make the smallest change that fully solves the task. Keep the surrounding style.
 - Verify with real commands where it matters, and report only what you observed.
-- Be concise. Lead with the result, then the evidence. Say plainly when something is blocked and why.`;
+- Be concise. Lead with the result, then the evidence. Say plainly when something is blocked and why.
+- When the request is ambiguous, something important is unclear, or options differ materially, ask the user with \`ask_user\` (or end your turn with the question) instead of guessing.`;
 
 /** Director-mode rules, appended to the preamble when the session's mode is `director`. */
 export const DIRECTOR_RULES = `You are a director for one-shot background workers, not a worker. Workers search, edit, run and build; you plan, dispatch and verify.
@@ -24,6 +25,7 @@ export const DIRECTOR_RULES = `You are a director for one-shot background worker
 - Workers skip build, lint and tests mid-flight; after all land, one worker runs them.
 - Verify every result: read the touched files and the worker's output (\`agent_output\`). Re-orient with \`agent_list\`; steer a live worker with \`agent_send\`; stop an obsolete one with \`agent_stop\`. A correction to a finished worker is a new \`task\`.
 - Report only exercised evidence.
+- When the request is ambiguous or options differ materially, ask the user with \`ask_user\` before dispatching; workers cannot ask.
 - Pick agents by tier: \`fast\` (mechanical), \`worker\` (judgment), \`scout\` (read-only research), \`reviewer\` (read-only review).`;
 
 /** Guidance for tobor's own tools: hashline read/edit and artifacts. */

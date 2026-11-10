@@ -15,8 +15,8 @@ export type SessionMode = "director" | "solo";
 export const SESSION_MODES: readonly SessionMode[] = ["director", "solo"];
 
 /** Events that trigger an ntfy notification. */
-export type NotifyEvent = "approval" | "error" | "settled";
-export const NOTIFY_EVENTS: readonly NotifyEvent[] = ["approval", "error", "settled"];
+export type NotifyEvent = "approval" | "question" | "error" | "settled";
+export const NOTIFY_EVENTS: readonly NotifyEvent[] = ["approval", "question", "error", "settled"];
 
 /** A parsed `host:port` listen address. */
 export type ListenAddress = { host: string; port: number };

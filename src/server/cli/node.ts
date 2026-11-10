@@ -23,7 +23,7 @@ export async function run(args: CliArgs): Promise<number> {
 		process.stdout.write(`tobor node: ${signal}, shutting down\n`);
 		await stopListeners().catch((err: unknown) => process.stderr.write(`tobor node: stopping listeners: ${String(err)}\n`));
 		await built.stop().catch((err: unknown) => process.stderr.write(`tobor node: stopping .tobor watcher: ${String(err)}\n`));
-		if ((await host.shutdown()) === "left_open") process.stdout.write("tobor node: approvals pending; exiting without close\n");
+		if ((await host.shutdown()) === "left_open") process.stdout.write("tobor node: approvals or questions pending; exiting without close\n");
 		exit.resolve(0);
 	};
 	process.once("SIGTERM", onSignal);

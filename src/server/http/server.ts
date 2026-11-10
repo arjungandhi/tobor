@@ -12,6 +12,7 @@ import { authRoutes } from "./routes/auth.js";
 import { cwdsRoutes } from "./routes/cwds.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { modelsRoutes } from "./routes/models.js";
+import { questionsRoutes } from "./routes/questions.js";
 import { schedulesRoutes } from "./routes/schedules.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { toborRoutes } from "./routes/tobor.js";
@@ -38,6 +39,7 @@ export function apiRouter(): Router {
 		sessionsRoutes,
 		workersRoutes,
 		approvalsRoutes,
+		questionsRoutes,
 		authRoutes,
 		modelsRoutes,
 		cwdsRoutes,
