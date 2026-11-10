@@ -1,4 +1,4 @@
-// Real-model smoke: `ANTHROPIC_API_KEY=… node --import tsx test/harness/smoke.ts [roots-dir]`.
+// Real-model smoke: `ANTHROPIC_API_KEY=… bun test/harness/smoke.ts [roots-dir]`.
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

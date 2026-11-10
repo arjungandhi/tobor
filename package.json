@@ -3,18 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "tobor": "dist/cli.js"
-  },
   "engines": {
-    "node": ">=22.19.0"
+    "bun": ">=1.4.4"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "dev:node": "node --import tsx src/cli.ts node",
-    "dev:tui": "node --import tsx src/cli.ts tui"
+    "dev": "bun src/cli.ts",
+    "test": "bun run --bun vitest run",
+    "typecheck": "bun x tsc --noEmit",
+    "gen:assets": "bun build/gen-assets.ts",
+    "build": "bun run gen:assets && bun build --compile --minify --bytecode --format=esm --target=bun-linux-x64-baseline build/compile-entry.ts --outfile dist/tobor",
+    "build:arm64": "bun run gen:assets && bun build --compile --minify --bytecode --format=esm --target=bun-linux-arm64 build/compile-entry.ts --outfile dist/tobor-arm64"
   },
   "dependencies": {
     "@earendil-works/chord": "1.5.1",
@@ -28,9 +26,9 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
+    "@types/bun": "1.4.4",
     "@types/node": "26.6.6",
     "@types/ws": "8.18.2",
-    "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vitest": "5.1.0"
   }

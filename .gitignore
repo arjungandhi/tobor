@@ -37,8 +37,9 @@ go.work.sum
 result
 result-*
 
-# Node
+# Bun
 node_modules
 dist
+build/assets.generated.ts
 *.sqlite*
 spike/out

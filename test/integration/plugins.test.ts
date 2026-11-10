@@ -76,7 +76,7 @@ describe("node plugins", () => {
 		await host.agentData.write("config.yml", { content: `${config}agents: { model_overrides: { fast: faux/m } }\n` });
 		await until(() => host.config.agents.model_overrides.fast === "faux/m");
 
-		const mcp = { servers: { echo: { type: "stdio", command: process.execPath, args: ["--import", "tsx", fixture, "--stdio"] } } };
+		const mcp = { servers: { echo: { type: "stdio", command: process.execPath, args: [fixture, "--stdio"] } } };
 		await host.agentData.write("mcp.json", { content: JSON.stringify(mcp) });
 		await until(() => toolNames(host).some((n) => n.startsWith("mcp__echo__")));
 		expect(toolNames(host)).toContain("bash");

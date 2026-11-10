@@ -1,5 +1,5 @@
-// Real-model end-to-end smoke of the built CLI (manual; not part of vitest):
-//   npm run build && ANTHROPIC_API_KEY=… node --import tsx test/integration/smoke.ts [root]
+// Real-model end-to-end smoke of the compiled binary (manual; not part of vitest):
+//   bun run build && ANTHROPIC_API_KEY=… bun test/integration/smoke.ts [root]
 // Temp $TOBOR_HOME, `tobor init`, `tobor node` on ephemeral ports, then over HTTP: a director session whose fast worker
 // replies pong, a solo hashline read+edit, an artifact create/publish (page + PDF), and an `ask` approval round-trip.
 import { type ChildProcess, execFile, spawn } from "node:child_process";
@@ -12,7 +12,7 @@ import type { ArtifactSummary, EntriesResponse, PendingApproval, SessionDetail, 
 
 const root = process.argv[2] ?? "/home/monkey/repos/github.com/arjungandhi";
 const MODEL = "anthropic/claude-haiku-5-5";
-const cli = join(import.meta.dirname, "../../dist/cli.js");
+const cli = join(import.meta.dirname, "../../dist/tobor");
 const run = promisify(execFile);
 if (!process.env.ANTHROPIC_API_KEY) throw new Error("set ANTHROPIC_API_KEY");
 
@@ -54,12 +54,12 @@ try {
 			"",
 		].join("\n"),
 	);
-	const init = await run(process.execPath, [cli, "init"], { env: { ...process.env, TOBOR_HOME: home } });
+	const init = await run(cli, ["init"], { env: { ...process.env, TOBOR_HOME: home } });
 	log("init", init.stdout.trim().split("\n").slice(0, 3).join(" | "));
 	await run("git", ["init", "-q"], { cwd: scratch });
 	await writeFile(join(scratch, "scratch.txt"), "alpha\nbeta\ngamma\n");
 
-	node = spawn(process.execPath, [cli, "node"], { env: { ...process.env, TOBOR_HOME: home }, stdio: ["ignore", "pipe", "pipe"] });
+	node = spawn(cli, ["node"], { env: { ...process.env, TOBOR_HOME: home }, stdio: ["ignore", "pipe", "pipe"] });
 	let out = "";
 	node.stdout!.on("data", (d: Buffer) => {
 		out += d;

@@ -17,7 +17,7 @@ const fixture = fileURLToPath(new URL("./fixtures/echo-server.ts", import.meta.u
 const stdio = (env?: Record<string, string>) => ({
 	type: "stdio",
 	command: process.execPath,
-	args: ["--import", "tsx", fixture, "--stdio"],
+	args: [fixture, "--stdio"],
 	...(env ? { env } : {}),
 });
 
