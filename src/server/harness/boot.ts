@@ -43,6 +43,8 @@ export type CoreServices = {
 	readonly auth: AuthService;
 	readonly credentials: FileCredentialStore;
 	readonly env: EnvCache;
+	/** Recompose and reinstall the `tobor` extension with `extra` modules after the plugin modules (MCP reloads). */
+	readonly installTools: (extra: readonly ToolModule[]) => void;
 };
 
 /** Host services contributed by other modules. */
@@ -50,8 +52,10 @@ export type PluggableServices = Pick<Host, "workers" | "schedules" | "artifacts"
 
 /** What the integrator plugs into boot. */
 export type NodePlugins = {
-	/** Tool modules composed before the core module (tools, hooks, tasks, docs). */
+	/** Tool modules composed after the core module (its sections and approval hook come first). */
 	modules: ToolModule[];
+	/** The bus the modules were built against (they exist before boot); default a new one. */
+	events?: EventBus;
 	/** Build the pluggable services once the Harness is open. */
 	services?: (core: CoreServices) => Partial<PluggableServices>;
 	/** Run in order after the Host is assembled (schedule reconcile, notifier re-waits, …). */
@@ -100,7 +104,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 
 	const credentials = new FileCredentialStore(paths.auth);
 	const models = options.models ?? createModels({ credentials, env: envVars });
-	const events = new EventBus();
+	const events = plugins.events ?? new EventBus();
 	let plugged: Partial<PluggableServices> = {};
 	const approvals = new ApprovalService({
 		events,
@@ -116,7 +120,9 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		docs: [...TOBOR_DOCS],
 	};
 	const registry = createRegistry();
-	registry.install(composeExtension("tobor", [...plugins.modules, coreModule]));
+	const installTools = (extra: readonly ToolModule[]) =>
+		registry.install(composeExtension("tobor", [coreModule, ...plugins.modules, ...extra]));
+	installTools([]);
 
 	const env = new EnvCache({ shellEnv: envVars, idleMs: () => config.defaults.idle });
 	const settings = (): HarnessSettings => ({
@@ -133,7 +139,6 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		BACKGROUND_CONTEXT,
 	);
 	approvals.attach(harness);
-	harness.resume();
 
 	const { context: ctx, cancel } = withCancel(BACKGROUND_CONTEXT);
 	const systemConversationId = await ensureSystemConversation(harness, paths.nodeJson, ctx);
@@ -163,6 +168,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		auth,
 		credentials,
 		env,
+		installTools,
 	};
 	plugged = plugins.services?.(core) ?? {};
 
@@ -218,6 +224,8 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		},
 	};
 
+	// Resumed tasks (workers, schedules) read the plugged services, so start them only now.
+	harness.resume();
 	await sessions.startTracking();
 	for (const hook of plugins.afterOpen ?? []) await hook(host);
 	return host;
