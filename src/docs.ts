@@ -56,7 +56,12 @@ export type SessionDocValue = {
 	createdAt: number;
 	/** Present on worker conversations. */
 	worker?: WorkerIdentity;
+	/** Who set `title`: the first prompt, the title model, or the operator's rename. Absent means "prompt". */
+	titleSource?: TitleSource;
 };
+
+/** Origin of a session's title; only `prompt` titles are replaced by a generated one. */
+export type TitleSource = "prompt" | "model" | "user";
 
 export const SessionDoc = defineDoc<SessionDocValue>({
 	kind: "tobor.session",

@@ -69,6 +69,8 @@ export type Config = {
 		max_workers: number;
 		/** `provider/modelId` for workers whose agent file sets no `model`; unset, workers inherit the director's. */
 		worker_model?: string;
+		/** `provider/modelId` for generated session titles; unset, `DEFAULT_CHEAP_MODEL`, then the session's own model. */
+		title_model?: string;
 		/** Idle time (ms) before an env cache entry for a cwd is released. */
 		idle: number;
 		/** Time (ms) before a pending approval is denied with reason `timeout`. */

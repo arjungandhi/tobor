@@ -25,6 +25,7 @@ function nodeFields(agents: string[]): Field[] {
 		{ path: ["defaults", "approval_mode"], label: "approval mode", description: "ask: gated tools wait for you. auto: tools run without asking.", kind: { type: "enum", values: ["ask", "auto"] } },
 		{ path: ["defaults", "mode"], label: "mode", description: "director plans and dispatches workers; solo does the work itself.", kind: { type: "enum", values: ["director", "solo"] } },
 		{ path: ["defaults", "worker_model"], label: "worker model", description: "Model of workers whose agent file sets none; unset, workers use the director's.", kind: { type: "model", unset: "director's model" } },
+		{ path: ["defaults", "title_model"], label: "title model", description: "Model that titles sessions after their first exchange; unset, a cheap built-in model, else the session's own.", kind: { type: "model", unset: "cheap built-in" } },
 		...agents.map((agent): Field => ({
 			path: ["agents", "model_overrides", agent],
 			label: `agent ${agent}`,

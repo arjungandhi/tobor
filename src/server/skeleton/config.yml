@@ -20,6 +20,7 @@ defaults:
   mode: director                # director | solo
   max_workers: 8
   # worker_model: anthropic/claude-sonnet-5-5   # workers whose agent file sets no model
+  # title_model: anthropic/claude-haiku-5-5     # names sessions after their first exchange; unset: that cheap model, else the session's
   idle: 30m
   approval_timeout: 12h
 
