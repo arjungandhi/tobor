@@ -19,7 +19,7 @@ function when(ms: number, now: number): string {
 }
 
 /** Ctrl+L: sessions with state tag and cost; Enter opens, n new, r rename, a archive/unarchive, x delete, h archived. */
-export async function showSessions(app: App, archived = false): Promise<void> {
+export async function showSessions(app: App, archived = false, focus?: { id: number; index: number }): Promise<void> {
 	const client = app.api();
 	const sessions = archived ? (await client.sessions(true)).filter((s) => s.archived) : await client.sessions();
 	if (!archived) app.sessions = sessions;
@@ -31,9 +31,9 @@ export async function showSessions(app: App, archived = false): Promise<void> {
 	}));
 	const current = app.session.target?.id;
 	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`, items, {
-		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · h ${archived ? "active" : "archived"} · Esc`,
+		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · h ${archived ? "active" : "archived"} · Esc close`,
 		keys: ["n", "r", "a", "x", "h"],
-		selected: Math.max(0, sessions.findIndex((s) => s.id === current)),
+		selected: initialIndex(sessions, current, focus),
 	});
 	if (!picked) return;
 	const s = picked.value;
@@ -47,6 +47,7 @@ export async function showSessions(app: App, archived = false): Promise<void> {
 			return;
 	}
 	if (!s) return showSessions(app, archived);
+	const at = { id: s.id, index: sessions.findIndex((x) => x.id === s.id) };
 	if (picked.key === "r") {
 		const title = await app.ask(`rename #${s.id}`, { initial: s.title });
 		if (title?.trim()) await client.patchSession(s.id, { title: title.trim() });
@@ -60,5 +61,14 @@ export async function showSessions(app: App, archived = false): Promise<void> {
 		}
 	}
 	await app.refreshSessions();
-	return showSessions(app, archived);
+	return showSessions(app, archived, at);
+}
+
+/** Cursor row: the row just acted on (or its nearest successor once it is gone), else the open session, else the top. */
+function initialIndex(sessions: SessionSummary[], current: number | undefined, focus?: { id: number; index: number }): number {
+	if (focus) {
+		const i = sessions.findIndex((s) => s.id === focus.id);
+		return i >= 0 ? i : Math.max(0, Math.min(focus.index, sessions.length - 1));
+	}
+	return Math.max(0, sessions.findIndex((s) => s.id === current));
 }

@@ -136,7 +136,7 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 		{ value: "rename", label: "rename" },
 		{ value: "default", label: isDefault ? "unset default" : "set as default", description: "preselected in the picker" },
 		{ value: "remove", label: "remove", description: "forget it; the node is not touched" },
-	]);
+	], { hint: "Enter choose · Esc back" });
 	switch (action?.value) {
 		case "address": {
 			const address = await askAddress(app, `${name} · host:port`, ws);
