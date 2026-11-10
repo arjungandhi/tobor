@@ -1,6 +1,6 @@
 // GitHub release lookup and binary replacement helpers. Stateless on purpose (no node, host or config state): the node's
 // update checker (update.ts) and a CLI self-update both build on them.
-import { createWriteStream } from "node:fs";
+import { createWriteStream, type WriteStream } from "node:fs";
 import { chmod, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -113,24 +113,33 @@ export async function sha256File(path: string): Promise<string> {
 /** Download `url` to `tmp`, returning the hex sha256 of what was written. Removes `tmp` on failure. */
 export async function downloadFile(url: string, tmp: string, options: { fetch?: FetchFn; userAgent?: string; signal?: AbortSignal } = {}): Promise<string> {
 	const doFetch = options.fetch ?? fetch;
+	let out: WriteStream | undefined;
 	try {
 		const res = await doFetch(url, { headers: options.userAgent ? { "user-agent": options.userAgent } : {}, ...(options.signal ? { signal: options.signal } : {}) });
 		if (!res.ok || !res.body) throw new Error(`download ${url}: HTTP ${res.status}`);
 		const hasher = new Bun.CryptoHasher("sha256");
-		const out = createWriteStream(tmp, { mode: 0o755 });
-		try {
-			for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-				hasher.update(chunk);
-				if (!out.write(chunk)) await new Promise<void>((resolve) => out.once("drain", resolve));
-			}
-		} finally {
-			await new Promise<void>((resolve, reject) => {
-				out.once("error", reject);
-				out.end(resolve);
-			});
+		const stream = createWriteStream(tmp, { mode: 0o755 });
+		out = stream;
+		// Attached right away so a stream error (unwritable dir, full disk) never goes unhandled; it is raced against
+		// every wait below. The no-op catch keeps the promise itself from being reported when nothing awaits it.
+		let streamError: Error | undefined;
+		const failed = new Promise<never>((_, reject) =>
+			stream.once("error", (err: Error) => {
+				streamError = err;
+				reject(err);
+			}),
+		);
+		failed.catch(() => {});
+		for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+			hasher.update(chunk);
+			if (!stream.write(chunk)) await Promise.race([new Promise<void>((resolve) => stream.once("drain", resolve)), failed]);
 		}
+		// The end() callback can fire before a pending open/write error is emitted; "close" always comes after it.
+		await Promise.race([new Promise<void>((resolve) => { stream.once("close", resolve); stream.end(); }), failed]);
+		if (streamError) throw streamError;
 		return hasher.digest("hex");
 	} catch (err) {
+		out?.destroy();
 		await rm(tmp, { force: true });
 		throw err;
 	}

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	assetFor,
 	downloadAndReplace,
+	downloadFile,
 	type FetchFn,
 	fetchLatestRelease,
 	isNewer,
@@ -128,6 +129,31 @@ describe("download and replace", () => {
 		await writeFile(dest, "old");
 		await expect(downloadAndReplace("https://dl/tobor", dest, sha("x"), { fetch: async () => new Response("", { status: 404 }) })).rejects.toThrow(/HTTP 404/);
 		expect(await readdir(dir)).toEqual(["tobor"]);
+	});
+});
+
+describe("downloadFile errors", () => {
+	it("rejects cleanly when the destination directory is unwritable", async () => {
+		const tmp = join(dir, "missing", "x.download");
+		const crashes: unknown[] = [];
+		const onCrash = (err: unknown) => crashes.push(err);
+		process.on("uncaughtException", onCrash);
+		try {
+			await expect(downloadFile("https://dl/x", tmp, { fetch: bytes("payload") })).rejects.toThrow(/ENOENT/);
+			// A large body exercises the backpressure (drain) path too.
+			await expect(downloadFile("https://dl/x", tmp, { fetch: bytes("x".repeat(4 * 1024 * 1024)) })).rejects.toThrow(/ENOENT/);
+			await new Promise((r) => setTimeout(r, 20));
+		} finally {
+			process.off("uncaughtException", onCrash);
+		}
+		expect(crashes).toEqual([]);
+		expect(await readdir(dir)).toEqual([]);
+	});
+
+	it("removes the temp file and reports the error when downloadAndReplace cannot write", async () => {
+		const dest = join(dir, "nope", "tobor");
+		await expect(downloadAndReplace("https://dl/x", dest, sha("x"), { fetch: bytes("x") })).rejects.toThrow(/ENOENT/);
+		expect(await readdir(dir)).toEqual([]);
 	});
 });
 
