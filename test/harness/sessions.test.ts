@@ -344,6 +344,20 @@ describe("system prompt sections", () => {
 		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["ask_user", "bash"]);
 	});
 
+	it("never offers ask_user to schedule-kind sessions, whatever the mode", async () => {
+		const t = await start();
+		const names = async (id: number) =>
+			(await (await t.host.harness.conversation(id as ConversationId, ctx))!.agent(ctx)).tools.map((x) => x.name);
+		const solo = await t.host.sessions.create({ cwd: t.root, mode: "solo", kind: "schedule", scheduleId: "s1" });
+		expect(await names(solo.id)).toEqual(["bash"]);
+		await t.host.sessions.patch(solo.id, { mode: "director" });
+		expect(await names(solo.id)).toEqual([]);
+		await t.host.sessions.patch(solo.id, { mode: "solo" });
+		expect(await names(solo.id)).toEqual(["bash"]);
+		const director = await t.host.sessions.create({ cwd: t.root, mode: "director", kind: "schedule", scheduleId: "s2" });
+		expect(await names(director.id)).toEqual([]);
+	});
+
 	describe("generated titles", () => {
 		/** A title-model step that counts its calls and answers `reply` (after `gate`, when given). */
 		function titleStep(reply: string | { error: string }, gate?: Promise<void>) {

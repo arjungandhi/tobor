@@ -9,6 +9,7 @@ import {
 import type { ScheduleRun } from "../../../api/types.js";
 import { type Config, parseModelRef } from "../../../config/schema.js";
 import { type ScheduleRecord, SchedulesDoc, SessionDoc, SessionsDoc } from "../../../docs.js";
+import { ASK_USER } from "../questions/tool.js";
 import { fireDecision, graceMs, nextFireAt } from "./cron.js";
 
 /** Runs kept per schedule. */
@@ -114,8 +115,11 @@ export function createScheduleTask(deps: ScheduleTaskDeps): ScheduleTask {
 					const config = deps.config();
 					const record = await tx.createConversation({ ownership: { kind: "ownerless" } });
 					const model = parseModelRef(def.model ?? config.defaults.model);
+					// Nobody watches a scheduled run: `ask_user` would block it until the approval timeout.
+					const unattended = runtime.registry.tools().map((t) => t.tool).filter((t) => t.name === ASK_USER);
 					await configure(tx, record.id, {
 						cwd: def.cwd,
+						...(unattended.length ? { modelTools: { remove: unattended } } : {}),
 						thinkingLevel: config.defaults.thinking,
 						maxTurns: config.defaults.max_turns,
 						...(model ? { model } : {}),

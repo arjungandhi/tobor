@@ -44,6 +44,7 @@ import {
 	type SessionIndex as SessionIndexContract,
 } from "../../host.js";
 import { findGitRoot, resolveCwd } from "./env.js";
+import { ASK_USER } from "./questions/tool.js";
 import { generateTitle, resolveTitleModel } from "./titles.js";
 
 /** Tools the model sees in `director` mode; `artifact_*` tools are added from the registry. */
@@ -164,7 +165,7 @@ export class SessionIndex implements SessionIndexContract {
 		const prompt = options.prompt?.trim() ? options.prompt : undefined;
 		const title = titleFromPrompt(prompt ?? "");
 		const systemId = this.o.systemConversationId as ConversationId;
-		const modelTools = this.modelTools(mode);
+		const modelTools = this.modelTools(mode, kind === "schedule");
 		const conversation = await harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
@@ -231,7 +232,10 @@ export class SessionIndex implements SessionIndexContract {
 		const change: { -readonly [K in keyof AgentChange]: AgentChange[K] } = {};
 		if (patch.model !== undefined) change.model = this.modelRef(patch.model);
 		if (patch.thinking !== undefined) change.thinkingLevel = patch.thinking;
-		if (patch.mode !== undefined && patch.mode !== current.mode) change.modelTools = this.modelTools(patch.mode) ?? null;
+		if (patch.mode !== undefined && patch.mode !== current.mode) {
+			const unattended = (await this.index()).sessions[String(id)]?.kind === "schedule";
+			change.modelTools = this.modelTools(patch.mode, unattended) ?? null;
+		}
 		const systemId = this.o.systemConversationId as ConversationId;
 		await this.o.harness.commit(async (tx) => {
 			const session = await tx.doc(SessionDoc, cid);
@@ -462,13 +466,19 @@ export class SessionIndex implements SessionIndexContract {
 		return ref;
 	}
 
-	/** `modelTools` for a mode: the director's list resolved against the registry, unset for `solo`. */
-	private modelTools(mode: SessionMode): ToolRegistration[] | undefined {
-		if (mode !== "director") return undefined;
+	/**
+	 * `modelTools` for a mode: the director's list resolved against the registry, unset for `solo`. `unattended` (schedule
+	 * runs, which nobody is watching) withholds `ask_user`, which would block until the approval timeout.
+	 */
+	private modelTools(mode: SessionMode, unattended = false): ToolRegistration[] | { remove: ToolRegistration[] } | undefined {
+		const tools = this.o.registry.snapshot().tools();
+		if (mode !== "director") {
+			return unattended ? { remove: tools.map((t) => t.tool).filter((t) => t.name === ASK_USER) } : undefined;
+		}
 		const out: ToolRegistration[] = [];
 		const seen = new Set<string>();
-		for (const { tool } of this.o.registry.snapshot().tools()) {
-			if (seen.has(tool.name)) continue;
+		for (const { tool } of tools) {
+			if (seen.has(tool.name) || (unattended && tool.name === ASK_USER)) continue;
 			if (DIRECTOR_TOOLS.includes(tool.name) || tool.name.startsWith("artifact_")) {
 				seen.add(tool.name);
 				out.push(tool);

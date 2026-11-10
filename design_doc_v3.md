@@ -147,7 +147,7 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 | `schedule_create` | tobor; cannot set `approval_mode: auto` | yes |
 | `schedule_list`, `schedule_delete` | tobor | no |
 | `todo` | tobor; writes the doc `tobor.todo` (per conversation: `[{id, text, status: pending\|doing\|done}]`), rendered in the Session view | no |
-| `ask_user` | tobor; `{question, options?}` commits a pending record to `tobor.questions` (per conversation), emits `question.asked`, notifies, and blocks until `POST /api/questions/:callId`, the approval timeout (a non-error "proceed on your best judgment" result) or abort; director and solo sessions only, never workers | no |
+| `ask_user` | tobor; `{question, options?}` commits a pending record to `tobor.questions` (per conversation), emits `question.asked`, notifies, and blocks until `POST /api/questions/:callId`, the approval timeout (a non-error "proceed on your best judgment" result) or abort; director and solo sessions only; never workers or schedule-run sessions (unattended: it would block until the timeout); prompt text about it is rendered only when the request offers it | no |
 | `task` | tobor; spawns worker conversations (see Subagents) | only if it spawns an `approval: auto` worker |
 | `wait`, `agent_output`, `agent_list` | tobor; read worker results | no |
 | `agent_stop`, `agent_send` | tobor; stop a live worker, or steer it with a follow-up message | no |
