@@ -123,6 +123,7 @@ fun NewSessionScreen(
         try {
             val c = api.cwds()
             suggestions = (c.roots + c.recent).distinct().take(8)
+            if (cwd.isBlank()) cwd = c.roots.firstOrNull() ?: ""
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
