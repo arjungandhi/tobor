@@ -182,7 +182,7 @@ describe("read tool", () => {
 	it("refuses tobor secret/state files under $TOBOR_HOME only", async () => {
 		const home = "/srv/tobor";
 		const t = setup(home);
-		const secrets = ["auth.json", "agent.env", "node.json", "tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm", "tobor.sqlite.bak", "backups/tobor.sqlite.2026"];
+		const secrets = [".tobor/state/auth.json", ".tobor/state/agent.env", ".tobor/state/node.json", ".tobor/state/tobor.sqlite", "auth.json", "agent.env", "node.json", "tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm", "tobor.sqlite.bak", "backups/tobor.sqlite.2026"];
 		for (const f of secrets) t.env.set(`${home}/${f}`, "x");
 		t.env.set(`${home}/someproject/file.txt`, "hi\n");
 		t.env.set(`${home}/.tobor/AGENTS.md`, "agents\n");

@@ -133,8 +133,18 @@ describe("AgentData files", () => {
 		await expect(data.remove("design-systems/t/tokens.css")).rejects.toMatchObject({ status: 422 });
 	});
 
+	it("hides the state dir from listings", async () => {
+		await mkdir(join(dir, "state"), { recursive: true });
+		await writeFile(join(dir, "state", "auth.json"), "{}");
+		await mkdir(join(dir, "agents", "state"), { recursive: true });
+		const root = await data.read("");
+		expect(root).toMatchObject({ type: "dir" });
+		expect((root as { entries: { name: string }[] }).entries.map((e) => e.name)).toEqual(["agents", "config.yml"]);
+		expect(await data.read("agents/state")).toMatchObject({ type: "dir" });
+	});
+
 	it("keeps every path inside .tobor/", async () => {
-		for (const bad of ["../node.json", "agents/../../auth.json", ".git/config", "agents/.git", "/etc/passwd"]) {
+		for (const bad of ["../node.json", "agents/../../auth.json", ".git/config", "agents/.git", "/etc/passwd", "state", "state/auth.json", "State/node.json"]) {
 			await expect(data.read(bad), bad).rejects.toBeInstanceOf(HostError);
 			await expect(data.write(bad, { content: "x" }), bad).rejects.toBeInstanceOf(HostError);
 		}
