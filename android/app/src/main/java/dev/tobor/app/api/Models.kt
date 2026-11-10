@@ -35,7 +35,21 @@ data class Whoami(
     @SerialName("ntfy_topic") val ntfyTopic: String? = null,
     val chrome: ChromeInfo = ChromeInfo(),
     val now: Long = 0,
+    @SerialName("latest_version") val latestVersion: String? = null,
+    @SerialName("update_available") val updateAvailable: Boolean? = null,
 )
+
+/** `POST /api/upgrade`: status is `current` | `upgrading`. The node restarts itself after `upgrading`. */
+@Serializable
+data class UpgradeResponse(
+    val status: String = "",
+    val version: String = "",
+    val latest: String? = null,
+)
+
+/** `POST /api/restart`: `{status:'restarting'}`; the connection drops right after. */
+@Serializable
+data class RestartResponse(val status: String = "")
 
 @Serializable
 data class Usage(
