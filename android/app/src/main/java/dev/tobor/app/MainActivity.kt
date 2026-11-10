@@ -22,6 +22,7 @@ import androidx.navigation.navArgument
 import dev.tobor.app.api.ToborApi
 import dev.tobor.app.data.SettingsStore
 import dev.tobor.app.ui.screens.NewSessionScreen
+import dev.tobor.app.ui.screens.artifacts.ArtifactsScreen
 import dev.tobor.app.ui.screens.ScheduleFormScreen
 import dev.tobor.app.ui.screens.SchedulesScreen
 import dev.tobor.app.ui.screens.SessionScreen
@@ -67,6 +68,7 @@ fun AppNav() {
                         onNew = { nav.navigate("new") },
                         onSettings = { nav.navigate("settings") },
                         onSchedules = { nav.navigate("schedules") },
+                        onArtifacts = { nav.navigate("artifacts") },
                     )
                 }
             }
@@ -113,6 +115,12 @@ fun AppNav() {
                     api = api,
                     editId = entry.arguments?.getString("id"),
                     onDone = { nav.popBackStack() },
+                    onBack = { nav.popBackStack() },
+                )
+            }
+            composable("artifacts") {
+                ArtifactsScreen(
+                    api = api,
                     onBack = { nav.popBackStack() },
                 )
             }
