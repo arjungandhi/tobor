@@ -47,6 +47,11 @@ describe("routes", () => {
 		expect(await http(port, "GET", "/api/whoami")).toMatchObject({ status: 200, body: { host: "box" } });
 	});
 
+	it("upgrade is unsupported from source (dev build)", async () => {
+		const { port } = await api();
+		expect(await http(port, "POST", "/api/upgrade", { body: {} })).toMatchObject({ status: 400, body: { code: "unsupported" } });
+	});
+
 	it("sessions list/create/get/patch/delete/input/abort/entries", async () => {
 		const detail = { id: 7, title: "t" };
 		const { port, calls } = await api({
