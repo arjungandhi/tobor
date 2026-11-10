@@ -56,6 +56,11 @@ class ToborApi(baseUrl: String) {
         .connectTimeout(10, TimeUnit.SECONDS)
         .build()
 
+    /** Same pool/dispatcher, but a longer whole-request timeout for bodies that carry image attachments. */
+    private val uploadClient: OkHttpClient = client.newBuilder()
+        .callTimeout(120, TimeUnit.SECONDS)
+        .build()
+
     private val jsonType = "application/json".toMediaType()
 
     // ─── REST ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -84,9 +89,12 @@ class ToborApi(baseUrl: String) {
         thinking: String? = null,
         approvalMode: String? = null,
         mode: String? = null,
+        attachments: List<ImageAttachment> = emptyList(),
     ): Long {
-        val body = toborJson.encodeToString(CreateSessionRequest(cwd, prompt, model, thinking, approvalMode, mode))
-        return send("POST", "/api/sessions", body).decode<CreateSessionResponse>().id
+        val body = toborJson.encodeToString(
+            CreateSessionRequest(cwd, prompt, model, thinking, approvalMode, mode, attachments.ifEmpty { null }),
+        )
+        return send("POST", "/api/sessions", body, upload = attachments.isNotEmpty()).decode<CreateSessionResponse>().id
     }
 
     suspend fun session(id: Long): SessionDetail = get("/api/sessions/$id").decode()
@@ -99,9 +107,19 @@ class ToborApi(baseUrl: String) {
     }
 
     /** [mode]: prompt | steer | follow_up. Returns the submission id. */
-    suspend fun input(id: Long, content: String, mode: String, requestId: String): Long =
-        send("POST", "/api/sessions/$id/input", toborJson.encodeToString(InputRequest(content, mode, requestId)))
-            .decode<InputResponse>().submissionId
+    suspend fun input(
+        id: Long,
+        content: String,
+        mode: String,
+        requestId: String,
+        attachments: List<ImageAttachment> = emptyList(),
+    ): Long =
+        send(
+            "POST",
+            "/api/sessions/$id/input",
+            toborJson.encodeToString(InputRequest(content, mode, requestId, attachments.ifEmpty { null })),
+            upload = attachments.isNotEmpty(),
+        ).decode<InputResponse>().submissionId
 
     suspend fun abort(id: Long) {
         send("POST", "/api/sessions/$id/abort", "{}")
@@ -186,18 +204,18 @@ class ToborApi(baseUrl: String) {
     private suspend fun get(path: String, query: Map<String, String> = emptyMap()): String =
         execute(Request.Builder().url(urlFor(path, query)).get().build())
 
-    private suspend fun send(method: String, path: String, json: String?): String {
+    private suspend fun send(method: String, path: String, json: String?, upload: Boolean = false): String {
         val body: RequestBody? = json?.toByteArray(Charsets.UTF_8)?.toRequestBody(jsonType)
         val builder = Request.Builder().url(urlFor(path, emptyMap()))
         when (method) {
             "DELETE" -> if (body == null) builder.delete() else builder.delete(body)
             else -> builder.method(method, body ?: ByteArray(0).toRequestBody(jsonType))
         }
-        return execute(builder.build())
+        return execute(builder.build(), if (upload) uploadClient else client)
     }
 
-    private suspend fun execute(request: Request): String = suspendCancellableCoroutine { cont ->
-        val call = client.newCall(request)
+    private suspend fun execute(request: Request, http: OkHttpClient = client): String = suspendCancellableCoroutine { cont ->
+        val call = http.newCall(request)
         cont.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {

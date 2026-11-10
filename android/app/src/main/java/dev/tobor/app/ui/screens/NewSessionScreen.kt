@@ -51,6 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.ToborApi
 import dev.tobor.app.api.ToborApiException
+import dev.tobor.app.ui.screens.session.AttachImageButton
+import dev.tobor.app.ui.screens.session.PendingImages
+import dev.tobor.app.ui.screens.session.PendingImagesRow
 import dev.tobor.app.ui.theme.FontFamilies
 import dev.tobor.app.ui.theme.RuleLabel
 import dev.tobor.app.ui.theme.StripeBand
@@ -118,6 +121,7 @@ fun NewSessionScreen(
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var modelMenu by remember { mutableStateOf(false) }
+    val pendingImages = remember { PendingImages() }
 
     LaunchedEffect(api) {
         try {
@@ -144,7 +148,7 @@ fun NewSessionScreen(
         }
     }
 
-    val canSubmit = cwd.isNotBlank() && prompt.isNotBlank() && !submitting
+    val canSubmit = cwd.isNotBlank() && prompt.isNotBlank() && !submitting && !pendingImages.loading
 
     Surface(color = ToborColors.bg, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().fillMaxSize()) {
@@ -269,6 +273,17 @@ fun NewSessionScreen(
                     colors = toborFieldColors(),
                 )
 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AttachImageButton(pendingImages, onProblem = { error = it })
+                    Text(
+                        "attach images",
+                        fontFamily = FontFamilies.CourierPrime,
+                        fontSize = 12.sp,
+                        color = ToborColors.muted,
+                    )
+                }
+                PendingImagesRow(pendingImages)
+
                 error?.let {
                     Text(
                         it,
@@ -291,6 +306,7 @@ fun NewSessionScreen(
                                     null,
                                     approvalMode,
                                     mode,
+                                    pendingImages.attachments,
                                 )
                                 onCreated(id)
                             } catch (e: CancellationException) {

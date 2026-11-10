@@ -1,5 +1,7 @@
 package dev.tobor.app.api
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -114,6 +116,19 @@ data class SessionDetail(
     )
 }
 
+/**
+ * Image attached to a prompt (`attachments` on create-session and input bodies); incoming message image parts share
+ * the shape. [data] is base64 without a `data:` prefix. [mimeType]: image/png | image/jpeg | image/gif | image/webp.
+ * Limits: 8 per message, 5 MB decoded each.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ImageAttachment(
+    @EncodeDefault val type: String = "image",
+    val data: String,
+    val mimeType: String,
+)
+
 @Serializable
 data class CreateSessionRequest(
     val cwd: String,
@@ -122,6 +137,7 @@ data class CreateSessionRequest(
     val thinking: String? = null,
     @SerialName("approval_mode") val approvalMode: String? = null,
     val mode: String? = null,
+    val attachments: List<ImageAttachment>? = null,
 )
 
 @Serializable
@@ -142,6 +158,7 @@ data class InputRequest(
     val content: String,
     val mode: String,
     val requestId: String,
+    val attachments: List<ImageAttachment>? = null,
 )
 
 @Serializable

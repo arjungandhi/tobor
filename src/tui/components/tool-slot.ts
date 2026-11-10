@@ -1,6 +1,7 @@
 import { type Component, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ToolBlock, ToolStatus } from "../replica.js";
 import { c } from "../theme.js";
+import { ImageList } from "./image-parts.js";
 
 const TAIL_LINES = 5;
 
@@ -34,16 +35,19 @@ export class ToolSlotView implements Component {
 	private block: ToolBlock;
 	private expanded = false;
 	private selected = false;
+	private readonly images = new ImageList();
 	private cache: { width: number; lines: string[] } | undefined;
 
 	constructor(block: ToolBlock) {
 		this.block = block;
+		this.images.update(block.images);
 	}
 
 	/** Take a newer derivation of the same call. */
 	update(block: ToolBlock): void {
 		const old = this.block;
 		this.block = block;
+		if (this.images.update(block.images)) this.cache = undefined;
 		if (old.status !== block.status || old.output !== block.output || old.args !== block.args || old.droppedLines !== block.droppedLines) {
 			this.cache = undefined;
 		}
@@ -64,6 +68,7 @@ export class ToolSlotView implements Component {
 
 	invalidate(): void {
 		this.cache = undefined;
+		this.images.invalidate();
 	}
 
 	render(width: number): string[] {
@@ -96,6 +101,7 @@ export class ToolSlotView implements Component {
 				for (const wrapped of this.expanded ? wrapTextWithAnsi(line, inner) : [line]) lines.push(row(` ${status === "error" ? c.error(wrapped) : wrapped}`));
 			}
 		}
+		lines.push(...this.images.render(width));
 		this.cache = { width, lines };
 		return lines;
 	}

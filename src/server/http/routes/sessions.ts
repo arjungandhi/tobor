@@ -1,6 +1,17 @@
 import type { CreateSessionResponse, InputMode, PatchSessionRequest } from "../../../api/types.js";
 import { APPROVAL_MODES, SESSION_MODES, THINKING_LEVELS } from "../../../config/schema.js";
-import { HttpError, invalid, optBool, optEnum, optString, parseInt10, reqEnum, reqString } from "../json.js";
+import {
+	ATTACHMENTS_BODY_LIMIT,
+	HttpError,
+	invalid,
+	optAttachments,
+	optBool,
+	optEnum,
+	optString,
+	parseInt10,
+	reqEnum,
+	reqString,
+} from "../json.js";
 import { idParam, notFound, Reply, type Router } from "../router.js";
 
 const INPUT_MODES: readonly InputMode[] = ["prompt", "steer", "follow_up"];
@@ -13,10 +24,12 @@ export function sessionsRoutes(r: Router): void {
 	});
 
 	r.on("POST", "/api/sessions", async ({ host, body }) => {
-		const b = await body();
+		const b = await body(ATTACHMENTS_BODY_LIMIT);
+		const attachments = optAttachments(b);
 		const { id } = await host.sessions.create({
 			cwd: reqString(b, "cwd"),
 			prompt: optString(b, "prompt"),
+			...(attachments ? { attachments } : {}),
 			model: optString(b, "model"),
 			thinking: optEnum(b, "thinking", THINKING_LEVELS),
 			approvalMode: optEnum(b, "approval_mode", APPROVAL_MODES),
@@ -60,9 +73,13 @@ export function sessionsRoutes(r: Router): void {
 
 	r.on("POST", "/api/sessions/:id/input", async (ctx) => {
 		const id = idParam(ctx);
-		const b = await ctx.body();
+		const b = await ctx.body(ATTACHMENTS_BODY_LIMIT);
+		const attachments = optAttachments(b);
+		// Text may be empty only alongside attachments.
+		const content = attachments ? (optString(b, "content") ?? "") : reqString(b, "content");
 		return ctx.host.sessions.input(id, {
-			content: reqString(b, "content"),
+			content,
+			...(attachments ? { attachments } : {}),
 			mode: reqEnum(b, "mode", INPUT_MODES),
 			requestId: reqString(b, "requestId"),
 		});

@@ -33,7 +33,7 @@ describe("guards over HTTP", () => {
 
 	it("413 past 1 MiB, 400 on bad JSON, 404/405 for unknown routes", async () => {
 		const { port } = await api();
-		const big = await http(port, "POST", "/api/sessions", { body: JSON.stringify({ prompt: "x".repeat(1024 * 1024 + 1) }) });
+		const big = await http(port, "PATCH", "/api/sessions/7", { body: JSON.stringify({ title: "x".repeat(1024 * 1024 + 1) }) });
 		expect(big.status).toBe(413);
 		expect((await http(port, "POST", "/api/sessions", { body: "{nope" })).body).toMatchObject({ code: "invalid_json" });
 		expect((await http(port, "GET", "/api/nope")).status).toBe(404);

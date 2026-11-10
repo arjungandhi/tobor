@@ -15,6 +15,7 @@ import {
 	type Registry,
 	type TaskId,
 	type ToolRegistration,
+	type UserInput,
 	UsageDoc,
 	type UsageState,
 } from "@earendil-works/pi-durable";
@@ -22,6 +23,7 @@ import type {
 	CwdsResponse,
 	EntriesQuery,
 	EntriesResponse,
+	ImageAttachment,
 	InputMode,
 	ListSessionsResponse,
 	PatchSessionRequest,
@@ -96,6 +98,18 @@ const UNTITLED = "new session";
 /** Title for a new session: the prompt's first 60 characters, whitespace collapsed. */
 export function titleFromPrompt(prompt: string): string {
 	return prompt.replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+/**
+ * The `UserInput` for a message: the plain string when there are no attachments, else content blocks: a text block
+ * (only when `text` is non-empty) followed by one image block per attachment.
+ */
+export function toUserInput(text: string, attachments?: readonly ImageAttachment[]): UserInput {
+	if (!attachments?.length) return text;
+	return [
+		...(text === "" ? [] : [{ type: "text" as const, text }]),
+		...attachments.map((a) => ({ type: "image" as const, data: a.data, mimeType: a.mimeType })),
+	];
 }
 
 /** Token and cost totals over every model of a `pi.usage` doc. */
@@ -213,9 +227,10 @@ export class SessionIndex implements SessionIndexContract {
 			ctx,
 		);
 		// Promptless: the session stays idle with no turns (nothing to track until `input`); the first input seeds the title.
-		const submission = prompt
+		const attachments = options.attachments?.length ? options.attachments : undefined;
+		const submission = prompt || attachments
 			? await conversation.submit(
-					{ type: "input", content: prompt, ...(options.requestId ? { requestId: options.requestId } : {}) },
+					{ type: "input", content: toUserInput(prompt ?? "", attachments), ...(options.requestId ? { requestId: options.requestId } : {}) },
 					ctx,
 				)
 			: undefined;
@@ -295,14 +310,14 @@ export class SessionIndex implements SessionIndexContract {
 
 	async input(
 		id: SessionId,
-		input: { content: string; mode: InputMode; requestId: string },
+		input: { content: string; attachments?: ImageAttachment[]; mode: InputMode; requestId: string },
 	): Promise<{ submissionId: SubmissionId }> {
 		const conversation = await this.conversation(id);
 		await this.seedTitle(id, input.content);
 		const submission = await conversation.submit(
 			{
 				type: "input",
-				content: input.content,
+				content: toUserInput(input.content, input.attachments),
 				requestId: input.requestId,
 				...(input.mode === "steer" ? { whenBusy: "steer" as const } : {}),
 			},

@@ -13,12 +13,15 @@ import type { WatchValue, WatchWindow } from "../api/types.js";
 /** Lifecycle of a tool call as the transcript shows it. */
 export type ToolStatus = "streaming" | "pending" | "approval" | "question" | "running" | "done" | "error";
 
+/** An image attached to a message or tool result: base64 data and its MIME type. */
+export type ImagePart = { data: string; mimeType: string };
+
 /** One renderable transcript block; `key` is stable across updates of the same block. */
 export type Block =
 	| { kind: "earlier"; key: string }
 	| { kind: "gap"; key: string; after: number; upTo: number }
-	| { kind: "user"; key: string; text: string }
-	| { kind: "queued"; key: string; text: string; mode: "steer" | "followUp" }
+	| { kind: "user"; key: string; text: string; images?: ImagePart[] }
+	| { kind: "queued"; key: string; text: string; mode: "steer" | "followUp"; images?: ImagePart[] }
 	| { kind: "assistant"; key: string; text: string; streaming: boolean }
 	| { kind: "thinking"; key: string; text: string; streaming: boolean }
 	| ToolBlock
@@ -34,9 +37,10 @@ export type ToolBlock = {
 	status: ToolStatus;
 	output: string;
 	droppedLines?: number;
+	images?: ImagePart[];
 };
 
-type Part = { type?: string; text?: string; thinking?: string; id?: string; name?: string; arguments?: unknown };
+type Part = { type?: string; text?: string; data?: string; mimeType?: string; thinking?: string; id?: string; name?: string; arguments?: unknown };
 type Message = {
 	role?: string;
 	content?: string | Part[];
@@ -50,10 +54,23 @@ type Message = {
 /** Token and cost totals summed over `pi.usage`. */
 export type ViewUsage = { tokens: number; cost: number };
 
-function textOf(content: Message["content"]): string {
+/** Plain text of message content. Image parts become `[image]` unless `placeholder` is false (the caller renders them from `imagesOf`). */
+function textOf(content: Message["content"], placeholder = true): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
-	return content.map((part) => (part.type === "text" ? (part.text ?? "") : part.type === "image" ? "[image]" : "")).join("");
+	return content.map((part) => (part.type === "text" ? (part.text ?? "") : part.type === "image" && placeholder ? "[image]" : "")).join("");
+}
+
+/** The image parts of message content, in order (empty for string content or content without images). */
+function imagesOf(content: Message["content"]): ImagePart[] {
+	if (!Array.isArray(content)) return [];
+	const images: ImagePart[] = [];
+	for (const part of content) {
+		if (part.type === "image" && typeof part.data === "string" && part.data !== "") {
+			images.push({ data: part.data, mimeType: typeof part.mimeType === "string" && part.mimeType !== "" ? part.mimeType : "image/png" });
+		}
+	}
+	return images;
 }
 
 function messageOf(entry: EntryRecord): Message | undefined {
@@ -143,7 +160,10 @@ export function deriveBlocks(
 		const message = messageOf(entry);
 		switch (entry.kind) {
 			case "pi.user":
-				blocks.push({ kind: "user", key: `u:${entry.id}`, text: textOf(message?.content) });
+				{
+				const images = imagesOf(message?.content);
+				blocks.push({ kind: "user", key: `u:${entry.id}`, text: textOf(message?.content, false), ...(images.length > 0 ? { images } : {}) });
+			}
 				break;
 			case "pi.assistant": {
 				if (!message) break;
@@ -162,7 +182,9 @@ export function deriveBlocks(
 				const callId = message.toolCallId ?? `r:${entry.id}`;
 				const block = addTool(callId, message.toolName ?? "tool", undefined, "done");
 				block.status = message.isError ? "error" : "done";
-				block.output = textOf(message.content);
+				block.output = textOf(message.content, false);
+				const images = imagesOf(message.content);
+				if (images.length > 0) block.images = images;
 				break;
 			}
 			case "pi.reset":
@@ -203,7 +225,10 @@ export function deriveBlocks(
 		const { reason, detail, taskId } = live.runFailure;
 		blocks.push({ kind: "notice", key: `fail:${taskId}`, level: "error", text: `run ended without an answer: ${reason}${detail ? ` — ${detail}` : ""}` });
 	}
-	for (const item of queuedOf(docs)) blocks.push({ kind: "queued", key: `q:${item.id}`, text: textOf(item.content), mode: item.mode });
+	for (const item of queuedOf(docs)) {
+		const images = imagesOf(item.content);
+		blocks.push({ kind: "queued", key: `q:${item.id}`, text: textOf(item.content, false), mode: item.mode, ...(images.length > 0 ? { images } : {}) });
+	}
 	return blocks;
 }
 

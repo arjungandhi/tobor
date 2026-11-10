@@ -1,20 +1,24 @@
 import { type Component, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { ImagePart } from "../replica.js";
 import { c } from "../theme.js";
+import { ImageList } from "./image-parts.js";
 
 /** A user prompt: a blank line, then the text behind an accent bar. A queued prompt (not yet placed in the transcript) is dimmed and labelled. */
 export class UserBlock implements Component {
 	private text = "";
 	private queued: string | undefined;
+	private readonly images = new ImageList();
 	private cache: { width: number; lines: string[] } | undefined;
 
 	/** `queued` is the marker label of a pending prompt (e.g. "queued"); omit for a placed prompt. */
-	constructor(text: string, queued?: string) {
-		this.update(text, queued);
+	constructor(text: string, queued?: string, images?: readonly ImagePart[]) {
+		this.update(text, queued, images);
 	}
 
 	/** Set the prompt text and queued label; a no-op when unchanged. */
-	update(text: string, queued?: string): void {
-		if (text === this.text && queued === this.queued) return;
+	update(text: string, queued?: string, images?: readonly ImagePart[]): void {
+		const imagesChanged = this.images.update(images);
+		if (!imagesChanged && text === this.text && queued === this.queued) return;
 		this.text = text;
 		this.queued = queued;
 		this.cache = undefined;
@@ -22,6 +26,7 @@ export class UserBlock implements Component {
 
 	invalidate(): void {
 		this.cache = undefined;
+		this.images.invalidate();
 	}
 
 	render(width: number): string[] {
@@ -30,7 +35,9 @@ export class UserBlock implements Component {
 		const bar = queued ? c.dim("▌ ") : c.user("▌ ");
 		const style = queued ? c.dim : c.bold;
 		const body = wrapTextWithAnsi(this.text.replace(/\t/g, "    "), Math.max(1, width - 2)).map((line) => bar + style(line));
-		const lines = ["", ...(body.length > 0 ? body : [bar])];
+		// A prompt that is only images shows no empty bar line.
+		const lines = ["", ...(body.length > 0 ? body : this.images.length === 0 ? [bar] : [])];
+		lines.push(...this.images.render(width));
 		if (queued) lines.push(bar + c.dim(c.italic(this.queued as string)));
 		this.cache = { width, lines };
 		return lines;

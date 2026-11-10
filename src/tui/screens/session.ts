@@ -11,12 +11,13 @@ import type {
 	WorkerSummary,
 } from "../../api/types.js";
 import type { App } from "../app.js";
+import { loadImage, MAX_ATTACHMENTS } from "../attachments.js";
 import { ReconnectingSocket, type SocketState } from "../client.js";
 import { Composer } from "../components/composer.js";
 import { Transcript } from "../components/transcript.js";
 import { ConversationReplica, liveOf, usageOf, type ViewUsage } from "../replica.js";
 import { c } from "../theme.js";
-import { newSession } from "./new-session.js";
+import { startSession } from "./new-session.js";
 import { WorkersStrip } from "./workers.js";
 
 /** The transcript's primary scroll view; scrolling up into its top calls `onTop` (to load earlier history). */
@@ -230,25 +231,60 @@ export class SessionScreen {
 	}
 
 	private submitted(text: string): void {
-		if (text === "") return;
-		this.composer.addToHistory(text);
+		const staged = this.composer.stagedImages();
+		if (text === "" && staged.length === 0) return;
+		if (text !== "") this.composer.addToHistory(text);
+		const attach = /^\/attach(?:\s+(.*))?$/s.exec(text);
+		if (attach) {
+			this.app.guard(() => this.attach((attach[1] ?? "").trim()));
+			return;
+		}
 		if (text.startsWith("/")) {
 			this.app.guard(() => this.app.command(text));
 			return;
 		}
 		if (!this.target) {
-			this.app.guard(() => newSession(this.app, text));
+			const images = [...staged];
+			this.app.guard(async () => {
+				const started = await startSession(this.app, text, { attachments: images.map((i) => i.attachment) });
+				if (started) this.composer.unstage(images);
+			});
 			return;
 		}
 		const running = this.state() === "running" || this.state() === "waiting";
 		this.app.guard(() => this.send(text, running ? "steer" : "prompt"));
 	}
 
+	/** `/attach <path>` stages a local image for the next message; `/attach clear` drops the staged ones. */
+	private async attach(arg: string): Promise<void> {
+		const staged = this.composer.stagedImages();
+		if (arg === "") throw new Error("usage: /attach <path> · /attach clear");
+		if (arg === "clear") {
+			this.composer.unstage();
+			this.app.flash(staged.length === 0 ? "no attachments staged" : `cleared ${staged.length} attachment${staged.length === 1 ? "" : "s"}`);
+			this.app.tui.requestRender();
+			return;
+		}
+		if (staged.length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
+		const image = await loadImage(arg);
+		if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
+		this.composer.stage(image);
+		this.app.flash(`attached ${image.name} (${this.composer.stagedImages().length}/${MAX_ATTACHMENTS}) · sent with your next message`);
+		this.app.tui.requestRender();
+	}
+
 	private async send(content: string, mode: InputMode): Promise<void> {
 		const target = this.target;
 		if (!target) throw new Error("no session open");
 		if (target.worker) throw new Error("worker transcripts are read-only · Esc back");
-		await this.app.api().input(target.id, { content, mode, requestId: randomUUID() });
+		const images = [...this.composer.stagedImages()];
+		await this.app.api().input(target.id, {
+			content,
+			mode,
+			requestId: randomUUID(),
+			...(images.length > 0 ? { attachments: images.map((i) => i.attachment) } : {}),
+		});
+		this.composer.unstage(images);
 		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
 		this.scroll.scrollToEnd();
 	}
@@ -256,12 +292,12 @@ export class SessionScreen {
 	/** Ctrl+Q: send the composer text as a follow-up while running (a prompt when idle). */
 	async queueFollowUp(): Promise<void> {
 		const text = this.composer.getExpandedText().trim();
-		if (text === "") {
+		if (text === "" && this.composer.stagedImages().length === 0) {
 			this.app.flash("type the follow-up first, then Ctrl+Q");
 			return;
 		}
 		this.composer.setText("");
-		this.composer.addToHistory(text);
+		if (text !== "") this.composer.addToHistory(text);
 		const running = this.state() === "running" || this.state() === "waiting";
 		await this.send(text, running ? "follow_up" : "prompt");
 	}

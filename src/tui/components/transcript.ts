@@ -77,15 +77,15 @@ export class Transcript implements Component {
 	private reconcile(prev: View | undefined, block: Block): View {
 		switch (block.kind) {
 			case "user": {
-				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text);
-				view.update(block.text);
+				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text, undefined, block.images);
+				view.update(block.text, undefined, block.images);
 				return view;
 			}
 			case "queued": {
 				// Keyed `q:<id>`; once pi-durable places the message it becomes a `u:<entryId>` block and this view is dropped.
 				const label = block.mode === "followUp" ? "queued · after this run" : "queued · steering";
-				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text, label);
-				view.update(block.text, label);
+				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text, label, block.images);
+				view.update(block.text, label, block.images);
 				return view;
 			}
 			case "assistant":

@@ -14,7 +14,7 @@ import type { SessionState } from "../../src/api/types.js";
 import { WorkersDoc, type WorkerRecord } from "../../src/docs.js";
 import { type BootedHost, boot } from "../../src/server/harness/boot.js";
 import { DIRECTOR_RULES, PREAMBLE } from "../../src/server/harness/sections.js";
-import { deriveState, type SessionIndex, summarizeUsage, titleFromPrompt } from "../../src/server/harness/sessions.js";
+import { deriveState, type SessionIndex, summarizeUsage, titleFromPrompt, toUserInput } from "../../src/server/harness/sessions.js";
 import { SessionDoc } from "../../src/docs.js";
 import { entryText, fakeBash, fauxModels, tempHome } from "./helpers.js";
 
@@ -79,6 +79,15 @@ describe("pure helpers", () => {
 	it("titles from the first 60 characters with whitespace collapsed", () => {
 		expect(titleFromPrompt("  fix\n\nthe   build ")).toBe("fix the build");
 		expect(titleFromPrompt("x".repeat(80))).toHaveLength(60);
+	});
+
+	it("maps text and attachments to user input", () => {
+		const png = { type: "image", data: "AAAA", mimeType: "image/png" } as const;
+		const jpeg = { type: "image", data: "BBBB", mimeType: "image/jpeg" } as const;
+		expect(toUserInput("hi")).toBe("hi");
+		expect(toUserInput("hi", [])).toBe("hi");
+		expect(toUserInput("hi", [png, jpeg])).toEqual([{ type: "text", text: "hi" }, png, jpeg]);
+		expect(toUserInput("", [png])).toEqual([png]);
 	});
 
 	it("sums usage over models", () => {
@@ -152,6 +161,24 @@ describe("SessionIndex", () => {
 		t.script([fauxAssistantMessage("again")]);
 		await t.settle((await t.host.sessions.input(id, { content: "second", mode: "prompt", requestId: "r2" })).submissionId);
 		expect((await t.host.sessions.get(id))?.title).toBe("mine");
+	});
+
+	it("submits image attachments as content blocks, image-only when the text is empty", async () => {
+		const t = await start();
+		const png = { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" } as const;
+		t.script([fauxAssistantMessage("a cat")]);
+		const created = await t.host.sessions.create({ cwd: t.root, prompt: "", attachments: [png] });
+		expect(created.submissionId).toBeDefined();
+		expect(await t.settle(created.submissionId!)).toMatchObject({ status: "done" });
+		await t.reachedState(created.id, "idle");
+		const first = (await t.host.sessions.entries(created.id, { order: "asc" })).items.find((e) => e.kind === "pi.user");
+		expect(first?.model?.[0]?.content).toEqual([png]);
+
+		t.script([fauxAssistantMessage("again")]);
+		const { submissionId } = await t.host.sessions.input(created.id, { content: "and this", attachments: [png], mode: "prompt", requestId: "img1" });
+		expect(await t.settle(submissionId)).toMatchObject({ status: "done" });
+		const users = (await t.host.sessions.entries(created.id, { order: "asc" })).items.filter((e) => e.kind === "pi.user");
+		expect(users[1]?.model?.[0]?.content).toEqual([{ type: "text", text: "and this" }, png]);
 	});
 
 	it("rejects bad cwds and models", async () => {

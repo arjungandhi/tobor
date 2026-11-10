@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import type { ImageAttachment } from "../../api/types.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
 
@@ -38,7 +39,7 @@ async function pickCwd(app: App, cwds: { roots: string[]; recent: string[] }): P
  * `{ pickCwd: true }` (for a future `/new <dir>` or deliberate picker) shows the cwd picker first; it then asks for the
  * first prompt too, as the chosen cwd could not be remembered otherwise.
  */
-export async function startSession(app: App, prompt?: string, options: { pickCwd?: boolean } = {}): Promise<boolean> {
+export async function startSession(app: App, prompt?: string, options: { pickCwd?: boolean; attachments?: ImageAttachment[] } = {}): Promise<boolean> {
 	const cwds = await app.api().cwds();
 	let cwd = options.pickCwd ? undefined : (cwds.recent.find((dir) => inRoots(dir, cwds.roots)) ?? cwds.roots[0]);
 	let asked = false;
@@ -48,14 +49,15 @@ export async function startSession(app: App, prompt?: string, options: { pickCwd
 		asked = true;
 	}
 	let text = prompt?.trim();
-	if (!text && asked) {
+	const attachments = options.attachments?.length ? options.attachments : undefined;
+	if (!text && asked && !attachments) {
 		text = (await app.ask("new session · first prompt", { lines: [c.dim(cwd)] }))?.trim();
 		if (!text) return false;
 	}
-	const { id } = await app.api().createSession({ cwd, ...(text ? { prompt: text } : {}) });
+	const { id } = await app.api().createSession({ cwd, ...(text || attachments ? { prompt: text ?? "" } : {}), ...(attachments ? { attachments } : {}) });
 	await app.refreshSessions();
 	app.openSession(id);
-	app.flash(`new session #${id} · ${cwd}${text ? " · node defaults" : ""}`);
+	app.flash(`new session #${id} · ${cwd}${text || attachments ? " · node defaults" : ""}`);
 	return true;
 }
 
