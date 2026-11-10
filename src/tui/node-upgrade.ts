@@ -1,6 +1,7 @@
 // Client-side pieces of `tobor upgrade|restart` and the TUI's /upgrade and /restart: error wording, waiting for a restarted
 // node to answer again, `--check` formatting and the build-mismatch hint. Free of server state so the TUI can import it.
 import type { WhoamiResponse } from "../api/types.js";
+import { isNewer } from "../server/release.js";
 import { ApiRequestError } from "./client.js";
 
 /** Longest the CLI and TUI wait for a restarted node to answer again. */
@@ -25,6 +26,16 @@ export function staleNodeHint(
 	if (node.version === cli.version && node.build === cli.build) return undefined;
 	const restart = unit ? `systemctl --user restart tobor@${unit}` : "stop it and start `tobor node` again";
 	return `note: the running node is tobor ${node.version} (build ${node.build ?? "unknown"}), this CLI is ${cli.version} (build ${cli.build}); restart the node to pick up a rebuilt binary: ${restart}`;
+}
+
+/**
+ * Hint when a node and this client run different builds: a node newer than the client means the client is stale
+ * (`tobor upgrade`), anything else is `staleNodeHint` (a rebuilt binary is picked up only on restart). Undefined for dev builds.
+ */
+export function mismatchHint(cli: { version: string; build: string }, node: BuildId | undefined): string | undefined {
+	if (!node || cli.build === "dev" || node.build === "dev") return undefined;
+	if (isNewer(node.version, cli.version)) return `note: the node runs tobor ${node.version}, this client is ${cli.version}; run \`tobor upgrade\` to update this binary`;
+	return staleNodeHint(cli, { version: node.version, ...(node.build === undefined ? {} : { build: node.build }) }, undefined);
 }
 
 /** A friendly sentence for a failed `POST /api/upgrade|restart` (or an unreachable node). */

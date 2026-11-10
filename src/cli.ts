@@ -20,6 +20,8 @@ type Command = {
 	summary: string;
 	/** Flags that take a value, besides the global `--home`. */
 	valueFlags?: string[];
+	/** Boolean flags (`--name`, no value). */
+	boolFlags?: string[];
 	/** Exact positional count range. */
 	positionals: [min: number, max: number];
 	load?: () => Promise<{ run(args: CliArgs): Promise<number | void> }>;
@@ -56,6 +58,19 @@ const COMMANDS: Record<string, Command> = {
 		positionals: [1, 3],
 		load: () => import("./tui/workspace-cli.js"),
 	},
+	upgrade: {
+		usage: "tobor upgrade [workspace] [--check]",
+		summary: "self-update this binary from the latest release; with a workspace: upgrade and restart that node (--check: report only)",
+		boolFlags: ["check"],
+		positionals: [0, 1],
+		load: () => import("./server/cli/upgrade.js"),
+	},
+	restart: {
+		usage: "tobor restart <workspace>",
+		summary: "restart a node over its API and wait for it to come back",
+		positionals: [1, 1],
+		load: () => import("./server/cli/restart.js"),
+	},
 	backup: {
 		usage: "tobor backup <file> [--home DIR]",
 		summary: "copy state/tobor.sqlite with VACUUM INTO",
@@ -91,6 +106,7 @@ type ParsedArgs = Omit<CliArgs, "home"> & { home?: string };
 /** Parse `argv` (without node and script) for one command. */
 function parseArgs(command: Command, argv: string[]): ParsedArgs {
 	const valueFlags = new Set(["home", ...(command.valueFlags ?? [])]);
+	const boolFlags = new Set(command.boolFlags ?? []);
 	const positionals: string[] = [];
 	const flags: Record<string, string | boolean> = {};
 	for (let i = 0; i < argv.length; i++) {
@@ -108,6 +124,9 @@ function parseArgs(command: Command, argv: string[]): ParsedArgs {
 				const value = eq < 0 ? argv[++i] : arg.slice(eq + 1);
 				if (value === undefined || value === "") throw new UsageError(`--${name} needs a value`);
 				flags[name] = value;
+			} else if (boolFlags.has(name)) {
+				if (eq >= 0) throw new UsageError(`--${name} takes no value`);
+				flags[name] = true;
 			} else if (name === "help") {
 				flags.help = true;
 			} else {
