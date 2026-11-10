@@ -190,6 +190,67 @@ data class CwdsResponse(
     val recent: List<String> = emptyList(),
 )
 
+/** `status`: running | done | failed | skipped_misfire | skipped_overlap. [notice] is the reason for skips or failures. */
+@Serializable
+data class ScheduleRun(
+    val fireAt: Long = 0,
+    val conversationId: Long? = null,
+    val submissionId: Long? = null,
+    val status: String = "",
+    val notice: String? = null,
+)
+
+/** Exactly one of [cron] and [at] is set. [nextFireAt] is absent when disabled or a fired one-shot. */
+@Serializable
+data class Schedule(
+    val id: String,
+    val name: String = "",
+    val cron: String? = null,
+    val at: String? = null,
+    val tz: String = "",
+    val cwd: String = "",
+    val prompt: String = "",
+    val model: String? = null,
+    @SerialName("approval_mode") val approvalMode: String? = null,
+    @SerialName("misfire_grace") val misfireGrace: String? = null,
+    val enabled: Boolean = true,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
+    val nextFireAt: Long? = null,
+    val runs: List<ScheduleRun> = emptyList(),
+)
+
+@Serializable
+data class CreateScheduleRequest(
+    val name: String,
+    val cwd: String,
+    val prompt: String,
+    val cron: String? = null,
+    val at: String? = null,
+    val tz: String? = null,
+    val model: String? = null,
+    @SerialName("approval_mode") val approvalMode: String? = null,
+    @SerialName("misfire_grace") val misfireGrace: String? = null,
+    val enabled: Boolean? = null,
+)
+
+@Serializable
+data class CreateScheduleResponse(val id: String)
+
+@Serializable
+data class UpdateScheduleRequest(
+    val name: String? = null,
+    val cwd: String? = null,
+    val prompt: String? = null,
+    val cron: String? = null,
+    val at: String? = null,
+    val tz: String? = null,
+    val model: String? = null,
+    @SerialName("approval_mode") val approvalMode: String? = null,
+    @SerialName("misfire_grace") val misfireGrace: String? = null,
+    val enabled: Boolean? = null,
+)
+
 /** Error body: `{error, code?}`. */
 @Serializable
 data class ApiError(
