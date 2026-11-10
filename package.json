@@ -3,8 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "tobor": "dist/cli.js"
+  },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev:node": "node --import tsx src/cli.ts node",
+    "dev:tui": "node --import tsx src/cli.ts tui"
   },
   "dependencies": {
     "@earendil-works/chord": "1.5.1",

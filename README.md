@@ -1,55 +1,48 @@
-<!-- PROJECT LOGO -->
-<br />
-<div align="center">
-<h3 align="center">tobor</h3>
+# tobor
 
-  <p align="center">
-    a personal assistant bot for Matrix
-  </p>
-</div>
+A small, self-hosted remote agent harness. Each host runs one tobor node: a Node process that embeds
+[`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) 1.5.1 as its agent loop and
+serves an HTTP+WS API. Clients (the TUI first; web and Android later) start, watch, steer, approve, abort and schedule
+agent sessions on that host. Sessions are durable conversations in one SQLite file, so they survive restarts and
+client disconnects. Design: [`design_doc_v3.md`](design_doc_v3.md).
 
-# About
+- **Tools:** hashline `read`/`edit`, `write`, `bash`, artifacts, schedules, `todo`, plus MCP servers.
+- **Director mode:** the session agent plans and dispatches background workers defined in `.tobor/agents/*.md`.
+- **Approvals:** `ask` mode gates mutating tools; pending approvals persist and show in every client.
+- **Artifacts:** published HTML revisions on a separate origin, PDF export, retro-log theme.
+- **No auth in the node:** bind it to a private network (e.g. Tailscale). One install per host, no hub.
 
-tobor is an event-driven personal assistant daemon that provides natural language access to personal tools and data via Matrix messaging. It reads events from a Unix domain socket, runs them through an LLM agent with configurable tools, and sends responses via `messages send`.
-
-# Usage
-
-```bash
-# Start tobor
-messages listen | socat - UNIX-CONNECT:/run/tobor.sock &
-tobor | messages send
-```
-
-# Configuration
-
-Config lives at `~/.config/tobor/config.yaml` (overridable via `TOBOR_DIR` env var).
-
-```yaml
-socket_path: /run/tobor.sock
-work_dir: ~/.local/share/tobor
-log_retention_days: 90
-context_token_budget: 8000
-idle_timeout: 30m
-max_turns: 10
-auth_sender: "@user:matrix.org"
-default_room: "!abc:matrix.org"
-anthropic_api_key: sk-...             # or set ANTHROPIC_API_KEY
-```
-
-tobor expects the following in `work_dir`:
-- `soul.md` — personality and values, injected into the system prompt
-- `style.md` — communication style guidelines, injected into the system prompt
-- `log.jsonl.gz` — event log
-- `tools/` — tool definitions (markdown with YAML frontmatter, one file per tool)
-
-# Architecture
+## Layout
 
 ```
-messages listen ──▶ messages-to-tobor ──┐
-                                        │
-systemd timers / cron ──────────────────┼──▶ /run/tobor.sock ──▶ tobor ──▶ messages send
-                                        │
-future sources ─────────────────────────┘
+$TOBOR_HOME/                 # --home → TOBOR_HOME → ~/.local/share/tobor
+├── tobor.sqlite             # pi-durable state and tobor docs
+├── auth.json                # credentials (0600)
+├── agent.env                # env_file: API keys, MCP tokens
+├── node.json                # system conversation id, ntfy topic
+├── .tobor/                  # git repo: AGENTS.md RULES.md config.yml mcp.json agents/ skills/ design-systems/
+└── artifacts/               # feed.jsonl, store/, pdf/
 ```
 
-See [design_doc.md](design_doc.md) for full architecture and design details.
+## Usage
+
+Requires Node ≥ 22.19.
+
+```
+tobor init                   # create $TOBOR_HOME and the .tobor repo
+tobor login anthropic        # Claude Pro/Max OAuth (prints a URL, paste the code)
+tobor node                   # run the node (API :7879, artifacts :7880)
+tobor tui [host:port]        # terminal client
+tobor backup <file>          # VACUUM INTO a copy of tobor.sqlite
+```
+
+## Development
+
+```
+npm install
+npm run typecheck            # tsc --noEmit
+npm test                     # vitest run
+npm run build                # tsc -p tsconfig.build.json → dist/
+npm run dev:node -- --home /tmp/tobor-dev
+npm run dev:tui -- localhost:7879
+```
