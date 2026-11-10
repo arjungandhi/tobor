@@ -73,12 +73,23 @@ export class AuthService implements AuthServiceContract {
 			this.options.loginTimeoutMs ?? 15 * 60_000,
 		);
 		timer.unref();
+		let shown = false;
+		const show = (start: LoginStartResponse) => {
+			shown = true;
+			url.resolve(start);
+		};
 		const interaction: AuthInteraction = {
 			signal: abort.signal,
-			prompt: (prompt) => answerPrompt(prompt, code.promise),
+			prompt: (prompt) => answerPrompt(prompt, shown ? code.promise : undefined),
 			notify: (event) => {
 				if (event.type === "auth_url") {
-					url.resolve({ url: event.url, ...(event.instructions ? { instructions: event.instructions } : {}) });
+					show({ url: event.url, ...(event.instructions ? { instructions: event.instructions } : {}) });
+				} else if (event.type === "device_code") {
+					// The flow polls for approval; the pasted code only tells `loginCode` the operator is done.
+					show({
+						url: event.verificationUri,
+						instructions: `Enter the code ${event.userCode} on that page; once approved, paste the same code here.`,
+					});
 				}
 			},
 		};
@@ -126,14 +137,18 @@ export class AuthService implements AuthServiceContract {
 	}
 }
 
-/** Answer one login prompt: headless method for selects, the operator's code for everything else. */
-function answerPrompt(prompt: AuthPrompt, code: Promise<string>): Promise<string> {
+/**
+ * Answer one login prompt: headless method for selects, the flow's default (blank) for anything asked before the
+ * operator has seen a URL (e.g. Copilot's enterprise domain), the operator's code for everything after.
+ */
+function answerPrompt(prompt: AuthPrompt, code: Promise<string> | undefined): Promise<string> {
 	if (prompt.type === "select") {
 		const headless =
 			prompt.options.find((o) => /copy|code|headless|manual|paste/i.test(`${o.id} ${o.label}`)) ?? prompt.options[0];
 		if (!headless) return Promise.reject(new Error(`login prompt has no options: ${prompt.message}`));
 		return Promise.resolve(headless.id);
 	}
+	if (!code) return Promise.resolve("");
 	const signal = prompt.signal;
 	if (!signal) return code;
 	const answer = Promise.withResolvers<string>();

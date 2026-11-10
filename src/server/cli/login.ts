@@ -26,6 +26,10 @@ export async function run(args: CliArgs): Promise<number> {
 		process.stdout.write(`Logged in to ${provider} (${result.auth.source}${expiry}); credential stored in ${credentials.path}\n`);
 		return 0;
 	} catch (err) {
+		if (err instanceof Error && err.name === "AbortError") {
+			process.stderr.write("tobor login: cancelled\n");
+			return 130;
+		}
 		if (!(err instanceof HostError)) throw err;
 		process.stderr.write(`tobor login: ${err.message}\n`);
 		return 1;

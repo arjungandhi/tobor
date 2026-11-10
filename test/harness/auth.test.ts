@@ -29,12 +29,28 @@ const oauth: OAuthAuth = {
 	toAuth: async (credential) => ({ apiKey: credential.access }),
 };
 
+/** A device-code flow (Copilot shape): a pre-URL text prompt, then `device_code`, then polling until approval. */
+const deviceAnswers: string[] = [];
+const deviceApproval = Promise.withResolvers<void>();
+const deviceOAuth: OAuthAuth = {
+	name: "Test device OAuth",
+	async login(interaction) {
+		deviceAnswers.push(await interaction.prompt({ type: "text", message: "Enterprise domain (blank for public)" }));
+		interaction.notify({ type: "device_code", userCode: "WXYZ-1234", verificationUri: "https://example.test/device" });
+		await deviceApproval.promise; // polling for approval
+		return { type: "oauth", refresh: "r", access: "d", expires: 456 };
+	},
+	refresh: async (credential) => credential,
+	toAuth: async (credential) => ({ apiKey: credential.access }),
+};
+
 async function setup() {
 	const credentials = new FileCredentialStore(join(await mkdtemp(join(tmpdir(), "tobor-auth-")), "auth.json"));
 	const models = createModels({ credentials });
 	const base = fauxProvider({ provider: "keyed", models: [{ id: "m" }] }).provider;
 	models.setProvider(base);
 	models.setProvider({ ...base, id: "oa", auth: { oauth } });
+	models.setProvider({ ...base, id: "dev", auth: { oauth: deviceOAuth } });
 	const config = validateConfig(undefined, "/nonexistent").config;
 	return { credentials, auth: new AuthService({ models, credentials, config: () => config }) };
 }
@@ -70,6 +86,19 @@ describe("AuthService", () => {
 		await auth.loginStart("oa");
 		await auth.loginStart("oa");
 		expect((await auth.loginCode("oa", "good")).auth.source).toBe("oauth");
+	});
+
+	it("logs in through a device-code flow", async () => {
+		const { auth, credentials } = await setup();
+		expect(await auth.loginStart("dev")).toEqual({
+			url: "https://example.test/device",
+			instructions: "Enter the code WXYZ-1234 on that page; once approved, paste the same code here.",
+		});
+		expect(deviceAnswers).toEqual([""]);
+		const done = auth.loginCode("dev", "WXYZ-1234");
+		deviceApproval.resolve();
+		expect((await done).auth).toEqual({ source: "oauth", expiresAt: 456, oauth: true });
+		expect(await credentials.read("dev")).toMatchObject({ type: "oauth", access: "d" });
 	});
 
 	it("lists the catalog with availability and defaults", async () => {

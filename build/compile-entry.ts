@@ -1,10 +1,16 @@
 // Entry of the compiled binary (`bun run build`). Bundled modules live in `/$bunfs`, so the on-disk assets
 // (build/assets.generated.ts) are extracted once per build into `$XDG_CACHE_HOME/tobor/assets/<hash>/`, mirroring the
 // repo root, and `$TOBOR_ASSET_ROOT` points there (src/assets.ts) before the normal CLI loads.
+// pi-ai loads OAuth flows through a variable `import()` specifier that `bun build --compile` cannot follow (the flow
+// modules are missing from `/$bunfs`: "Cannot find module '/$bunfs/root/anthropic.ts'"), so the binary registers the
+// statically imported flows instead.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { ASSETS, ASSETS_HASH } from "./assets.generated.ts";
+
+registerBunOAuthFlows();
 
 function extract(): string {
 	const dir = join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "tobor", "assets");
