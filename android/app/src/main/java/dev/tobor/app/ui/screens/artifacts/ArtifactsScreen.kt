@@ -77,7 +77,8 @@ fun ArtifactsScreen(
 
     fun open(a: ArtifactSummary) {
         try {
-            uriHandler.openUri(rewriteLoopback(a.url, api.baseUrl))
+            // LocalUriHandler is AppNav's ServerHostUriHandler: it swaps loopback/advertised hosts for the workspace host.
+            uriHandler.openUri(a.url)
             openError = null
         } catch (e: Exception) {
             openError = e.message ?: "cannot open ${a.url}"
