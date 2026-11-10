@@ -11,6 +11,25 @@ describe("cleanTitle", () => {
 		expect(cleanTitle("")).toBe("");
 		expect(cleanTitle("x".repeat(80))).toHaveLength(60);
 	});
+
+	it("removes control characters so a title cannot inject terminal escapes", () => {
+		expect(cleanTitle("Fix \x1b[31mred\x1b[0m build\x07")).toBe("Fix [31mred[0m build");
+		expect(cleanTitle("\x1b]0;pwned\x07Real title")).toBe("]0;pwnedReal title");
+		expect(cleanTitle("a\x7fb\x00c")).toBe("abc");
+	});
+
+	it("strips list markers and markdown around the label", () => {
+		expect(cleanTitle("- Fix the build")).toBe("Fix the build");
+		expect(cleanTitle("* Fix the build")).toBe("Fix the build");
+		expect(cleanTitle("1. Fix the build")).toBe("Fix the build");
+		expect(cleanTitle("**Title:** Foo")).toBe("Foo");
+		expect(cleanTitle("- **Title:** \"Foo\".")).toBe("Foo");
+	});
+
+	it("re-strips punctuation exposed by the 60-character cut", () => {
+		expect(cleanTitle(`${"x".repeat(58)}, tail`)).toBe("x".repeat(58));
+		expect(cleanTitle(`${"x".repeat(59)} tail`)).toBe("x".repeat(59));
+	});
 });
 
 describe("resolveTitleModel", () => {

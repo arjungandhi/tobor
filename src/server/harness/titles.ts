@@ -16,16 +16,27 @@ const SYSTEM_PROMPT = [
 	"Reply with the title only.",
 ].join(" ");
 
-/** A model's raw output as a title: first line, whitespace collapsed, quotes and trailing punctuation stripped, capped at 60 characters. */
-export function cleanTitle(raw: string): string {
-	let t = (raw.split("\n").find((l) => l.trim() !== "") ?? "").replace(/\s+/g, " ").trim();
-	t = t.replace(/^(title\s*:\s*)/i, "");
+/** Strip list markers, markdown/quote wrappers, a `Title:` label and trailing punctuation until nothing changes. */
+function strip(title: string): string {
+	let t = title;
 	for (;;) {
-		const stripped = t.replace(/^["'`“”‘’*#\s]+|["'`“”‘’*\s]+$/g, "").replace(/[.:;,!\s]+$/, "");
-		if (stripped === t) break;
+		const stripped = t
+			.replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, "")
+			.replace(/^["'`“”‘’*#\s]+|["'`“”‘’*\s]+$/g, "")
+			.replace(/^title\s*:\s*/i, "")
+			.replace(/[.:;,!\s]+$/, "");
+		if (stripped === t) return t;
 		t = stripped;
 	}
-	return t.slice(0, MAX_TITLE).trim();
+}
+
+/**
+ * A model's raw output as a title: first line, whitespace collapsed, control characters (terminal escapes) removed, list
+ * markers, markdown, quotes, a `Title:` label and trailing punctuation stripped, capped at 60 characters.
+ */
+export function cleanTitle(raw: string): string {
+	const line = (raw.split("\n").find((l) => l.trim() !== "") ?? "").replace(/\s+/g, " ").replace(/[\x00-\x1f\x7f]/g, "");
+	return strip(strip(line).slice(0, MAX_TITLE));
 }
 
 /**
