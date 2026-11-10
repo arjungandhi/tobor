@@ -15,7 +15,7 @@ import {
 	targetFor,
 	versionFromTag,
 } from "../../src/server/release.js";
-import { UpdateChecker, upgradeSelf } from "../../src/server/update.js";
+import { reexecEnv, UpdateChecker, upgradeSelf } from "../../src/server/update.js";
 import { HostError } from "../../src/host.js";
 
 const sha = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -175,6 +175,16 @@ describe("tempDownloadPath", () => {
 		]);
 		expect(await readFile(dest, "utf8")).toBe("new");
 		expect(await readdir(dir)).toEqual(["tobor"]);
+	});
+});
+
+describe("reexecEnv", () => {
+	it("strips TOBOR_ASSET_ROOT and keeps the rest, without mutating the source", () => {
+		const env = { TOBOR_ASSET_ROOT: "/old/assets", PATH: "/bin", HOME: "/h" };
+		const out = reexecEnv(env);
+		expect(out).toEqual({ PATH: "/bin", HOME: "/h" });
+		expect("TOBOR_ASSET_ROOT" in out).toBe(false);
+		expect(env.TOBOR_ASSET_ROOT).toBe("/old/assets");
 	});
 });
 

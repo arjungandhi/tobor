@@ -213,6 +213,16 @@ export function scheduleRestart(delayMs: number = RESTART_DELAY_MS): void {
 }
 
 /**
+ * Environment for the re-exec'd node: a copy of `env` without `TOBOR_ASSET_ROOT`. compile-entry.ts does
+ * `TOBOR_ASSET_ROOT ??= extract()`, so an inherited value would make the new binary skip extraction and serve the old
+ * package.json/skeleton/themes.
+ */
+export function reexecEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
+	const { TOBOR_ASSET_ROOT: _stale, ...rest } = env;
+	return rest;
+}
+
+/**
  * Restart the node: stop gracefully via the shutdown hook, then under systemd (`INVOCATION_ID` set) exit with code 75 so
  * the unit relaunches it, otherwise spawn `process.execPath` with the original arguments (detached, inherited stdio)
  * and exit 0.
@@ -222,7 +232,7 @@ export async function restartNode(): Promise<never> {
 	if (process.env.INVOCATION_ID) process.exit(RESTART_EXIT_CODE);
 	// Compiled binaries get their arguments after the embedded script at argv[1]; from source argv[1] is the script.
 	const args = BUILD === "dev" ? process.argv.slice(1) : process.argv.slice(2);
-	const child = Bun.spawn([EXEC_PATH, ...args], { stdio: ["inherit", "inherit", "inherit"], detached: true });
+	const child = Bun.spawn([EXEC_PATH, ...args], { stdio: ["inherit", "inherit", "inherit"], detached: true, env: reexecEnv() });
 	child.unref();
 	process.exit(0);
 }
