@@ -66,6 +66,11 @@ class ToborApi(baseUrl: String) {
         get("/api/sessions", if (archived) mapOf("archived" to "1") else emptyMap())
             .decode(ListSerializer(SessionSummary.serializer()))
 
+    /** Artifact feed, newest first; optionally limited to one project id. */
+    suspend fun artifacts(project: String? = null): List<ArtifactSummary> =
+        get("/api/artifacts", if (project != null) mapOf("project" to project) else emptyMap())
+            .decode(ListSerializer(ArtifactSummary.serializer()))
+
     /** Creates a session and returns its id. */
     suspend fun createSession(
         cwd: String,

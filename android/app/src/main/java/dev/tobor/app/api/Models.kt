@@ -303,3 +303,30 @@ data class ModelInfo(
 
 /** Raw-object helper type for callers that want [JsonObject] semantics with a name. */
 typealias RawJson = JsonObject
+
+/** One published artifact revision (`GET /api/artifacts` → `latest`). */
+@Serializable
+data class ArtifactRevision(
+    val rev: String = "",
+    val revision: Int = 0,
+    val projectId: String = "",
+    val slug: String = "",
+    val title: String = "",
+    val tags: List<String> = emptyList(),
+    val hash: String = "",
+    val conversationId: Long? = null,
+    val createdAt: Long = 0,
+    val url: String = "",
+    val pdfUrl: String = "",
+)
+
+/** Latest revision of one artifact. [url] always shows the latest revision on the artifacts origin. */
+@Serializable
+data class ArtifactSummary(
+    val projectId: String = "",
+    val slug: String = "",
+    val title: String = "",
+    val latest: ArtifactRevision = ArtifactRevision(),
+    val revisions: Int = 0,
+    val url: String = "",
+)
