@@ -13,6 +13,7 @@ export async function run(args: CliArgs): Promise<number> {
 		`tobor node: home ${args.home}, system conversation ${host.systemConversationId}, api ${formatListen(host.config.listen)}\n`,
 	);
 	const exit = Promise.withResolvers<number>();
+	const keepAlive = setInterval(() => {}, 1 << 30);
 	const onSignal = async (signal: NodeJS.Signals) => {
 		process.stdout.write(`tobor node: ${signal}, shutting down\n`);
 		await stopListeners().catch((err: unknown) => process.stderr.write(`tobor node: stopping listeners: ${String(err)}\n`));
@@ -26,5 +27,7 @@ export async function run(args: CliArgs): Promise<number> {
 		process.stderr.write(`tobor node: storage failed: ${String(end.error)}\n`);
 		exit.resolve(1);
 	});
-	process.exit(await exit.promise);
+	const code = await exit.promise;
+	clearInterval(keepAlive);
+	process.exit(code);
 }
