@@ -51,8 +51,8 @@ const COMMANDS: Record<string, Command> = {
 		load: () => import("./tui/main.js"),
 	},
 	workspace: {
-		usage: "tobor workspace list|add <name> <host:port>|remove <name>|use <name>",
-		summary: "manage saved nodes in ~/.config/tobor/config.yml (`use` sets the default)",
+		usage: "tobor workspace <action>",
+		summary: "saved nodes: list | add <name> <host:port> | remove <name> | use <name> (sets default)",
 		positionals: [1, 3],
 		load: () => import("./tui/workspace-cli.js"),
 	},

@@ -70,35 +70,35 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 	if (ws && ws.name !== current?.name) app.connect(ws);
 }
 
-/** Ask for a host:port, defaulting to `initial`. */
+/** Ask for a host:port; an empty answer keeps `initial` (default 127.0.0.1:7879). */
 async function askAddress(app: App, title: string, initial?: Address): Promise<Address | undefined> {
+	const fallback = initial ? formatAddress(initial) : `127.0.0.1:${DEFAULT_PORT}`;
 	for (let problem = ""; ; ) {
 		const input = await app.ask(title, {
-			initial: initial ? formatAddress(initial) : `127.0.0.1:${DEFAULT_PORT}`,
-			lines: [c.dim(`the node's API address, host:port (port defaults to ${DEFAULT_PORT})`), ...(problem ? [c.error(problem)] : [])],
+			placeholder: fallback,
+			lines: [c.dim(`the node's API address, host:port (port defaults to ${DEFAULT_PORT}); empty: ${fallback}`), ...(problem ? [c.error(problem)] : [])],
 		});
 		if (input === undefined) return undefined;
 		try {
-			return parseAddress(input);
+			return parseAddress(input.trim() || fallback);
 		} catch (err) {
 			problem = (err as Error).message;
 		}
 	}
 }
 
-/** Ask for a new valid, unused workspace name. */
-async function askName(app: App, title: string, initial = ""): Promise<string | undefined> {
+/** Ask for a valid, unused workspace name; an empty answer keeps `current` (when renaming). */
+async function askName(app: App, title: string, current = ""): Promise<string | undefined> {
 	for (let problem = ""; ; ) {
 		const input = await app.ask(title, {
-			initial,
-			placeholder: "e.g. personal",
+			placeholder: current || "e.g. personal",
 			lines: [c.dim("letters a-z, digits, - and _"), ...(problem ? [c.error(problem)] : [])],
 		});
 		if (input === undefined) return undefined;
-		const name = input.trim();
+		const name = input.trim() || current;
 		try {
 			checkName(name);
-			if (name !== initial && findWorkspace(app.config, name)) throw new Error(`workspace ${name} already exists`);
+			if (name !== current && findWorkspace(app.config, name)) throw new Error(`workspace ${name} already exists`);
 			return name;
 		} catch (err) {
 			problem = (err as Error).message;
