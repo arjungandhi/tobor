@@ -291,13 +291,31 @@ export async function showSettings(app: App): Promise<void> {
 			hint: c.dim,
 		},
 		onChange,
-		() => app.guard(requestClose),
+		() => {
+			// Esc layers: clear the search first, then the unsaved-changes close.
+			const search = (list as unknown as { searchInput?: Input }).searchInput;
+			if (search && search.getValue().length > 0) return list.handleInput("\x15"); // Ctrl+U: delete to line start, refilters
+			app.guard(requestClose);
+		},
+		{ enableSearch: true },
 	);
 	list.selectItem("defaults.model");
+	// SettingsList always appends its own hint line ("Type to search · Enter/Space to change · Esc to cancel") and has no option to
+	// hide it; drop it so the Panel hint is the single hint line.
+	const body: Component = {
+		capturesViewportInput: list.capturesViewportInput,
+		handleInput: (data) => list.handleInput(data),
+		invalidate: () => list.invalidate(),
+		render: (width) => {
+			const lines = list.render(width);
+			if (lines.at(-1)?.includes("Esc to cancel")) lines.splice(-2, 2);
+			return lines;
+		},
+	};
 	const panel = new Panel("settings", {
 		lines: panelLines(),
-		child: list,
-		hint: "Enter/Space change · Ctrl+S save node defaults · Esc close",
+		child: body,
+		hint: "type to search · Enter/Space change · Ctrl+S save node defaults · Esc clear/close",
 		onKey: (data) => {
 			if (!matchesKey(data, "ctrl+s")) return false;
 			app.guard(save);
