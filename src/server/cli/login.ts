@@ -15,7 +15,7 @@ import { FileCredentialStore } from "../harness/credentials.js";
 import { loadEnvFile, parseEnvText } from "../harness/env.js";
 import { createModels } from "../harness/models.js";
 
-/** `tobor login <provider>`: headless OAuth (open the URL anywhere, paste the code) into `auth.json`. */
+/** `tobor login <provider>`: headless OAuth (open the URL anywhere, paste the code) into `.tobor/state/auth.json`. */
 export async function run(args: CliArgs): Promise<number> {
 	await migrateHomeLayout(args.home);
 	const { config } = await loadConfig(args.home);

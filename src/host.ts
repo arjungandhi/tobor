@@ -63,7 +63,7 @@ export interface Host {
 	readonly paths: HomePaths;
 	/** Current node config; replaced on reload, so read it at each use instead of caching fields. */
 	config: Config;
-	/** The one pi-durable Harness over `tobor.sqlite`. */
+	/** The one pi-durable Harness over `.tobor/state/tobor.sqlite`. */
 	readonly harness: Harness;
 	/** pi-ai models with tobor's file-backed CredentialStore. */
 	readonly models: MutableModels;

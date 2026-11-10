@@ -5,7 +5,7 @@ import type { CliArgs } from "../../cli.js";
 import { paths as homePaths } from "../../config/home.js";
 import { migrateHomeLayout } from "../../config/migrate.js";
 
-/** `tobor backup <file>`: consistent copy of `tobor.sqlite` via `VACUUM INTO` (safe beside a running node). */
+/** `tobor backup <file>`: consistent copy of `.tobor/state/tobor.sqlite` via `VACUUM INTO` (safe beside a running node). */
 export async function run(args: CliArgs): Promise<number> {
 	const target = resolve(args.positionals[0]!);
 	await migrateHomeLayout(args.home);

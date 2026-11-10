@@ -74,7 +74,7 @@ export async function initHome(
 	}
 }
 
-/** `tobor init`: create `$TOBOR_HOME`, the `.tobor/` git repo skeleton and `node.json`. */
+/** `tobor init`: create `$TOBOR_HOME`, the `.tobor/` git repo skeleton and `state/node.json`. */
 export async function run(args: CliArgs): Promise<number> {
 	const result = await initHome(args.home);
 	const out = process.stdout;

@@ -1,5 +1,5 @@
 // tobor's pi-durable documents (design: "Storage"). All are conversation-scoped and latest-only.
-// `tobor.sessions` and `tobor.schedules` live on the system conversation (id in `$TOBOR_HOME/node.json`); the rest on
+// `tobor.sessions` and `tobor.schedules` live on the system conversation (id in `$TOBOR_HOME/.tobor/state/node.json`); the rest on
 // each session/worker conversation. Shapes are plain JSON; absent optional values are omitted, never `undefined`.
 import type { JsonValue } from "@earendil-works/chord/json";
 import type {

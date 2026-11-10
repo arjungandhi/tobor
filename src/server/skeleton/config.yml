@@ -2,7 +2,7 @@
 # Durations: 30m, 12h, 90d.
 
 # roots: default is this TOBOR_HOME   # (operator) directories sessions may start in
-# env_file: agent.env           # relative to $TOBOR_HOME, never inside .tobor/
+# env_file: agent.env           # relative to $TOBOR_HOME; agent.env is .tobor/state/agent.env; not elsewhere inside .tobor/
 # listen: 127.0.0.1:7879        # (operator)
 # artifacts_listen: 127.0.0.1:7880
 # public_url: http://localhost:7879
@@ -27,5 +27,5 @@ defaults:
 retention: { context: 30d, documents: 90d }
 # mcp: { approval: { github: { allow: [list_issues], ask: [create_issue] } } }   # (operator)
 artifacts: { theme: retro-log }
-# search: { provider: auto, max_results: 10 }   # auto | brave | tavily | searxng (+ url) | exa | duckduckgo | none; keys in agent.env
+# search: { provider: auto, max_results: 10 }   # auto | brave | tavily | searxng (+ url) | exa | duckduckgo | none; keys in .tobor/state/agent.env
 # fetch: { allow_private: false, max_chars: 20000, timeout_ms: 20000, remote_reader: true }
