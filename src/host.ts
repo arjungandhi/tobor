@@ -247,7 +247,14 @@ export interface AgentDataService {
 	write(path: string, request: PutToborFileRequest): Promise<ToborFileWriteResponse>;
 	/** Delete and commit. */
 	remove(path: string): Promise<ToborFileWriteResponse>;
+	/** Recent commits, newest first, optionally only those touching `path`. */
+	history(opts: { path?: string; limit?: number }): Promise<AgentDataCommit[]>;
+	/** Unified diff of `commit` (default HEAD) against its parent, optionally limited to `path`. */
+	diff(opts: { commit?: string; path?: string }): Promise<string>;
 }
+
+/** One commit of the `.tobor/` repo. */
+export type AgentDataCommit = { sha: string; date: string; message: string };
 
 /** A notification; payloads carry ids and titles only, never secrets or tool output. */
 export type Notification = {
