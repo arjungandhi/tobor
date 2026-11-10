@@ -154,6 +154,15 @@ describe("AgentData files", () => {
 		await expect(data.write("out/new", { content: "x" })).rejects.toMatchObject({ status: 403 });
 		await expect(data.write("", { content: "x" })).rejects.toMatchObject({ status: 400 });
 	});
+
+	it("rejects a symlink to the state dir", async () => {
+		await mkdir(join(dir, "state"), { recursive: true });
+		await writeFile(join(dir, "state", "auth.json"), "{}");
+		await symlink("state", join(dir, "x"));
+		await expect(data.read("x/auth.json")).rejects.toMatchObject({ status: 403 });
+		await expect(data.read("x")).rejects.toMatchObject({ status: 403 });
+		await expect(data.write("x/new", { content: "x" })).rejects.toMatchObject({ status: 403 });
+	});
 });
 
 describe("AgentData self-edits", () => {

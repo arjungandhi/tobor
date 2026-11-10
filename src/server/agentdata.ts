@@ -292,6 +292,11 @@ export class AgentData implements AgentDataService {
 		if (real !== this.rootReal && !real.startsWith(this.rootReal + sep)) {
 			throw new HostError(403, "forbidden_path", "path escapes .tobor/");
 		}
+		// A symlink inside `.tobor/` must not reach the node state either.
+		const stateReal = await realpath(join(this.dir, "state")).catch(() => undefined);
+		if (stateReal !== undefined && (real === stateReal || real.startsWith(stateReal + sep))) {
+			throw new HostError(403, "forbidden_path", "path escapes .tobor/");
+		}
 		return { rel, abs };
 	}
 
