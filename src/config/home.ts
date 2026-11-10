@@ -23,15 +23,17 @@ export function resolveHome(flags: HomeFlags = {}, env: NodeJS.ProcessEnv = proc
 export type HomePaths = {
 	/** `$TOBOR_HOME` itself. */
 	home: string;
-	/** pi-durable SQLite storage (plus `-wal`, `-shm`). */
+	/** `.tobor/state/`: gitignored node state (db, credentials, identity, artifact store); never agent-visible. */
+	stateDir: string;
+	/** pi-durable SQLite storage (plus `-wal`, `-shm`), under `.tobor/state/`. */
 	db: string;
-	/** tobor `fileStore` CredentialStore, mode 0600. */
+	/** tobor `fileStore` CredentialStore, mode 0600, under `.tobor/state/`. */
 	auth: string;
-	/** Default `env_file` (config may point elsewhere, relative to home). */
+	/** Default `env_file`, under `.tobor/state/` (config may point elsewhere, relative to home). */
 	agentEnv: string;
-	/** Node identity: system conversation id, ntfy topic. */
+	/** Node identity: system conversation id, ntfy topic (under `.tobor/state/`). */
 	nodeJson: string;
-	/** Node-level agent data git repo. */
+	/** Node-level agent data git repo (`state/` inside it is gitignored). */
 	toborDir: string;
 	/** `.tobor/config.yml`. */
 	config: string;
@@ -51,7 +53,7 @@ export type HomePaths = {
 	skillsDir: string;
 	/** `.tobor/design-systems/` themes. */
 	designSystemsDir: string;
-	/** Artifact store root. */
+	/** Artifact store root, under `.tobor/state/`. */
 	artifacts: string;
 	/** `artifacts/feed.jsonl` publish feed. */
 	artifactsFeed: string;
@@ -64,13 +66,15 @@ export type HomePaths = {
 /** Compute every path of the `$TOBOR_HOME` tree. Pure; creates nothing. */
 export function paths(home: string): HomePaths {
 	const toborDir = join(home, ".tobor");
-	const artifacts = join(home, "artifacts");
+	const stateDir = join(toborDir, "state");
+	const artifacts = join(stateDir, "artifacts");
 	return {
 		home,
-		db: join(home, "tobor.sqlite"),
-		auth: join(home, "auth.json"),
-		agentEnv: join(home, "agent.env"),
-		nodeJson: join(home, "node.json"),
+		stateDir,
+		db: join(stateDir, "tobor.sqlite"),
+		auth: join(stateDir, "auth.json"),
+		agentEnv: join(stateDir, "agent.env"),
+		nodeJson: join(stateDir, "node.json"),
 		toborDir,
 		config: join(toborDir, "config.yml"),
 		mcp: join(toborDir, "mcp.json"),
@@ -88,7 +92,7 @@ export function paths(home: string): HomePaths {
 	};
 }
 
-/** Contents of `$TOBOR_HOME/node.json`, written at first boot. */
+/** Contents of `$TOBOR_HOME/.tobor/state/node.json`, written at first boot. */
 export type NodeJson = {
 	/** Ownerless system conversation holding `tobor.sessions` and `tobor.schedules` (and owning schedule tasks). */
 	systemConversationId: number;
