@@ -79,7 +79,10 @@ describe("migrateHomeLayout", () => {
 		} finally {
 			failDbRename.on = false;
 		}
+		// Sidecars are already moved; the database is still at the root, where the next run finds it.
 		expect(await exists(join(home, "tobor.sqlite"))).toBe(true);
+		expect(await exists(join(p.stateDir, "tobor.sqlite-wal"))).toBe(true);
+		expect(await exists(join(p.stateDir, "tobor.sqlite-shm"))).toBe(true);
 
 		await migrateHomeLayout(home);
 		for (const name of ["tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm"]) {
