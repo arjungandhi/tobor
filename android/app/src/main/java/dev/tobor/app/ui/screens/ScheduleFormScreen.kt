@@ -173,7 +173,7 @@ fun ScheduleFormScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "back", tint = ToborColors.fg)
                 }
                 Text(
-                    if (editId == null) "new schedule" else "Edit schedule",
+                    if (editId == null) "new schedule" else "edit schedule",
                     fontFamily = FontFamilies.Righteous,
                     fontSize = 24.sp,
                     color = ToborColors.gold,
@@ -408,7 +408,7 @@ fun ScheduleFormScreen(
                                 strokeWidth = 2.dp,
                             )
                         }
-                        Text(if (editId == null) "schedule it" else "Save", fontFamily = FontFamilies.Righteous, fontSize = 16.sp)
+                        Text(if (editId == null) "schedule it" else "save changes", fontFamily = FontFamilies.Righteous, fontSize = 16.sp)
                     }
                 }
             }
