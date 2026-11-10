@@ -29,7 +29,7 @@ export function cleanTitle(raw: string): string {
 }
 
 /**
- * The model that titles a session: `title_model`, else the cheap default, else the session's own model — the first of
+ * The model that titles a session: `title_model`, then the cheap default, then the session's own model — the first of
  * them that exists in the registry and has auth. Undefined when none does (titling is skipped).
  */
 export async function resolveTitleModel(
@@ -37,9 +37,13 @@ export async function resolveTitleModel(
 	configured: string | undefined,
 	sessionModel: { provider: string; modelId: string } | undefined,
 ): Promise<Model<Api> | undefined> {
-	const refs = [parseModelRef(configured ?? DEFAULT_CHEAP_MODEL), sessionModel];
+	const refs = [configured ? parseModelRef(configured) : undefined, parseModelRef(DEFAULT_CHEAP_MODEL), sessionModel];
+	const seen = new Set<string>();
 	for (const ref of refs) {
 		if (!ref) continue;
+		const key = `${ref.provider}/${ref.modelId}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
 		const model = models.getModel(ref.provider, ref.modelId);
 		if (!model) continue;
 		try {
