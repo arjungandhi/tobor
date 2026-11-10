@@ -76,7 +76,8 @@ export const COMMANDS: readonly { name: string; description: string; argumentHin
 	{ name: "settings", description: "node defaults, workspaces and TUI preferences" },
 	{ name: "title", description: "rename this session", argumentHint: "<title>" },
 	{ name: "approval", description: "approval mode of this session", argumentHint: "ask|auto" },
-	{ name: "archive", description: "archive this session" },
+	{ name: "archive", description: "archive this session (archived sessions: h in the sessions list)" },
+	{ name: "complete", description: "archive this session (alias of /archive; archived sessions: h)" },
 	{ name: "help", description: "keys and commands" },
 	{ name: "quit", description: "exit the TUI" },
 ];

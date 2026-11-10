@@ -31,8 +31,11 @@ export type ApiError = {
 /** Body of mutations that return nothing else. */
 export type OkResponse = { ok: true };
 
-/** Session lifecycle as shown to clients: `waiting` means at least one approval is pending. */
-export type SessionState = "idle" | "running" | "waiting" | "failed";
+/**
+ * Session lifecycle as shown to clients: `waiting` means at least one approval is pending; `working` means the
+ * director is idle (no run, no failure) while background workers are still live.
+ */
+export type SessionState = "idle" | "running" | "waiting" | "failed" | "working";
 
 /** Token and cost totals summed over a conversation's `pi.usage`. */
 export type UsageSummary = {

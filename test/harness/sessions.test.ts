@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../../src/api/types.js";
+import { WorkersDoc, type WorkerRecord } from "../../src/docs.js";
 import { type BootedHost, boot } from "../../src/server/harness/boot.js";
 import { DIRECTOR_RULES, PREAMBLE } from "../../src/server/harness/sections.js";
 import { deriveState, type SessionIndex, summarizeUsage, titleFromPrompt } from "../../src/server/harness/sessions.js";
@@ -64,10 +65,15 @@ describe("pure helpers", () => {
 	it("derives state from pi.live and pending approvals", () => {
 		const run = { taskId: 1, inputs: [], turns: 0 } as unknown as NonNullable<LiveState["run"]>;
 		const failure = { taskId: 1, inputs: [], reason: "model_error", detail: "boom" } as unknown as NonNullable<LiveState["runFailure"]>;
-		expect(deriveState(undefined, 0)).toEqual({ state: "idle" });
-		expect(deriveState({ run }, 0)).toEqual({ state: "running" });
-		expect(deriveState({ run }, 2)).toEqual({ state: "waiting" });
-		expect(deriveState({ runFailure: failure }, 0)).toEqual({ state: "failed", failure: { reason: "model_error", detail: "boom" } });
+		expect(deriveState(undefined, 0, 0)).toEqual({ state: "idle" });
+		expect(deriveState({ run }, 0, 0)).toEqual({ state: "running" });
+		expect(deriveState({ run }, 2, 0)).toEqual({ state: "waiting" });
+		expect(deriveState({ runFailure: failure }, 0, 0)).toEqual({ state: "failed", failure: { reason: "model_error", detail: "boom" } });
+		// Live workers only matter once the director is otherwise idle: run > failure > working > idle.
+		expect(deriveState(undefined, 0, 2)).toEqual({ state: "working" });
+		expect(deriveState({ run }, 0, 2)).toEqual({ state: "running" });
+		expect(deriveState({ run }, 1, 2)).toEqual({ state: "waiting" });
+		expect(deriveState({ runFailure: failure }, 0, 2)).toMatchObject({ state: "failed" });
 	});
 
 	it("titles from the first 60 characters with whitespace collapsed", () => {
@@ -219,6 +225,59 @@ describe("SessionIndex", () => {
 		expect(await t.settle(submissionId)).toMatchObject({ status: "unanswered", reason: "aborted" });
 		await t.reachedState(id, "failed");
 		expect((await t.host.sessions.get(id))?.failure?.reason).toBe("aborted");
+	});
+});
+
+describe("working state", () => {
+	const record = (state: WorkerRecord["state"]): WorkerRecord => ({
+		id: "w1",
+		name: "h1",
+		agent: "helper",
+		holderTaskId: 1,
+		requestId: "c:0",
+		state,
+		createdAt: 1,
+		...(state === "starting" || state === "running" ? {} : { finishedAt: 2 }),
+	});
+	const setWorker = async (t: Started, id: number, state: WorkerRecord["state"]) => {
+		await t.host.harness.commit(async (tx) => {
+			(await tx.doc(WorkersDoc, id as ConversationId)).workers.w1 = record(state);
+		}, ctx);
+	};
+	const emitWorker = (t: Started, id: number, state: WorkerRecord["state"]) =>
+		t.host.events.emit({
+			type: "worker.state",
+			sessionId: id,
+			worker: { id: "w1", name: "h1", agent: "helper", state, usage: summarizeUsage(undefined), lastText: "", createdAt: 1 },
+		});
+
+	it("lists and gets an idle director with a live worker as working", async () => {
+		const t = await start();
+		const { id } = await t.host.sessions.create({ cwd: t.root, mode: "director" });
+		expect((await t.host.sessions.get(id))!.state).toBe("idle");
+		await setWorker(t, id, "running");
+		expect((await t.host.sessions.list()).find((s) => s.id === id)!.state).toBe("working");
+		expect(await t.host.sessions.get(id)).toMatchObject({ state: "working", workers: 1 });
+		await setWorker(t, id, "done");
+		expect((await t.host.sessions.list()).find((s) => s.id === id)!.state).toBe("idle");
+		expect(await t.host.sessions.get(id)).toMatchObject({ state: "idle", workers: 1 });
+	});
+
+	it("emits session.state working then idle as worker.state events arrive", async () => {
+		const t = await start();
+		t.script([fauxAssistantMessage("a")]);
+		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "go", mode: "director" });
+		await t.settle(submissionId);
+		await t.reachedState(id, "idle");
+		t.states.length = 0;
+
+		await setWorker(t, id, "running");
+		emitWorker(t, id, "running");
+		await t.reachedState(id, "working");
+		await setWorker(t, id, "done");
+		emitWorker(t, id, "done");
+		await t.reachedState(id, "idle");
+		expect(t.states.filter((s) => s.id === id).map((s) => s.state)).toEqual(["working", "idle"]);
 	});
 });
 

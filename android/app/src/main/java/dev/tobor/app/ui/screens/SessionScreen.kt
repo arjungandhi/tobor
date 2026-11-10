@@ -274,6 +274,7 @@ fun SessionScreen(
             when {
                 failed -> Tag("failed", ToborColors.error)
                 running -> Tag("running", ToborColors.gold)
+                workers.any { it.state.lowercase() in setOf("starting", "running") } -> Tag("working", ToborColors.teal)
                 else -> Tag("idle", ToborColors.subtle)
             }
             if (running) {
