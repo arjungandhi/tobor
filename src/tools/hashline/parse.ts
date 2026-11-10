@@ -67,7 +67,7 @@ export function parsePatch(input: string): { ok: true; sections: Section[] } | {
 	let first = lines.findIndex((l) => l.trim() !== "");
 	let last = lines.findLastIndex((l) => l.trim() !== "");
 	if (first >= 0 && lines[first]!.trim() === "*** Begin Patch") first++;
-	if (last >= first && lines[last]!.trim() === "*** End Patch") last--;
+	if (last >= 0 && last >= first && lines[last]!.trim() === "*** End Patch") last--;
 	if (first < 0 || last < first) return { ok: false, error: { kind: "parse", message: "empty patch; expected a [PATH#TAG] header" } };
 
 	const sections: Section[] = [];

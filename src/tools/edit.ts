@@ -92,7 +92,8 @@ async function plan(
 			return { ok: false, error: { kind: "parse", message: `bad MV destination ${p.mv.given}: it is also a source or destination in this edit` } };
 		}
 		const exists = await env.exists(p.mv.abs, ctx);
-		if (!exists.ok || exists.value) {
+		if (!exists.ok) return { ok: false, error: { kind: "io", message: `${p.mv.given}: ${exists.error.message}` } };
+		if (exists.value) {
 			return { ok: false, error: { kind: "parse", message: `bad MV destination ${p.mv.given}: it already exists` } };
 		}
 	}
