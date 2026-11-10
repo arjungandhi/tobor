@@ -28,7 +28,7 @@ type Command = {
 const COMMANDS: Record<string, Command> = {
 	init: {
 		usage: "tobor init [--home DIR]",
-		summary: "create $TOBOR_HOME, the .tobor repo skeleton and node.json",
+		summary: "create $TOBOR_HOME, the .tobor repo skeleton and state/ (node.json)",
 		positionals: [0, 0],
 		load: () => import("./server/cli/init.js"),
 	},
@@ -58,7 +58,7 @@ const COMMANDS: Record<string, Command> = {
 	},
 	backup: {
 		usage: "tobor backup <file> [--home DIR]",
-		summary: "copy tobor.sqlite with VACUUM INTO",
+		summary: "copy state/tobor.sqlite with VACUUM INTO",
 		positionals: [1, 1],
 		load: () => import("./server/cli/backup.js"),
 	},

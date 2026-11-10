@@ -122,7 +122,7 @@ describe("SessionIndex", () => {
 		expect((await t.host.sessions.entries(id, { order: "desc", limit: 1 })).more).toBe(true);
 		expect(await t.host.sessions.cwds()).toEqual({ roots: [t.root], recent: [t.root] });
 
-		const node = JSON.parse(await readFile(join(t.home, "node.json"), "utf8"));
+		const node = JSON.parse(await readFile(join(t.home, ".tobor", "state", "node.json"), "utf8"));
 		expect(node.systemConversationId).toBe(t.host.systemConversationId);
 	});
 

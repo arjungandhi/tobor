@@ -133,8 +133,18 @@ describe("AgentData files", () => {
 		await expect(data.remove("design-systems/t/tokens.css")).rejects.toMatchObject({ status: 422 });
 	});
 
+	it("hides the state dir from listings", async () => {
+		await mkdir(join(dir, "state"), { recursive: true });
+		await writeFile(join(dir, "state", "auth.json"), "{}");
+		await mkdir(join(dir, "agents", "state"), { recursive: true });
+		const root = await data.read("");
+		expect(root).toMatchObject({ type: "dir" });
+		expect((root as { entries: { name: string }[] }).entries.map((e) => e.name)).toEqual(["agents", "config.yml"]);
+		expect(await data.read("agents/state")).toMatchObject({ type: "dir" });
+	});
+
 	it("keeps every path inside .tobor/", async () => {
-		for (const bad of ["../node.json", "agents/../../auth.json", ".git/config", "agents/.git", "/etc/passwd"]) {
+		for (const bad of ["../node.json", "agents/../../auth.json", ".git/config", "agents/.git", "/etc/passwd", "state", "state/auth.json", "State/node.json"]) {
 			await expect(data.read(bad), bad).rejects.toBeInstanceOf(HostError);
 			await expect(data.write(bad, { content: "x" }), bad).rejects.toBeInstanceOf(HostError);
 		}
@@ -144,9 +154,29 @@ describe("AgentData files", () => {
 		await expect(data.write("out/new", { content: "x" })).rejects.toMatchObject({ status: 403 });
 		await expect(data.write("", { content: "x" })).rejects.toMatchObject({ status: 400 });
 	});
+
+	it("rejects a symlink to the state dir", async () => {
+		await mkdir(join(dir, "state"), { recursive: true });
+		await writeFile(join(dir, "state", "auth.json"), "{}");
+		await symlink("state", join(dir, "x"));
+		await expect(data.read("x/auth.json")).rejects.toMatchObject({ status: 403 });
+		await expect(data.read("x")).rejects.toMatchObject({ status: 403 });
+		await expect(data.write("x/new", { content: "x" })).rejects.toMatchObject({ status: 403 });
+	});
 });
 
 describe("AgentData self-edits", () => {
+	it("never stages state/, even when .gitignore does not list it", async () => {
+		await mkdir(join(dir, "state"), { recursive: true });
+		await writeFile(join(dir, "state", "auth.json"), "{}");
+		await data.watch();
+		await writeFile(join(dir, "AGENTS.md"), "# node\n");
+		await until(() => events.length > 0);
+		expect(git("ls-files")).not.toMatch(/state/);
+		expect(git("show", "--stat", "--format=%s", "HEAD")).not.toMatch(/state/);
+		expect(await readFile(join(dir, "state", "auth.json"), "utf8")).toBe("{}");
+	});
+
 	it("commits agent edits as agent: <paths>", async () => {
 		await data.watch();
 		await writeFile(join(dir, "AGENTS.md"), "# node\n");

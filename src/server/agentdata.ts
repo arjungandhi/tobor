@@ -71,7 +71,7 @@ export class AgentData implements AgentDataService {
 		if (!st) return undefined;
 		if (st.isDirectory()) {
 			const entries = (await readdir(abs, { withFileTypes: true }))
-				.filter((e) => e.name !== ".git")
+				.filter((e) => e.name !== ".git" && !(rel === "" && e.name.toLowerCase() === "state"))
 				.map((e) => ({ name: e.name, type: e.isDirectory() ? ("dir" as const) : ("file" as const) }))
 				.sort((a, b) => a.name.localeCompare(b.name));
 			return { type: "dir", path: rel, entries };
@@ -150,6 +150,7 @@ export class AgentData implements AgentDataService {
 		this.watcher = fsWatch(this.dir, { recursive: true }, (_event, filename) => {
 			const name = filename?.toString();
 			if (name === ".git" || name?.startsWith(`.git${sep}`)) return;
+			if (name === "state" || name?.startsWith(`state${sep}`)) return;
 			this.schedule();
 		});
 		this.watcher.on("error", (error) => console.error("tobor: .tobor watcher failed:", error));
@@ -175,7 +176,7 @@ export class AgentData implements AgentDataService {
 
 	/** Validate and commit uncommitted changes (made outside `write`/`remove`); revert the invalid ones. */
 	private async sweep(): Promise<void> {
-		const changed = await this.changedPaths();
+		const changed = (await this.changedPaths()).filter((rel) => !isStatePath(rel));
 		if (changed.length === 0) return;
 		const ctx = { home: this.o.home, toborDir: this.dir };
 		const good: string[] = [];
@@ -228,7 +229,8 @@ export class AgentData implements AgentDataService {
 
 	/** Paths with uncommitted changes (worktree or index), relative to `.tobor/`. */
 	private async changedPaths(): Promise<string[]> {
-		const out = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+		// `state/` is excluded at the git level, so editing `.gitignore` can never expose it to the sweep.
+		const out = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude)state"]);
 		const fields = out.split("\0");
 		const paths = new Set<string>();
 		for (let i = 0; i < fields.length; i++) {
@@ -243,7 +245,9 @@ export class AgentData implements AgentDataService {
 	}
 
 	/** Stage and commit exactly `rels`; returns the new HEAD (or the current one when nothing changed). */
-	private async commit(rels: string[], message: string): Promise<string> {
+	private async commit(all: string[], message: string): Promise<string> {
+		const rels = all.filter((rel) => !isStatePath(rel));
+		if (rels.length === 0) return (await this.git(["rev-parse", "HEAD"]).catch(() => "")).trim();
 		await this.git(["add", "-A", "--", ...rels]);
 		const staged = await this.git(["diff", "--cached", "--name-only", "-z", "--", ...rels]);
 		if (staged === "") return (await this.git(["rev-parse", "HEAD"]).catch(() => "")).trim();
@@ -269,14 +273,14 @@ export class AgentData implements AgentDataService {
 
 	/**
 	 * Normalize a client path (relative to `.tobor/`, `/`-separated) and prove it stays inside `.tobor/`, symlinks
-	 * included. `.git` is never addressable. The empty path is the root.
+	 * included. `.git` and the top-level `state/` (node state) are never addressable. The empty path is the root.
 	 */
 	private async resolve(path: string): Promise<{ rel: string; abs: string }> {
 		const parts = path.split("/").filter((p) => p !== "" && p !== ".");
 		if (path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
 			throw new HostError(400, "invalid_path", "path must be relative to .tobor/");
 		}
-		if (parts.some((p) => p === ".." || p.toLowerCase() === ".git")) {
+		if (parts.some((p) => p === ".." || p.toLowerCase() === ".git") || parts[0]?.toLowerCase() === "state") {
 			throw new HostError(403, "forbidden_path", "path escapes .tobor/");
 		}
 		const rel = parts.join("/");
@@ -286,6 +290,11 @@ export class AgentData implements AgentDataService {
 		while (!(await lstat(probe).then(() => true, () => false)) && probe !== this.dir) probe = dirname(probe);
 		const real = await realpath(probe).catch(() => probe);
 		if (real !== this.rootReal && !real.startsWith(this.rootReal + sep)) {
+			throw new HostError(403, "forbidden_path", "path escapes .tobor/");
+		}
+		// A symlink inside `.tobor/` must not reach the node state either.
+		const stateReal = await realpath(join(this.dir, "state")).catch(() => undefined);
+		if (stateReal !== undefined && (real === stateReal || real.startsWith(stateReal + sep))) {
 			throw new HostError(403, "forbidden_path", "path escapes .tobor/");
 		}
 		return { rel, abs };
@@ -310,6 +319,11 @@ export class AgentData implements AgentDataService {
 		this.queue = next.catch(() => {});
 		return next;
 	}
+}
+
+/** The top-level `state/` (node state): never staged, committed or swept, whatever `.gitignore` says. */
+function isStatePath(rel: string): boolean {
+	return rel === "state" || rel.startsWith("state/");
 }
 
 /** The value at a dotted key path. */

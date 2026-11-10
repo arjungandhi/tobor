@@ -179,21 +179,23 @@ describe("read tool", () => {
 		expect((await t.read("d")).text).toBe("a.txt\nb.txt\nsub/");
 	});
 
-	it("refuses tobor secret/state files under $TOBOR_HOME only", async () => {
+	it("refuses tobor node state under $TOBOR_HOME only", async () => {
 		const home = "/srv/tobor";
 		const t = setup(home);
-		const secrets = ["auth.json", "agent.env", "node.json", "tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm", "tobor.sqlite.bak", "backups/tobor.sqlite.2026"];
+		const secrets = [".tobor/state/auth.json", ".tobor/state/agent.env", ".tobor/state/node.json", ".tobor/state/tobor.sqlite", ".tobor/state/keys.env", ".tobor/state/sub/other.txt", "auth.json", "agent.env", "node.json", "tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm", "tobor.sqlite.bak", "backups/tobor.sqlite.2026"];
 		for (const f of secrets) t.env.set(`${home}/${f}`, "x");
 		t.env.set(`${home}/someproject/file.txt`, "hi\n");
 		t.env.set(`${home}/.tobor/AGENTS.md`, "agents\n");
+		t.env.set(`${home}/.tobor/state/artifacts/store/p/a/1/index.html`, "<p>hi</p>\n");
 		for (const f of secrets) {
 			const denied = await t.read(`${home}/${f}`);
 			expect(denied.isError, f).toBe(true);
 			expect(denied.details.errorKind).toBe("io");
-			expect(denied.text).toMatch(/tobor secret\/state file/);
+			expect(denied.text).toMatch(/tobor node state/);
 		}
 		expect((await t.read(`${home}/someproject/file.txt`)).text).toMatch(/1:hi/);
 		expect((await t.read(`${home}/.tobor/AGENTS.md`)).text).toMatch(/1:agents/);
+		expect((await t.read(`${home}/.tobor/state/artifacts/store/p/a/1/index.html`)).text).toMatch(/1:<p>hi<\/p>/);
 	});
 
 	it("unions seen lines across reads of the same tag", async () => {

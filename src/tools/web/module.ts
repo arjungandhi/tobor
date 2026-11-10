@@ -9,7 +9,7 @@ import { webSearch } from "./search.js";
 
 export type WebToolsDeps = {
 	config: () => Config;
-	/** Variables from the node's env file (`agent.env`), where search API keys live. */
+	/** Variables from the node's env file (`.tobor/state/agent.env`), where search API keys live. */
 	env: () => Record<string, string>;
 };
 

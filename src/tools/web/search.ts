@@ -12,7 +12,7 @@ export type SearchSource = { title: string; url: string; snippet?: string; publi
 export type SearchResponse = { provider: SearchBackend; answer?: string; sources: SearchSource[]; related?: string[] };
 
 export const SEARCH_NOT_CONFIGURED =
-	"web_search is not configured: set search.provider in .tobor/config.yml and the key in agent.env";
+	"web_search is not configured: set search.provider in .tobor/config.yml and the key in .tobor/state/agent.env";
 
 /** Default endpoints; tests and `search.url` override them. */
 export const SEARCH_ENDPOINTS: Record<SearchBackend, string> = {
@@ -38,7 +38,7 @@ const SNIPPET_CHARS = 240;
 
 export type SearchDeps = {
 	config: Config["search"];
-	/** Env-file variables (agent.env); `process.env` is the fallback. */
+	/** Env-file variables (`.tobor/state/agent.env`); `process.env` is the fallback. */
 	env: Record<string, string>;
 	timeoutMs: number;
 	signal?: AbortSignal;
@@ -98,7 +98,7 @@ function since(recency: Recency): string {
 }
 
 async function brave(c: Call): Promise<SearchResponse> {
-	if (!c.key) throw new ProviderError(`Brave needs an API key: set ${KEY_ENV.brave} in agent.env`);
+	if (!c.key) throw new ProviderError(`Brave needs an API key: set ${KEY_ENV.brave} in .tobor/state/agent.env`);
 	const url = new URL(c.endpoint);
 	url.searchParams.set("q", c.query);
 	url.searchParams.set("count", String(c.limit));
@@ -116,7 +116,7 @@ async function brave(c: Call): Promise<SearchResponse> {
 }
 
 async function tavily(c: Call): Promise<SearchResponse> {
-	if (!c.key) throw new ProviderError(`Tavily needs an API key: set ${KEY_ENV.tavily} in agent.env`);
+	if (!c.key) throw new ProviderError(`Tavily needs an API key: set ${KEY_ENV.tavily} in .tobor/state/agent.env`);
 	const body: Record<string, unknown> = {
 		query: c.query,
 		search_depth: "basic",

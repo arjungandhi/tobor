@@ -208,7 +208,7 @@ describe("web_search: DuckDuckGo and the auto chain", () => {
 		const result = await webSearch({ query: "q" }, { config: { provider: "none", max_results: 10 }, env: {}, timeoutMs: 1000 });
 		expect(result).toEqual({ text: SEARCH_NOT_CONFIGURED, isError: false, details: { provider: "none" } });
 		expect(SEARCH_NOT_CONFIGURED).toBe(
-			"web_search is not configured: set search.provider in .tobor/config.yml and the key in agent.env",
+			"web_search is not configured: set search.provider in .tobor/config.yml and the key in .tobor/state/agent.env",
 		);
 	});
 

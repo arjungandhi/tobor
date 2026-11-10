@@ -16,9 +16,13 @@ describe("resolveHome", () => {
 
 	it("lays out the home tree", () => {
 		const p = paths(HOME);
-		expect(p.db).toBe("/srv/tobor/tobor.sqlite");
+		expect(p.stateDir).toBe("/srv/tobor/.tobor/state");
+		expect(p.db).toBe("/srv/tobor/.tobor/state/tobor.sqlite");
+		expect(p.auth).toBe("/srv/tobor/.tobor/state/auth.json");
+		expect(p.agentEnv).toBe("/srv/tobor/.tobor/state/agent.env");
+		expect(p.nodeJson).toBe("/srv/tobor/.tobor/state/node.json");
 		expect(p.config).toBe("/srv/tobor/.tobor/config.yml");
-		expect(p.artifactsFeed).toBe("/srv/tobor/artifacts/feed.jsonl");
+		expect(p.artifactsFeed).toBe("/srv/tobor/.tobor/state/artifacts/feed.jsonl");
 	});
 });
 
@@ -66,10 +70,19 @@ artifacts: { theme: retro-log }
 		);
 		expect(errors).toEqual([]);
 		expect(config.roots).toEqual([join(homedir(), "repos")]);
-		expect(config.env_file).toBe("/srv/tobor/agent.env");
+		expect(config.env_file).toBe("/srv/tobor/.tobor/state/agent.env");
 		expect(config.defaults.idle).toBe(1_800_000);
 		expect(config.retention.documents).toBe(90 * 86_400_000);
 		expect(config.mcp.approval.github).toEqual({ allow: ["list_issues"], ask: ["create_issue"] });
+	});
+
+	it("resolves env_file against the home, the bare default to .tobor/state", () => {
+		const envFile = (text: string) => parseConfigText(text, HOME);
+		expect(envFile("").config.env_file).toBe("/srv/tobor/.tobor/state/agent.env");
+		expect(envFile("env_file: agent.env").config.env_file).toBe("/srv/tobor/.tobor/state/agent.env");
+		expect(envFile("env_file: secrets/api.env").config.env_file).toBe("/srv/tobor/secrets/api.env");
+		expect(envFile("env_file: .tobor/state/x.env")).toMatchObject({ errors: [], config: { env_file: "/srv/tobor/.tobor/state/x.env" } });
+		expect(envFile("env_file: .tobor/x.env").errors.map((e) => e.path)).toEqual(["env_file"]);
 	});
 
 	it("applies defaults to an empty file", () => {

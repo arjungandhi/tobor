@@ -90,14 +90,14 @@ flowchart LR
     end
     subgraph Work[work host]
         NW[tobor node<br/>Bun 1.4.4+ binary, HTTP+WS :7879<br/>artifacts origin :7880<br/>pi-durable Harness]
-        DBW[($TOBOR_HOME/tobor.sqlite)]
+        DBW[($TOBOR_HOME/.tobor/state/tobor.sqlite)]
         AGW[$TOBOR_HOME/.tobor git repo]
         NW --- DBW
         NW --- AGW
     end
     subgraph Personal[personal host]
         NP[tobor node]
-        DBP[(tobor.sqlite)]
+        DBP[(.tobor/state/tobor.sqlite)]
         NP --- DBP
     end
     APP -- HTTP / WS --> NW
@@ -111,9 +111,9 @@ There is one process per host and no hub. Hosts share nothing. Each node is plai
 **Boot sequence.** In order; the HTTP listeners open last:
 1. Check `process.versions.node` ≥ 22.19, else exit with a message (the package also sets `engines` + `engine-strict`). Resolve `$TOBOR_HOME`: `--home`, then `TOBOR_HOME`, then `~/.local/share/tobor`.
 2. Load `$TOBOR_HOME/.tobor/config.yml` and the `env_file`. Project-level `<git root>/.tobor/config.yml` is read per session cwd and merged under the whitelist in Agent data.
-3. Build models with `createModels({credentials: fileStore("$TOBOR_HOME/auth.json")})` plus `builtinModels()`. The primary credential is the owner's Claude Pro/Max subscription via pi-ai's Anthropic OAuth (`models.login('anthropic','oauth',{prompt})`, run by `tobor login anthropic`); API keys from `env_file` are the fallback, and a stored OAuth credential wins over an env key. `fileStore` is tobor's own `CredentialStore`: a JSON file at 0600, mutations under a file lock with atomic rename, re-read on each call so the node picks up a login without restart.
+3. Build models with `createModels({credentials: fileStore("$TOBOR_HOME/.tobor/state/auth.json")})` plus `builtinModels()`. The primary credential is the owner's Claude Pro/Max subscription via pi-ai's Anthropic OAuth (`models.login('anthropic','oauth',{prompt})`, run by `tobor login anthropic`); API keys from `env_file` are the fallback, and a stored OAuth credential wins over an env key. `fileStore` is tobor's own `CredentialStore`: a JSON file at 0600, mutations under a file lock with atomic rename, re-read on each call so the node picks up a login without restart.
 4. Build the registry: one extension, `tobor`, holding sections, tools, hooks, the `tobor.schedule` task and the tobor docs. Every tobor doc and task has a `version` and a `migrate`.
-5. **Open:** `Harness.open(await openNodeSqliteStorage("$TOBOR_HOME/tobor.sqlite"), {…, settings: {restartLimit: 10, afterFailedRun: "withdraw", contextRetentionMs, documentRetentionMs}})`.
+5. **Open:** `Harness.open(await openNodeSqliteStorage("$TOBOR_HOME/.tobor/state/tobor.sqlite"), {…, settings: {restartLimit: 10, afterFailedRun: "withdraw", contextRetentionMs, documentRetentionMs}})`.
 6. **Resume:** `harness.resume()`.
 7. **Reconcile schedules:** compare `tobor.schedules` with `harness.inspect()` tasks; create missing tasks for enabled definitions, abort orphans.
 8. **Re-wait notifiers:** for each unsettled run submission in the schedule run lists, wait again and notify on settle.
@@ -138,7 +138,7 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 
 | Tool | Source | Approval in `ask` |
 |---|---|---|
-| `read` | tobor (`src/tools/read.ts`), hashline spec below. Replaces pi-durable `read`. Denies tobor's secret/state files under `$TOBOR_HOME` (`auth.json`, `agent.env`, `node.json`, `*.sqlite*`) | no |
+| `read` | tobor (`src/tools/read.ts`), hashline spec below. Replaces pi-durable `read`. Denies tobor's secret/state files (`auth.json`, `agent.env`, `node.json` in `$TOBOR_HOME/.tobor/state/`, and at the home root of un-migrated homes; `*.sqlite*` anywhere under `$TOBOR_HOME`) | no |
 | `edit` | tobor (`src/tools/edit.ts`), hashline spec below. Replaces pi-durable `edit` | yes |
 | `write` | `createWriteTool()` wrapped with `wrapTool`: strips copied `N:` prefixes when every row has one and the numbers rise by 1, records a snapshot with `seen = "all"`, prepends `[path#TAG]` | yes |
 | `bash` | `createBashTool()`; `prepareArguments` defaults the timeout to 10 min; output keeps the tail and spills to a file | yes |
@@ -164,7 +164,7 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 
 `auto` skips the hook. Loosening a conversation from `ask` to `auto` requires confirmation on the client.
 
-**Schedules.** Definitions live in the doc `tobor.schedules` on a dedicated ownerless "system" conversation created at first boot (id in `$TOBOR_HOME/node.json`). A definition is `{id, name, cron? | at?, tz, cwd, prompt, model?, approval_mode?: ask, misfire_grace?: 2h, enabled}`. Each enabled schedule has one `tobor.schedule` task, `background: true`, owned by the system conversation. Creating, updating or deleting a schedule writes the doc and creates/aborts the task in **one** `harness.commit`. Phases:
+**Schedules.** Definitions live in the doc `tobor.schedules` on a dedicated ownerless "system" conversation created at first boot (id in `$TOBOR_HOME/.tobor/state/node.json`). A definition is `{id, name, cron? | at?, tz, cwd, prompt, model?, approval_mode?: ask, misfire_grace?: 2h, enabled}`. Each enabled schedule has one `tobor.schedule` task, `background: true`, owned by the system conversation. Creating, updating or deleting a schedule writes the doc and creates/aborts the task in **one** `harness.commit`. Phases:
 - `wait`: compute `fireAt` from cron (`cron-parser`, `tz` defaulting to the host zone) or `at`, freeze it in the checkpoint, then `runtime.sleepUntil(fireAt, {phase:"create"})`.
 - `create`: re-read the definition; deleted or disabled → finish `completed`. If `now - fireAt > misfire_grace`, record a skipped run with a notice and go to `wait`. If the previous run's submission is unsettled, record `skipped (overlap)` and go to `wait`. Otherwise, inside `runtime.commit`, `tx.createConversation` (ownerless), store config and the new id in the checkpoint, then go to `submit`. A rerun of `create` after the commit sees the frozen id.
 - `submit`: configure the conversation, then `submit({type:"input", content: "[scheduled run, fired <fireAt ISO>]\n" + prompt, requestId: "<scheduleId>:<fireAt>"})`; the idempotent `requestId` makes a rerun harmless. Append `{fireAt, conversationId, submissionId, status}` to the run list (capped at 50). One-shot finishes; cron returns to `wait`. [INFERENCE] composed from documented parts; the README has no sleep-then-submit example.
@@ -178,7 +178,7 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 
 The client keeps a replica by applying Chord ops (the TUI via `chord/delta.apply`, proven); only one path is built. On disconnect the client keeps its `ConversationTranscript.resume` window and reconnects with it as `from`. Older history comes from `GET …/entries` with `EntryQuery` parameters. The client shows `pi.live.runFailure` and `unanswered{reason}` on the session.
 
-**Storage.** `tobor.sqlite` holds pi-durable state plus the tobor docs (`tobor.session`, `tobor.sessions`, `tobor.approvals`, `tobor.schedules`, `tobor.todo`, `tobor.workers`). The artifact feed is `feed.jsonl`. There is no second transcript copy. Retention is set via `contextRetentionMs`/`documentRetentionMs`; `tobor backup <file>` runs `VACUUM INTO`.
+**Storage.** `.tobor/state/tobor.sqlite` holds pi-durable state plus the tobor docs (`tobor.session`, `tobor.sessions`, `tobor.approvals`, `tobor.schedules`, `tobor.todo`, `tobor.workers`). The artifact feed is `feed.jsonl`. There is no second transcript copy. Retention is set via `contextRetentionMs`/`documentRetentionMs`; `tobor backup <file>` runs `VACUUM INTO`.
 
 ## Subagents (director mode)
 
@@ -258,7 +258,7 @@ Rendering rules:
 - An out-of-bounds start returns `File has L lines; try :1 or :L`, not an error.
 - Binary files (NUL in the first 8 KiB) return a notice unless `:raw` is given. Images are delegated to a private `createReadTool()` instance called directly.
 - Directories list their entries, one per line. No tag.
-- tobor's secret/state files under `$TOBOR_HOME` (`auth.json`, `agent.env`, `node.json`, `*.sqlite*`) are refused; everything else is readable.
+- tobor's secret/state files (`auth.json`, `agent.env`, `node.json` under `$TOBOR_HOME/.tobor/state/`, `*.sqlite*` anywhere under `$TOBOR_HOME`) are refused; everything else is readable.
 
 ### `edit`
 
@@ -306,7 +306,7 @@ Stale tags are never auto-rebased in v3. omp's "unique safe result" recovery is 
 This is a port of `omp-artifacts` (TypeScript; `design.ts` and `export.ts` are lifted, with Bun APIs swapped for Node: `Bun.file().type` becomes a mime table, `Bun.which` becomes a PATH scan). The store's internals are tobor's own, modeled on agentuse's observable behavior.
 
 - **Bundles:** `<git root>/.tobor/artifacts/<slug>/index.html` plus `assets/`; bundles live with the project, as in omp. HTML only. Slug matches `^[a-z0-9][a-z0-9-]*$`. Limits: 25 MiB, 200 files. Skips `node_modules .git dist build coverage __pycache__`. Local `.js` files other than the vendored scaffold scripts are dropped.
-- **Store:** `$TOBOR_HOME/artifacts/feed.jsonl` plus `store/<projectId>/<slug>/<rev>/`, and `pdf/<rev>.pdf`. `projectId` = `"proj_" + sha256(key).slice(0,12)`, where `key` is `git:<first commit sha>` (with `:wt:<gitdir name>` for linked worktrees), else `path:<realpath>`. tobor's own content hash, `nextRevision` per `(projectId, slug)`, slug/title derivation and file lock with atomic rename. Dedupe: same content hash, title and tags **and** the stored bundle dir exists → `{deduped:true}`, no new revision.
+- **Store:** `$TOBOR_HOME/.tobor/state/artifacts/feed.jsonl` plus `store/<projectId>/<slug>/<rev>/`, and `pdf/<rev>.pdf`. `projectId` = `"proj_" + sha256(key).slice(0,12)`, where `key` is `git:<first commit sha>` (with `:wt:<gitdir name>` for linked worktrees), else `path:<realpath>`. tobor's own content hash, `nextRevision` per `(projectId, slug)`, slug/title derivation and file lock with atomic rename. Dedupe: same content hash, title and tags **and** the stored bundle dir exists → `{deduped:true}`, no new revision.
 - **Tools:** `artifact_create({slug, title, design?, layout?: screen|document})` scaffolds from the resolved theme (tokens as `<style>`, a vendored Tailwind runtime copied into `assets/` with the theme's config, fonts and logo as `data:` URIs; no CDN, so PDF works offline) plus an agentuse-style runtime shim (in-memory `localStorage` and clipboard, since the sandbox has no storage). It fails if the bundle exists. `artifact_publish({slug, title?, tags?})` returns `URL:` and `Revision:` lines and emits `artifact.published`. `artifact_list({all?})`. `artifact_export({slug, format: pdf, out?})` defaults to `<git root>/.tobor/exports/<slug>.pdf`.
 - **Viewer:** artifacts are served only by the second listener, `artifacts_listen` (default API port + 1, e.g. 7880), a separate origin from the API. `/art/<projectId>/<slug>` (latest) and `/art/r/<rev>` (fixed); the web app embeds them in an iframe with `sandbox="allow-scripts allow-popups"` (no `allow-same-origin`, no `allow-popups-to-escape-sandbox`). Every artifact response carries tobor's own header CSP: `sandbox allow-scripts allow-popups; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'`. The sanitizer strips meta refresh, `<base>` and preload links; paths stay inside the revision dir; open viewers reload on `artifact.published`.
 - **PDF:** `GET /art/<projectId>/<slug>.pdf` and `/art/r/<rev>.pdf` render with headless Chromium using omp-artifacts' flags and `printReady` CSS. Chrome is found via `TOBOR_CHROME`, then PATH; a startup probe reports it in `/api/whoami`. Output is cached per revision; while that revision is rendering, requests get 503 with `Retry-After`. Streamed with `Content-Disposition: attachment`. Rendering is serialized, with a 120 s timeout.
@@ -328,7 +328,7 @@ This is a port of `omp-artifacts` (TypeScript; `design.ts` and `export.ts` are l
 
 ## Agent data (.tobor dirs)
 
-tobor mirrors omp's `.omp/` layout. Two locations use the same names: the node-level `$TOBOR_HOME/.tobor/` (omp's counterpart is the user dir `~/.omp/agent/`), and the project-level `<git root>/.tobor/` (omp's `<project>/.omp/`). The node-level dir is a git repo created by `tobor init`, and the node commits every client edit. The project-level dir belongs to the project's own repo; the node never commits it.
+tobor mirrors omp's `.omp/` layout. Two locations use the same names: the node-level `$TOBOR_HOME/.tobor/` (omp's counterpart is the user dir `~/.omp/agent/`), and the project-level `<git root>/.tobor/` (omp's `<project>/.omp/`). The node-level dir is a git repo created by `tobor init`, and the node commits every client edit. Its `state/` subdir holds node state (database, credentials, artifact store; see Deployment), is gitignored via `.tobor/.gitignore`, and is not addressable through the agent-data API. The project-level dir belongs to the project's own repo; the node never commits it.
 
 | Path | Level | Purpose |
 |---|---|---|
@@ -348,7 +348,7 @@ tobor mirrors omp's `.omp/` layout. Two locations use the same names: the node-l
 
 ```yaml
 roots: [~/repos]         # default: [$TOBOR_HOME]
-env_file: agent.env          # relative to $TOBOR_HOME, never inside .tobor/
+env_file: agent.env          # relative to $TOBOR_HOME; agent.env = .tobor/state/agent.env; not elsewhere inside .tobor/
 listen: 0.0.0.0:7879
 artifacts_listen: 0.0.0.0:7880   # default: listen port + 1
 public_url: http://host:7879
@@ -483,22 +483,25 @@ sequenceDiagram
 - No auth in the node. Network reachability is the access control, so binding to the tailnet IP is recommended.
 - Request hygiene: JSON content type required for mutations. No `Host` or `Origin` checks; any traffic reaching the port is accepted.
 - Artifacts are served from a separate origin (`artifacts_listen`) with the header CSP above, a `sandbox` directive, `connect-src 'none'`, no escape-sandbox popups and path containment, so artifact JS cannot reach the API.
-- The agent runs as the operator, with full filesystem and shell access (no sandbox). `ask` mode is the opt-in safeguard (the built-in default is `auto`). `roots` gates only the starting cwd. `read` refuses tobor's secret/state files under `$TOBOR_HOME` (auth.json, agent.env, node.json, database). `schedule_create` needs approval in `ask` and cannot create `auto` schedules. Agent self-edits of `.tobor/` cannot change approval mode, `mcp.approval`, `roots` or `listen` (see Self-editing).
-- Secrets live in `env_file` and `auth.json` (mode 0600), never in the `.tobor` repo, and never in notifications. Payloads carry ids and titles only.
-- OAuth login (`tobor login anthropic`, or the web Host view; see Login on a headless host) writes `auth.json`. The API exposes auth status, never tokens. [INFERENCE] Whether Anthropic's terms allow Pro/Max OAuth in a third-party harness is undocumented, and the operator's call.
+- The agent runs as the operator, with full filesystem and shell access (no sandbox). `ask` mode is the opt-in safeguard (the built-in default is `auto`). `roots` gates only the starting cwd. `read` refuses tobor's secret/state files in `$TOBOR_HOME/.tobor/state/` (auth.json, agent.env, node.json, database). `schedule_create` needs approval in `ask` and cannot create `auto` schedules. Agent self-edits of `.tobor/` cannot change approval mode, `mcp.approval`, `roots` or `listen` (see Self-editing).
+- Secrets live in `env_file` and `auth.json` (mode 0600, under the gitignored `.tobor/state/`), never in the `.tobor` repo, and never in notifications. Payloads carry ids and titles only.
+- OAuth login (`tobor login anthropic`, or the web Host view; see Login on a headless host) writes `.tobor/state/auth.json`. The API exposes auth status, never tokens. [INFERENCE] Whether Anthropic's terms allow Pro/Max OAuth in a third-party harness is undocumented, and the operator's call.
 
 ## Deployment and `$TOBOR_HOME` layout
 
 ```
 $TOBOR_HOME/                 # --home → TOBOR_HOME → ~/.local/share/tobor
-├── tobor.sqlite (+ -wal, -shm)
-├── auth.json                # tobor fileStore (CredentialStore), 0600
-├── agent.env                # env_file
-├── node.json                # system conversation id, ntfy topic
-├── .tobor/                  # node-level git repo: AGENTS.md RULES.md SYSTEM.md APPEND_SYSTEM.md config.yml mcp.json agents/ skills/ design-systems/ (see Agent data)
-└── artifacts/{feed.jsonl, store/, pdf/}
+└── .tobor/                  # node-level git repo: AGENTS.md RULES.md SYSTEM.md APPEND_SYSTEM.md config.yml mcp.json agents/ skills/ design-systems/ (see Agent data)
+    ├── .gitignore           # state/
+    └── state/               # gitignored node state, never committed or exposed by the agent-data API
+        ├── tobor.sqlite (+ -wal, -shm)
+        ├── auth.json        # tobor fileStore (CredentialStore), 0600
+        ├── agent.env        # env_file (default), 0600
+        ├── node.json        # system conversation id, ntfy topic
+        └── artifacts/{feed.jsonl, store/, pdf/}
 ```
 
+- Migration: homes from before this layout had `tobor.sqlite*`, `auth.json`, `agent.env`, `node.json` and `artifacts/` at the home root. `tobor init`, `login`, `backup` and node boot move them into `.tobor/state/` automatically (only when the new file is absent), after making sure `.tobor/.gitignore` lists `state/` so the auto-commit never sees them. Idempotent.
 - Runtime: Bun ≥ 1.4.4, checked at startup and via `engines.bun`. tobor ships as one `bun build --compile` binary (`bun run build` → `dist/tobor`, x64-baseline; `build:arm64`), so hosts need neither Bun nor Node installed.
 - Distribution, both in v3.0: the compiled binary, which embeds `package.json`, the init skeleton and the artifact themes/vendored Tailwind (extracted on first run to `$XDG_CACHE_HOME/tobor/assets/<hash>/`, found via `$TOBOR_ASSET_ROOT`), run as `~/.local/bin/tobor node`; and a Nix flake `packages.default` whose closure includes chromium, plus a home-manager module for the unit.
 - systemd **user** unit template `tobor@.service` with linger, `EnvironmentFile=%h/.config/tobor/nodes/%i.env` (sets `TOBOR_HOME`), `ExecStart=%h/.local/bin/tobor node`, `Restart=on-failure`, `TimeoutStopSec` matching the shutdown grace. SIGTERM leads to `harness.close(ctx)` unless approvals are pending (then exit directly; see Approval).
@@ -508,7 +511,7 @@ $TOBOR_HOME/                 # --home → TOBOR_HOME → ~/.local/share/tobor
 
 ### Login on a headless host
 
-`tobor login anthropic` prints the authorization URL. The operator opens it on any device, approves, and pastes the code Anthropic shows (pi-ai's `manual_code` prompt path; the local callback server is only used when a browser is available on the host). The credential is written to `$TOBOR_HOME/auth.json` (0600) by tobor's file-locked `CredentialStore`. The running node picks it up without restart (the store re-reads per call), and refresh happens inside `modify`. A replaced binary, however, needs a node restart: at the end `tobor login` probes the node's `/api/whoami` and, when its `version`/`build` differ from the CLI's, prints `systemctl --user restart tobor@<name>` (the name is the `~/.config/tobor/nodes/<name>.env` whose `TOBOR_HOME` matches).
+`tobor login anthropic` prints the authorization URL. The operator opens it on any device, approves, and pastes the code Anthropic shows (pi-ai's `manual_code` prompt path; the local callback server is only used when a browser is available on the host). The credential is written to `$TOBOR_HOME/.tobor/state/auth.json` (0600) by tobor's file-locked `CredentialStore`. The running node picks it up without restart (the store re-reads per call), and refresh happens inside `modify`. A replaced binary, however, needs a node restart: at the end `tobor login` probes the node's `/api/whoami` and, when its `version`/`build` differ from the CLI's, prints `systemctl --user restart tobor@<name>` (the name is the `~/.config/tobor/nodes/<name>.env` whose `TOBOR_HOME` matches).
 
 The TUI exposes the same flow: Login screen → `POST /api/auth/:provider/login/start` returns `{url}` (printed) → `POST /api/auth/:provider/login/code {code}` completes it. `tobor logout` stays deferred.
 
@@ -575,6 +578,6 @@ Preact + Vite + TypeScript in `web/`, a later milestone after the TUI, using the
 - **Durable approval primitive.** The wait is in memory per phase. Does pi-durable have, or will it get, a task wait on a document change or an external signal? `scheduler.ts` and the spec were not fully read. If one exists, model approval as a waiting task instead.
 - **Durable wait on workers.** Can a task return `{status: "waiting", on: TaskId[]}` on worker run task ids, or does it need submission ids? Until known, `wait` is a `replay: "safe"` in-memory `Submission.wait`.
 - **MCP restarts and tool drift.** A server restart mid-session can add, remove or change tools; how a changed registry reaches a running conversation's `tools` and prompt cache, and what happens to in-flight calls, is unresolved.
-- **Read-only second process.** `HarnessOptions.readOnly` exists. A CLI inspector could open `tobor.sqlite` read-only next to the node. It would see only stored state, not live partials [INFERENCE]. It is not needed in v3.
+- **Read-only second process.** `HarnessOptions.readOnly` exists. A CLI inspector could open `.tobor/state/tobor.sqlite` read-only next to the node. It would see only stored state, not live partials [INFERENCE]. It is not needed in v3.
 - **Single-file binary.** Done via Bun: `bun build --compile` bundles everything, including `node:sqlite` users and dynamic imports; on-disk assets are embedded and extracted on first run.
 - **pi-durable churn policy.** Pin exact versions. A weekly CI job runs `bun outdated` on the four packages, and runs the step-1 fixtures and the hashline suite against the latest version. Upgrades are manual, read the CHANGELOG, pass the fixtures, and open a `VACUUM INTO` copy of the production DB before landing.

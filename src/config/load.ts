@@ -2,7 +2,7 @@
 // (defaults for anything missing or invalid) is always returned.
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { expandTilde, paths } from "./home.js";
 import {
@@ -286,11 +286,16 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		else roots.push(resolve(p));
 	}
 
-	const toborDir = paths(home).toborDir;
+	const { toborDir, stateDir } = paths(home);
 	let envFile = resolve(home, expandTilde(root.string("env_file") ?? "agent.env"));
-	const rel = relative(toborDir, envFile);
-	if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
-		root.fail("env_file", "must not be inside .tobor/");
+	// The bare `agent.env` (the pre-`.tobor/state/` default, still written by older configs) means the default location.
+	if (envFile === join(home, "agent.env")) envFile = paths(home).agentEnv;
+	const inside = (dir: string) => {
+		const rel = relative(dir, envFile);
+		return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+	};
+	if (inside(toborDir) && !inside(stateDir)) {
+		root.fail("env_file", "must not be inside .tobor/ (except .tobor/state/)");
 		envFile = paths(home).agentEnv;
 	}
 
