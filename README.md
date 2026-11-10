@@ -18,12 +18,35 @@ tobor init                   # $TOBOR_HOME, the .tobor/ git repo (config.yml, ag
 $EDITOR $TOBOR_HOME/.tobor/config.yml     # roots: directories sessions may start in
 tobor login anthropic        # Claude Pro/Max OAuth; or put ANTHROPIC_API_KEY=… in $TOBOR_HOME/agent.env
 tobor node                   # API on 127.0.0.1:7879, artifacts on :7880
-tobor 127.0.0.1:7879         # terminal client (TUI); later just `tobor` (Ctrl+, settings)
+tobor workspace add personal 127.0.0.1:7879   # name the node (client config, see below)
+tobor                        # terminal client (TUI): workspace picker; `tobor personal` opens it directly
 tobor backup <file>          # VACUUM INTO a copy of tobor.sqlite
 ```
 
 Worker models: a `task` item's `model` wins, then `agents.model_overrides.<agent>` in config.yml, then the agent
 file's `model`, then `defaults.worker_model`, else the director's model.
+
+## Client (TUI) config
+
+The TUI and `tobor workspace` read `$XDG_CONFIG_HOME/tobor/config.yml` (default `~/.config/tobor/config.yml`); edits
+from the CLI or the settings screen keep its comments and unknown keys:
+
+```yaml
+workspaces:
+  personal: { host: 127.0.0.1, port: 7879 }
+  work:     { host: 127.0.0.1, port: 7881 }
+default: personal     # preselected in the picker
+confirm_auto: true    # ask before switching to auto approval
+editor: nvim          # /files editor (else $VISUAL, $EDITOR, vi)
+pdf_dir: ~/Downloads  # artifact PDFs
+```
+
+`tobor <name>` opens a workspace, else `TOBOR_WORKSPACE`, else a picker showing each workspace's reachability; with
+no workspaces a first-run wizard adds one. `tobor host:port` connects to an unsaved node and offers to save it.
+`Ctrl+T` switches workspace; settings (`Ctrl+,`) → Workspaces adds, renames, re-addresses, removes and sets the
+default. `tobor workspace list|add <name> <host:port>|remove <name>|use <name>` does the same from the shell (`use`
+sets `default`). Runtime state (last open session per workspace) lives in `$XDG_STATE_HOME/tobor/state.json`. An old
+`tui.json` is migrated once and renamed `tui.json.migrated`.
 
 ## systemd (user unit)
 

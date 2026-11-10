@@ -19,7 +19,7 @@ export async function showLogin(app: App): Promise<void> {
 			label: `${status.source === "none" ? c.dim("○") : c.success("●")} ${name}`,
 			description: authLine(status),
 		})),
-		{ lines: [c.dim(`credentials are stored on ${app.context?.name ?? "the node"}, never in this terminal`)] },
+		{ lines: [c.dim(`credentials are stored on ${app.workspace?.name ?? "the node"}, never in this terminal`)] },
 	);
 	if (!picked?.value) return;
 	const provider = picked.value;

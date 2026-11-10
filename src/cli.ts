@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `tobor <command>`, bare `tobor [host:port]` being `tobor tui`: hand-rolled argument parsing; each command module is
+// `tobor <command>`, bare `tobor [workspace|host:port]` being `tobor tui`: hand-rolled argument parsing; each command module is
 // imported lazily so `tobor tui` never loads the server and vice versa. Command modules export `run(args: CliArgs): Promise<number | void>`.
 import { resolveHome } from "./config/home.js";
 import { MIN_NODE, nodeSupported, PI_DURABLE_VERSION, VERSION } from "./version.js";
@@ -45,10 +45,16 @@ const COMMANDS: Record<string, Command> = {
 		load: () => import("./server/cli/login.js"),
 	},
 	tui: {
-		usage: "tobor tui [host:port]",
-		summary: "terminal client for a node (default: the saved active context)",
+		usage: "tobor tui [workspace|host:port]",
+		summary: "terminal client (same as bare `tobor`)",
 		positionals: [0, 1],
 		load: () => import("./tui/main.js"),
+	},
+	workspace: {
+		usage: "tobor workspace list|add <name> <host:port>|remove <name>|use <name>",
+		summary: "manage saved nodes in ~/.config/tobor/config.yml (`use` sets the default)",
+		positionals: [1, 3],
+		load: () => import("./tui/workspace-cli.js"),
 	},
 	backup: {
 		usage: "tobor backup <file> [--home DIR]",
@@ -63,14 +69,17 @@ const COMMANDS: Record<string, Command> = {
 	},
 };
 
-/** Bare `tobor [host:port]` runs the TUI. */
-const BARE = { usage: "tobor [host:port]", summary: "terminal client for a node (same as `tobor tui`)" };
+/** Bare `tobor [workspace|host:port]` runs the TUI. */
+const BARE = {
+	usage: "tobor [workspace|host:port]",
+	summary: "terminal client: the named workspace, else $TOBOR_WORKSPACE, else a workspace picker",
+};
 
 function help(): string {
 	const rows = [BARE, ...Object.values(COMMANDS)];
 	const width = Math.max(...rows.map((c) => c.usage.length));
 	const lines = rows.map((c) => `  ${c.usage.padEnd(width)}  ${c.summary}`);
-	return `tobor ${VERSION}: remote agent harness\n\nUsage:\n${lines.join("\n")}\n\nGlobal flags:\n  --home DIR   $TOBOR_HOME (default: TOBOR_HOME, then ~/.local/share/tobor)\n  -h, --help   show help\n`;
+	return `tobor ${VERSION}: remote agent harness\n\nUsage:\n${lines.join("\n")}\n\nGlobal flags:\n  --home DIR   $TOBOR_HOME (default: TOBOR_HOME, then ~/.local/share/tobor)\n  -h, --help   show help\n\nClient config: $XDG_CONFIG_HOME/tobor/config.yml (workspaces, default, preferences);\nstate: $XDG_STATE_HOME/tobor/state.json. TOBOR_WORKSPACE picks the workspace when none is given.\n`;
 }
 
 /** Thrown for usage errors; printed with the command's usage line and exit code 2. */
@@ -119,9 +128,9 @@ function parseArgs(command: Command, argv: string[]): ParsedArgs {
 	return { positionals, flags, ...(home ? { home } : {}) };
 }
 
-/** `host:port` or a URL: a bare `tobor <target>` opens the TUI on it (anything else is an unknown command). */
-function looksLikeHost(arg: string): boolean {
-	return arg.includes(":") || arg.includes(".");
+/** A workspace name, `host:port` or a URL: a bare `tobor <target>` opens the TUI on it (anything else is an unknown command). */
+function looksLikeTarget(arg: string): boolean {
+	return /^[a-z0-9][a-z0-9_-]*$/.test(arg) || arg.includes(":") || arg.includes(".");
 }
 
 /** Entry point; returns the process exit code. */
@@ -132,8 +141,8 @@ async function main(argv: string[]): Promise<number> {
 		return 0;
 	}
 	if (name === "--version") return main(["version"]);
-	// No subcommand (nothing, a flag such as --home, or host:port): the TUI.
-	if (name === undefined || (name.startsWith("-") && name !== "-") || (!Object.hasOwn(COMMANDS, name) && looksLikeHost(name))) return main(["tui", ...argv]);
+	// No subcommand (nothing, a flag such as --home, a workspace name or host:port): the TUI.
+	if (name === undefined || (name.startsWith("-") && name !== "-") || (!Object.hasOwn(COMMANDS, name) && looksLikeTarget(name))) return main(["tui", ...argv]);
 	const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
 	if (!command) {
 		process.stderr.write(`tobor: unknown command ${JSON.stringify(name)}\n\n${help()}`);

@@ -4,7 +4,8 @@ import type { ModelInfo } from "../../api/types.js";
 import type { App } from "../app.js";
 import { Panel } from "../app.js";
 import { ApiRequestError } from "../client.js";
-import { setPref, type TuiPrefs } from "../contexts.js";
+import { type Prefs, setPref } from "../workspaces.js";
+import { addWorkspace, showWorkspaces } from "./workspaces.js";
 import { type ConfigPath, editConfig, getField, modelOverrides, parseNodeConfig } from "../node-config.js";
 import { c, selectListTheme } from "../theme.js";
 
@@ -80,7 +81,7 @@ function modelSubmenu(models: ModelInfo[], unset: string, rows: number) {
 	};
 }
 
-/** `Ctrl+,` / `/settings`: node defaults from `.tobor/config.yml` (saved with a commit) and TUI preferences (tui.json). */
+/** `Ctrl+,` / `/settings`: node defaults from `.tobor/config.yml` (saved with a commit), workspaces and preferences (client config.yml). */
 export async function showSettings(app: App): Promise<void> {
 	const client = app.api();
 	const [file, models, agents] = await Promise.all([client.file(CONFIG), client.models(), client.agents()]);
@@ -114,7 +115,7 @@ export async function showSettings(app: App): Promise<void> {
 		else item.submenu = (current, done) => new TextSubmenu(id, current === UNSET ? "" : current, done);
 		return item;
 	});
-	const prefs = (): TuiPrefs => app.config.prefs ?? {};
+	const prefs = (): Prefs => app.config.prefs;
 	const prefItems: SettingItem[] = [
 		{ id: "pref.confirm_auto", label: "confirm auto", description: "Ask before switching to auto approval (new sessions, /approval, node default).", currentValue: prefs().confirm_auto === false ? "off" : "on", values: ["on", "off"] },
 		{
@@ -133,11 +134,18 @@ export async function showSettings(app: App): Promise<void> {
 		},
 	];
 	const saveItem: SettingItem = { id: "§save", label: c.accent("save node defaults"), currentValue: "Ctrl+S", values: ["Ctrl+S"] };
+	const wsSummary = (): string => {
+		const { workspaces, default: def } = app.config;
+		return workspaces.length === 0 ? "none" : `${workspaces.map((w) => w.name).join(", ")}${def ? ` · default ${def}` : ""}`;
+	};
 	const items: SettingItem[] = [
-		{ id: "§node", label: c.bold("Node defaults"), currentValue: c.dim(`${app.context?.name ?? ""} · .tobor/${CONFIG}`) },
+		{ id: "§node", label: c.bold("Node defaults"), currentValue: c.dim(`${app.workspace?.name ?? ""} · .tobor/${CONFIG}`) },
 		...nodeItems,
 		saveItem,
-		{ id: "§tui", label: c.bold("TUI preferences"), currentValue: c.dim("tui.json, saved on change") },
+		{ id: "§ws", label: c.bold("Workspaces"), currentValue: c.dim(`${app.configPath}, saved on change`) },
+		{ id: "ws.manage", label: "workspaces", description: "Enter: list with reachability; rename, change host/port, set default, remove.", currentValue: wsSummary(), values: [wsSummary()] },
+		{ id: "ws.add", label: "add workspace", description: "Name, host:port, connection test, save.", currentValue: "Enter", values: ["Enter"] },
+		{ id: "§tui", label: c.bold("TUI preferences"), currentValue: c.dim(`${app.configPath}, saved on change`) },
 		...prefItems,
 	];
 
@@ -231,11 +239,20 @@ export async function showSettings(app: App): Promise<void> {
 		refresh();
 	};
 
-	const setPreference = (key: keyof TuiPrefs, raw: string): void => {
+	const setPreference = (key: keyof Prefs, raw: string): void => {
 		const value = key === "confirm_auto" ? raw === "on" : raw === UNSET ? undefined : raw;
-		app.config = setPref(app.config, key, value as never);
-		app.saveConfig();
-		note = `tui.json: ${key} saved`;
+		app.updateConfig(setPref(app.config, key, value as never));
+		note = `${key} saved`;
+		refresh();
+	};
+
+	const workspaces = async (id: string): Promise<void> => {
+		if (id === "ws.add") {
+			const added = await addWorkspace(app);
+			if (added) await showWorkspaces(app, "manage", added.name);
+		} else await showWorkspaces(app, "manage");
+		list.updateValue("ws.manage", wsSummary());
+		list.updateValue("ws.add", "Enter");
 		refresh();
 	};
 
@@ -245,7 +262,8 @@ export async function showSettings(app: App): Promise<void> {
 			app.guard(save);
 			return;
 		}
-		if (id.startsWith("pref.")) return setPreference(id.slice(5) as keyof TuiPrefs, value);
+		if (id.startsWith("ws.")) return app.guard(() => workspaces(id));
+		if (id.startsWith("pref.")) return setPreference(id.slice(5) as keyof Prefs, value);
 		const f = byId.get(id);
 		if (f) app.guard(() => setNode(f, value));
 	};

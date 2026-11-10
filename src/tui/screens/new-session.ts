@@ -17,7 +17,7 @@ export async function newSession(app: App, prompt?: string): Promise<void> {
 	const defaultModel = defaults.model ?? models.defaults.model;
 	const mark = (value: string, preset: string): string => (value === preset ? DEFAULT : "  ");
 	const dirs = [...new Set([...cwds.recent, ...cwds.roots])];
-	const machine = app.whoami?.host ?? app.context?.name ?? "node";
+	const machine = app.whoami?.host ?? app.workspace?.name ?? "node";
 	const cwdPick = await app.pick(
 		"new session · working directory",
 		[

@@ -29,12 +29,23 @@ import type {
 import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
 import { Band } from "./components/band.js";
 import { StatusLine } from "./components/status.js";
-import { activeContext, baseUrl, saveContexts, setLastSession, type TuiConfig, type TuiContext } from "./contexts.js";
+import {
+	baseUrl,
+	type ClientConfig,
+	findWorkspace,
+	formatAddress,
+	lastSession,
+	saveClientConfig,
+	setLastSession,
+	type Start,
+	type Workspace,
+	workspaceAt,
+} from "./workspaces.js";
 import { COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showArtifacts } from "./screens/artifacts.js";
 import { showFiles } from "./screens/files.js";
-import { showHosts } from "./screens/host.js";
+import { offerSave, showWorkspaces } from "./screens/workspaces.js";
 import { showLogin } from "./screens/login.js";
 import { newSession } from "./screens/new-session.js";
 import { showSchedules } from "./screens/schedules.js";
@@ -120,7 +131,8 @@ export class App {
 	readonly status = new StatusLine();
 	readonly session: SessionScreen;
 	client: ApiClient | undefined;
-	context: TuiContext | undefined;
+	/** Workspace connected to (for an unsaved `tobor host:port`, named after the address). */
+	workspace: Workspace | undefined;
 	whoami: WhoamiResponse | undefined;
 	sessions: SessionSummary[] = [];
 	approvals: PendingApproval[] = [];
@@ -135,8 +147,9 @@ export class App {
 	private generation = 0;
 
 	constructor(
-		public config: TuiConfig,
-		private readonly configPath: string,
+		public config: ClientConfig,
+		readonly configPath: string,
+		private readonly statePath: string,
 	) {
 		this.tui = new TuiAltScreen(this.terminal, false, undefined, { mouse: true, openUrl: openExternal });
 		this.session = new SessionScreen(this);
@@ -151,15 +164,26 @@ export class App {
 		);
 	}
 
-	/** Start the UI on the active context; resolves with the exit code when the user quits. */
-	run(): Promise<number> {
+	/** Start the UI on `start` (a workspace, an unsaved address or the picker); resolves with the exit code when the user quits. */
+	run(start: Start, notice?: string): Promise<number> {
 		const { promise, resolve } = Promise.withResolvers<number>();
 		this.exit = resolve;
 		this.tui.addInputListener((data) => this.onInput(data));
 		this.tui.setFocus(this.session.composer);
 		this.tui.start();
-		const context = activeContext(this.config);
-		if (context) this.connect(context);
+		if (start.kind === "workspace") this.connect(start.workspace);
+		else if (start.kind === "address") {
+			const saved = workspaceAt(this.config, start.address);
+			this.connect(saved ?? { name: formatAddress(start.address), ...start.address });
+			if (!saved) {
+				this.guard(async () => {
+					await offerSave(this, start.address);
+					this.openInitial();
+				});
+			}
+		} else this.guard(() => showWorkspaces(this));
+		const flash = [notice, start.kind === "picker" ? start.reason : undefined].filter(Boolean).join(" · ");
+		if (flash) this.flash(flash);
 		this.changed();
 		return promise;
 	}
@@ -173,17 +197,17 @@ export class App {
 		this.exit?.(0);
 	}
 
-	/** Connect to a context: drop the old node's sockets and session, then load lists and open a session. */
-	connect(context: TuiContext): void {
+	/** Connect to a workspace: drop the old node's sockets and session, then load lists and open a session. */
+	connect(workspace: Workspace): void {
 		this.generation++;
 		const generation = this.generation;
 		this.events?.close();
 		this.session.close();
-		this.context = context;
+		this.workspace = workspace;
 		this.whoami = undefined;
 		this.sessions = [];
 		this.approvals = [];
-		const client = new ApiClient(baseUrl(context.host));
+		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
 		this.events = new ReconnectingSocket<EventsFrame>({
 			url: () => client.eventsUrl(),
@@ -210,28 +234,40 @@ export class App {
 		this.changed();
 	}
 
-	/** Make a context active, save it and connect. */
-	switchContext(config: TuiConfig): void {
+	/** Replace the client config and write it to config.yml. */
+	updateConfig(config: ClientConfig): void {
 		this.config = config;
-		this.saveConfig();
-		const context = activeContext(config);
-		if (context) this.connect(context);
-	}
-
-	/** Write `tui.json`. */
-	saveConfig(): void {
 		try {
-			saveContexts(this.configPath, this.config);
+			saveClientConfig(this.configPath, config);
 		} catch (err) {
-			this.flash(`saving contexts: ${(err as Error).message}`);
+			this.flash(`saving ${this.configPath}: ${(err as Error).message}`);
 		}
+		if (this.workspace && !findWorkspace(config, this.workspace.name)) {
+			// The connected workspace was removed: keep the connection, labelled by its address.
+			this.workspace = { ...this.workspace, name: workspaceAt(config, this.workspace)?.name ?? formatAddress(this.workspace) };
+		}
+		this.changed();
 	}
 
-	private openInitial(): void {
+	/** Workspace `from` is now called `to`: relabel the connection and move its state. */
+	renamedWorkspace(from: string, to: string): void {
+		const last = lastSession(this.statePath, from);
+		try {
+			setLastSession(this.statePath, from, undefined);
+			if (last !== undefined) setLastSession(this.statePath, to, last);
+		} catch (err) {
+			this.flash(`saving ${this.statePath}: ${(err as Error).message}`);
+		}
+		if (this.workspace?.name === from) this.workspace = { ...this.workspace, name: to };
+		this.changed();
+	}
+
+	/** Open the last session, else the session list, else New session; once per connection, never over a modal. */
+	openInitial(): void {
 		if (this.initialOpened === this.generation || this.session.target || this.modals.length > 0) return;
-		if (!this.client || !this.whoami) return;
+		if (!this.client || !this.whoami || !this.workspace) return;
 		this.initialOpened = this.generation;
-		const last = this.context?.lastSession;
+		const last = lastSession(this.statePath, this.workspace.name);
 		const known = this.sessions.find((s) => s.id === last);
 		if (known) this.openSession(known.id);
 		else if (this.sessions.length > 0) this.guard(() => showSessions(this));
@@ -250,19 +286,21 @@ export class App {
 			this.approvals = approvals;
 			this.session.rebuild();
 		} catch (err) {
-			if (client === this.client) this.flash(`${this.context?.host}: ${(err as Error).message}`);
+			if (client === this.client) this.flash(`${this.workspace?.name}: ${(err as Error).message}`);
 		}
 		this.changed();
 	}
 
-	/** Open a session in the Session view and remember it for this context. */
+	/** Open a session in the Session view and remember it for this workspace (state.json). */
 	openSession(id: SessionId): void {
 		const summary = this.sessions.find((s) => s.id === id);
 		this.session.open({ id, title: summary?.title ?? `#${id}` });
-		if (this.context && this.context.lastSession !== id) {
-			this.config = setLastSession(this.config, this.context.name, id);
-			this.context = activeContext(this.config);
-			this.saveConfig();
+		if (this.workspace && lastSession(this.statePath, this.workspace.name) !== id) {
+			try {
+				setLastSession(this.statePath, this.workspace.name, id);
+			} catch (err) {
+				this.flash(`saving ${this.statePath}: ${(err as Error).message}`);
+			}
 		}
 	}
 
@@ -337,7 +375,7 @@ export class App {
 
 	/** The connected client, or an error for screens that need one. */
 	api(): ApiClient {
-		if (!this.client) throw new Error("no host selected · Ctrl+T");
+		if (!this.client) throw new Error("no workspace selected · Ctrl+T");
 		return this.client;
 	}
 
@@ -360,7 +398,7 @@ export class App {
 	/** Re-derive header, status and composer label, then render. */
 	changed(): void {
 		const s = this.session;
-		const host = this.context ? this.context.name : "no host";
+		const host = this.workspace ? this.workspace.name : c.dim("no workspace");
 		const where = s.target
 			? s.target.worker
 				? `${s.target.worker.parent.title} ▸ worker ${s.target.worker.name}`
@@ -438,7 +476,7 @@ export class App {
 		if (matchesKey(data, KEYS.model)) return this.do(() => pickModel(this));
 		if (matchesKey(data, KEYS.newSession)) return this.do(() => newSession(this));
 		if (matchesKey(data, KEYS.sessions)) return this.do(() => showSessions(this));
-		if (matchesKey(data, KEYS.contexts)) return this.do(() => showHosts(this));
+		if (matchesKey(data, KEYS.workspaces)) return this.do(() => showWorkspaces(this));
 		if (matchesKey(data, KEYS.settings)) return this.do(() => showSettings(this));
 		return false;
 	}
@@ -472,8 +510,8 @@ export class App {
 				return showFiles(this);
 			case "login":
 				return showLogin(this);
-			case "host":
-				return showHosts(this);
+			case "workspace":
+				return showWorkspaces(this);
 			case "settings":
 				return showSettings(this);
 			case "help":

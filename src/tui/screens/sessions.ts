@@ -30,7 +30,7 @@ export async function showSessions(app: App, archived = false): Promise<void> {
 		description: `$${s.usage.cost.toFixed(3)}${s.pending ? ` · ⚠ ${s.pending}` : ""} · ${s.kind === "schedule" ? "scheduled · " : ""}${s.mode} · ${when(s.updatedAt, now)} · ${s.cwd}`,
 	}));
 	const current = app.session.target?.id;
-	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.context?.name ?? ""}`, items, {
+	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`, items, {
 		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · h ${archived ? "active" : "archived"} · Esc`,
 		keys: ["n", "r", "a", "x", "h"],
 		selected: Math.max(0, sessions.findIndex((s) => s.id === current)),
