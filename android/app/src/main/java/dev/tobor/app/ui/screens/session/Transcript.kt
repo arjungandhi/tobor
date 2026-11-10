@@ -428,7 +428,7 @@ private fun LiveToolCard(item: Item.LiveTool) {
         val t = rememberInfiniteTransition(label = "pulse")
         t.animateFloat(
             0.45f, 1f,
-            infiniteRepeatable(tween(800), RepeatMode.Reverse),
+            infiniteRepeatable(tween(500), RepeatMode.Reverse),
             label = "pulseAlpha",
         ).value
     } else 1f

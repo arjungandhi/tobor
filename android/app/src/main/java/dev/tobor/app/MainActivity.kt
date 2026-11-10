@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -82,7 +85,14 @@ fun AppNav() {
     }
 
     Box(Modifier.fillMaxSize().background(ToborColors.bg)) {
-        NavHost(navController = nav, startDestination = "sessions") {
+        NavHost(
+            navController = nav,
+            startDestination = "sessions",
+            enterTransition = { fadeIn(animationSpec = tween(200)) },
+            exitTransition = { fadeOut(animationSpec = tween(200)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(200)) },
+            popExitTransition = { fadeOut(animationSpec = tween(200)) },
+        ) {
             composable("sessions") {
                 // Key on activeBaseUrl so the screen fully restarts on workspace switch
                 androidx.compose.runtime.key(activeBaseUrl) {
