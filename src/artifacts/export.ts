@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { sanitizeHtml } from "./sanitize.js";
 
 const CHROME_ENV = "TOBOR_CHROME";
 const CHROME_NAMES = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "brave-browser", "microsoft-edge"];
@@ -129,11 +130,11 @@ export function inlineHtml(bundleDir: string, html: string): string {
 	return inlineCssUrls(bundleDir, bundleDir, withSrcset);
 }
 
-/** One self-contained, print-ready HTML file from a bundle's `index.html`. */
+/** One self-contained, sanitized, print-ready HTML file from a bundle's `index.html`. */
 export function exportHtml(bundleDir: string): string {
 	const entry = join(bundleDir, "index.html");
 	if (!existsSync(entry)) throw new Error(`No index.html in ${bundleDir}`);
-	return printReady(inlineHtml(bundleDir, readFileSync(entry, "utf8")));
+	return printReady(inlineHtml(bundleDir, sanitizeHtml(readFileSync(entry, "utf8"))));
 }
 
 function which(name: string): string | undefined {
