@@ -6,7 +6,7 @@ After=network-online.target
 EnvironmentFile=%h/.config/tobor/nodes/%i.env
 ExecStart=%h/.local/bin/tobor node
 Restart=on-failure
-# POST /api/upgrade and /api/restart stop the node with exit code 75; relaunch it even though that is a clean-looking exit.
+# Exit code 75 = deliberate restart (POST /api/upgrade, POST /api/restart): always relaunch.
 RestartForceExitStatus=75
 RestartSec=3
 TimeoutStopSec=30
