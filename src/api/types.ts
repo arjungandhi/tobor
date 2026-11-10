@@ -60,6 +60,8 @@ export type WhoamiResponse = {
 	host: string;
 	/** tobor version. */
 	version: string;
+	/** Build id: content hash of the binary's sources, `dev` when run from source. */
+	build: string;
 	/** Pinned pi-durable version. */
 	pi_durable: string;
 	/** Runtime of the node: `bun <Bun.version>`. */

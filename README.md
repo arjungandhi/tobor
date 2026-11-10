@@ -72,7 +72,8 @@ sets `default`). Runtime state (last open session per workspace) lives in `$XDG_
 One template unit runs any number of nodes, each with its own `TOBOR_HOME` and ports (set in that home's `.tobor/config.yml`):
 copy `contrib/tobor@.service` to `~/.config/systemd/user/` (it runs `~/.local/bin/tobor node`), write
 `~/.config/tobor/nodes/<name>.env` per node (see `contrib/nodes/example.env`), then `systemctl --user enable --now tobor@<name>`
-(plus `loginctl enable-linger $USER` to run without a login session).
+(plus `loginctl enable-linger $USER` to run without a login session). A replaced binary takes effect only after
+`systemctl --user restart tobor@<name>`; `tobor login` says so when the node answers with another build than the CLI.
 
 ## Development
 
@@ -86,4 +87,5 @@ ANTHROPIC_API_KEY=… bun test/integration/smoke.ts   # real-model end-to-end sm
 
 The binary embeds `package.json`, the init skeleton and the artifact themes/vendor (`build/gen-assets.ts` globs them
 into `build/assets.generated.ts`); on first run it extracts them to `$XDG_CACHE_HOME/tobor/assets/<hash>/` and points
-`$TOBOR_ASSET_ROOT` there. From source the files are read in place.
+`$TOBOR_ASSET_ROOT` there. From source the files are read in place. `gen-assets` also writes `BUILD`, a content hash of
+the sources, shown by `tobor version` and `/api/whoami` (`dev` from source).

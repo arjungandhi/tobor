@@ -18,7 +18,7 @@ import { TOBOR_DOCS } from "../../docs.js";
 import { EventBus } from "../../events.js";
 import { type Host, HostError } from "../../host.js";
 import { composeExtension, type ToolModule } from "../../tools/registry.js";
-import { bunSupported, MIN_BUN, PI_DURABLE_VERSION, RUNTIME, VERSION } from "../../version.js";
+import { BUILD, bunSupported, MIN_BUN, PI_DURABLE_VERSION, RUNTIME, VERSION } from "../../version.js";
 import { AuthService } from "../auth.js";
 import { ApprovalService, type GatePredicate } from "./approvals.js";
 import { FileCredentialStore } from "./credentials.js";
@@ -198,6 +198,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		whoami: () => ({
 			host: hostname(),
 			version: VERSION,
+			build: BUILD,
 			pi_durable: PI_DURABLE_VERSION,
 			runtime: RUNTIME,
 			public_url: config.public_url,

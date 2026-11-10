@@ -387,7 +387,7 @@ All JSON; mutating requests require `Content-Type: application/json`. Every requ
 
 ### REST
 
-- `GET /api/whoami` → `{host, version, pi_durable: "1.5.1", node, public_url, artifacts_url, ntfy_topic, chrome: {found, version?}, now}`
+- `GET /api/whoami` → `{host, version, build, pi_durable: "1.5.1", node, public_url, artifacts_url, ntfy_topic, chrome: {found, version?}, now}` (`build`: content hash of the binary's sources from `build/gen-assets.ts`, `dev` from source)
 - `GET /api/sessions` → `[{id, title, cwd, model, approval_mode, state: idle|running|waiting|failed, failure?, pending, usage, updatedAt}]` (from `tobor.sessions` plus live state)
 - `POST /api/sessions {cwd, model?, thinking?, approval_mode?, prompt}` → `{id}` (create, configure, submit)
 - `GET /api/sessions/:id`, `PATCH /api/sessions/:id {title?, model?, thinking?, approval_mode?, archived?}`, `DELETE /api/sessions/:id`
@@ -507,7 +507,7 @@ $TOBOR_HOME/                 # --home → TOBOR_HOME → ~/.local/share/tobor
 
 ### Login on a headless host
 
-`tobor login anthropic` prints the authorization URL. The operator opens it on any device, approves, and pastes the code Anthropic shows (pi-ai's `manual_code` prompt path; the local callback server is only used when a browser is available on the host). The credential is written to `$TOBOR_HOME/auth.json` (0600) by tobor's file-locked `CredentialStore`. The running node picks it up without restart (the store re-reads per call), and refresh happens inside `modify`.
+`tobor login anthropic` prints the authorization URL. The operator opens it on any device, approves, and pastes the code Anthropic shows (pi-ai's `manual_code` prompt path; the local callback server is only used when a browser is available on the host). The credential is written to `$TOBOR_HOME/auth.json` (0600) by tobor's file-locked `CredentialStore`. The running node picks it up without restart (the store re-reads per call), and refresh happens inside `modify`. A replaced binary, however, needs a node restart: at the end `tobor login` probes the node's `/api/whoami` and, when its `version`/`build` differ from the CLI's, prints `systemctl --user restart tobor@<name>` (the name is the `~/.config/tobor/nodes/<name>.env` whose `TOBOR_HOME` matches).
 
 The TUI exposes the same flow: Login screen → `POST /api/auth/:provider/login/start` returns `{url}` (printed) → `POST /api/auth/:provider/login/code {code}` completes it. `tobor logout` stays deferred.
 

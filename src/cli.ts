@@ -2,7 +2,7 @@
 // `tobor <command>`, bare `tobor [workspace|host:port]` being `tobor tui`: hand-rolled argument parsing; each command module is
 // imported lazily so `tobor tui` never loads the server and vice versa. Command modules export `run(args: CliArgs): Promise<number | void>`.
 import { resolveHome } from "./config/home.js";
-import { bunSupported, MIN_BUN, PI_DURABLE_VERSION, RUNTIME, VERSION } from "./version.js";
+import { BUILD, bunSupported, MIN_BUN, PI_DURABLE_VERSION, RUNTIME, VERSION } from "./version.js";
 
 /** Parsed command line handed to a command module. */
 export type CliArgs = {
@@ -161,7 +161,7 @@ async function main(argv: string[]): Promise<number> {
 		return 0;
 	}
 	if (name === "version") {
-		process.stdout.write(`tobor ${VERSION}\npi-durable ${PI_DURABLE_VERSION}\n${RUNTIME}\n`);
+		process.stdout.write(`tobor ${VERSION} (build ${BUILD})\npi-durable ${PI_DURABLE_VERSION}\n${RUNTIME}\n`);
 		return 0;
 	}
 	if (!bunSupported()) {

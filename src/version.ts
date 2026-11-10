@@ -1,4 +1,4 @@
-// Package, dependency and runtime versions reported by `tobor version` and `GET /api/whoami`.
+// Package, dependency and runtime versions plus the build id reported by `tobor version` and `GET /api/whoami`.
 import { readFileSync } from "node:fs";
 import { assetPath } from "./assets.js";
 
@@ -10,6 +10,14 @@ export const MIN_BUN = "1.4.4";
 
 /** The running runtime: `bun <Bun.version>` (`node <version>` only when started under Node by mistake). */
 export const RUNTIME = process.versions.bun ? `bun ${process.versions.bun}` : `node ${process.versions.node}`;
+
+declare global {
+	/** Set by build/compile-entry.ts in a compiled binary. */
+	var TOBOR_BUILD: string | undefined;
+}
+
+/** Content hash of the sources a compiled binary was built from (build/gen-assets.ts); `dev` when run from source. */
+export const BUILD: string = globalThis.TOBOR_BUILD ?? "dev";
 
 /** tobor's own version, read from package.json (one level above `src/`, or under `$TOBOR_ASSET_ROOT`). */
 export const VERSION: string = readVersion();

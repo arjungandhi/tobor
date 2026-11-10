@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxProvider, type OAuthAuth } from "@earendil-works/pi-ai";
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { validateConfig } from "../../src/config/load.js";
 import { AuthService } from "../../src/server/auth.js";
 import { FileCredentialStore } from "../../src/server/harness/credentials.js";
+import { nodeUnit, staleNodeHint } from "../../src/server/cli/login.js";
 
 const oauth: OAuthAuth = {
 	name: "Test OAuth",
@@ -106,5 +107,35 @@ describe("AuthService", () => {
 		const res = await auth.models();
 		expect(res.models.find((m) => m.ref === "keyed/m")).toMatchObject({ provider: "keyed", id: "m", available: true });
 		expect(res.defaults).toEqual({ model: "anthropic/claude-fable-5", thinking: "high" });
+	});
+});
+
+describe("tobor login stale-node hint", () => {
+	const cli = { version: "1.0.0", build: "aaaaaaaaaaaa" };
+
+	it("tells how to restart a node running another build", () => {
+		expect(staleNodeHint(cli, { version: "1.0.0", build: "bbbbbbbbbbbb" }, "personal")).toBe(
+			"note: the running node is tobor 1.0.0 (build bbbbbbbbbbbb), this CLI is 1.0.0 (build aaaaaaaaaaaa); restart the node to pick up a rebuilt binary: systemctl --user restart tobor@personal",
+		);
+		// A node from before `build` existed.
+		expect(staleNodeHint(cli, { version: "1.0.0" }, undefined)).toContain("(build unknown)");
+		expect(staleNodeHint(cli, { version: "1.0.0" }, undefined)).toContain("stop it and start `tobor node` again");
+	});
+
+	it("stays quiet for the same build, no node, or a source run", () => {
+		expect(staleNodeHint(cli, { ...cli }, "personal")).toBeUndefined();
+		expect(staleNodeHint(cli, undefined, "personal")).toBeUndefined();
+		expect(staleNodeHint({ ...cli, build: "dev" }, { version: "1.0.0", build: "bbbbbbbbbbbb" }, "personal")).toBeUndefined();
+		expect(staleNodeHint(cli, { version: "1.0.0", build: "dev" }, "personal")).toBeUndefined();
+	});
+
+	it("finds the tobor@<name> unit from the node env files", async () => {
+		const config = await mkdtemp(join(tmpdir(), "tobor-units-"));
+		await mkdir(join(config, "tobor", "nodes"), { recursive: true });
+		await writeFile(join(config, "tobor", "nodes", "work.env"), "TOBOR_HOME=/srv/work\n");
+		await writeFile(join(config, "tobor", "nodes", "personal.env"), "# personal\nTOBOR_HOME=/srv/personal/\n");
+		expect(await nodeUnit("/srv/personal", { XDG_CONFIG_HOME: config })).toBe("personal");
+		expect(await nodeUnit("/srv/other", { XDG_CONFIG_HOME: config })).toBeUndefined();
+		expect(await nodeUnit("/srv/work", { XDG_CONFIG_HOME: join(config, "missing") })).toBeUndefined();
 	});
 });

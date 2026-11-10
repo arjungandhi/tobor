@@ -177,7 +177,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	let match: RegExpMatchArray | null;
 
 	if (path === "/api/whoami") {
-		return send(res, 200, { host: "stub-host", version: "0.0.0-stub", pi_durable: "1.5.1", runtime: `bun ${process.versions.bun}`, public_url: base, artifacts_url: "http://127.0.0.1:7880", chrome: { found: true, version: "131.0" }, now: Date.now() });
+		return send(res, 200, { host: "stub-host", version: "0.0.0-stub", build: "dev", pi_durable: "1.5.1", runtime: `bun ${process.versions.bun}`, public_url: base, artifacts_url: "http://127.0.0.1:7880", chrome: { found: true, version: "131.0" }, now: Date.now() });
 	}
 	if (path === "/api/sessions" && method === "GET") {
 		const all = url.searchParams.get("archived") === "1";
