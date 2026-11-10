@@ -147,6 +147,7 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 | `schedule_create` | tobor; cannot set `approval_mode: auto` | yes |
 | `schedule_list`, `schedule_delete` | tobor | no |
 | `todo` | tobor; writes the doc `tobor.todo` (per conversation: `[{id, text, status: pending\|doing\|done}]`), rendered in the Session view | no |
+| `ask_user` | tobor; `{question, options?}` commits a pending record to `tobor.questions` (per conversation), emits `question.asked`, notifies, and blocks until `POST /api/questions/:callId`, the approval timeout (a non-error "proceed on your best judgment" result) or abort; director and solo sessions only, never workers | no |
 | `task` | tobor; spawns worker conversations (see Subagents) | only if it spawns an `approval: auto` worker |
 | `wait`, `agent_output`, `agent_list` | tobor; read worker results | no |
 | `agent_stop`, `agent_send` | tobor; stop a live worker, or steer it with a follow-up message | no |
@@ -394,6 +395,7 @@ All JSON; mutating requests require `Content-Type: application/json`. The API ac
 - `POST /api/sessions/:id/abort`
 - `GET /api/sessions/:id/entries?minEntryId=&maxEntryId=&order=asc|desc&limit=` (`EntryQuery`)
 - `GET /api/approvals` → pending records from `tobor.approvals`; `POST /api/approvals/:callId {decision: approve|approve_session|deny}`
+- `GET /api/questions` → pending `ask_user` records from `tobor.questions`; `POST /api/questions/:callId {answer, conversationId?}` (409 once answered)
 - `GET /api/sessions/:id/workers` → `[{id, name, agent, state, usage, lastText}]`
 - `GET /api/agents` → agent definitions; `GET /api/mcp` → server status and tool counts
 - `GET /api/models` (catalog plus auth status per provider)
