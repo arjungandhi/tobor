@@ -24,6 +24,9 @@ export const RESTART_DELAY_MS = 300;
 /** Exit code that tells systemd (`RestartForceExitStatus=75` in contrib/tobor@.service) to relaunch the node. */
 export const RESTART_EXIT_CODE = 75;
 
+/** Overall limit for downloading the new binary in `upgradeSelf`, so a stalled transfer cannot hang the request forever. */
+export const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
 /** The latest release plus when it was looked up (epoch ms). */
 export type LatestInfo = LatestRelease & { checkedAt: number };
 
@@ -156,7 +159,7 @@ const EXEC_PATH = process.execPath.replace(/ \(deleted\)$/, "");
  * schedule a restart. Throws `HostError` 400 `unsupported` (dev builds) or 503 (lookup/download failures).
  */
 export async function upgradeSelf(
-	options: { execPath?: string; version?: string; build?: string; target?: string; restart?: () => void; checker?: UpdateChecker; fetch?: FetchFn } = {},
+	options: { execPath?: string; version?: string; build?: string; target?: string; restart?: () => void; checker?: UpdateChecker; fetch?: FetchFn; downloadTimeoutMs?: number } = {},
 ): Promise<UpgradeResponse> {
 	const build = options.build ?? BUILD;
 	const version = options.version ?? VERSION;
@@ -175,7 +178,11 @@ export async function upgradeSelf(
 	// A binary already on disk but not yet running (replaced earlier, restart pending) only needs the restart.
 	if (!upToDate) {
 		try {
-			await downloadAndReplace(asset.url, execPath, asset.sha256, { userAgent: `tobor/${version}`, ...(options.fetch ? { fetch: options.fetch } : {}) });
+			await downloadAndReplace(asset.url, execPath, asset.sha256, {
+				userAgent: `tobor/${version}`,
+				signal: AbortSignal.timeout(options.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS),
+				...(options.fetch ? { fetch: options.fetch } : {}),
+			});
 		} catch (err) {
 			console.error("update: download failed:", err);
 			throw new HostError(503, "download_failed", `upgrade failed: ${err instanceof Error ? err.message : String(err)}`);

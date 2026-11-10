@@ -252,6 +252,24 @@ describe("upgradeSelf", () => {
 		expect(await readFile(exec, "utf8")).toBe("old");
 		expect(restarts()).toBe(0);
 	});
+
+	it("answers 503 download_failed when the download stalls past the timeout", async () => {
+		const { exec, common, restarts } = await setup("old", "1.1.0", "new");
+		const stalled: FetchFn = async (u, init) => {
+			if (!u.includes("dl/tobor")) return common.fetch(u);
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new TextEncoder().encode("partial"));
+					init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason));
+				},
+			});
+			return new Response(body);
+		};
+		await expect(upgradeSelf({ ...common, fetch: stalled, downloadTimeoutMs: 50 })).rejects.toMatchObject({ status: 503, code: "download_failed" });
+		expect(await readFile(exec, "utf8")).toBe("old");
+		expect(restarts()).toBe(0);
+		expect((await readdir(dir)).filter((n) => n.endsWith(".download"))).toEqual([]);
+	});
 });
 
 describe("UpdateChecker", () => {
