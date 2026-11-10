@@ -81,7 +81,7 @@ export class ToolSlotView implements Component {
 			status === "approval"
 				? c.warning(" awaiting approval · Alt+Shift+A")
 				: status === "question"
-					? c.warning(" awaiting answer · Alt+Shift+U")
+					? c.warning(" awaiting answer · answer below or Alt+Shift+U")
 					: status === "streaming"
 						? c.dim(" preparing")
 						: "";

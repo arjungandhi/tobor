@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Component, ScrollView } from "@earendil-works/pi-tui";
 import type {
 	InputMode,
+	PendingQuestion,
 	PatchSessionRequest,
 	SessionDetail,
 	SessionId,
@@ -14,6 +15,7 @@ import type { App } from "../app.js";
 import { loadImage, MAX_ATTACHMENTS } from "../attachments.js";
 import { ReconnectingSocket, type SocketState } from "../client.js";
 import { Composer } from "../components/composer.js";
+import { QuestionPanel } from "../components/question-panel.js";
 import { Transcript } from "../components/transcript.js";
 import { ConversationReplica, liveOf, usageOf, type ViewUsage } from "../replica.js";
 import { c } from "../theme.js";
@@ -52,6 +54,7 @@ export type SessionTarget = {
 export class SessionScreen {
 	readonly transcript = new Transcript();
 	readonly strip = new WorkersStrip();
+	readonly questions: QuestionPanel;
 	readonly composer: Composer;
 	readonly scroll: TranscriptScroll;
 	target: SessionTarget | undefined;
@@ -61,9 +64,11 @@ export class SessionScreen {
 	watchState: SocketState = "closed";
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
 	private loadingEarlier = false;
+	private answering = false;
 
 	constructor(private readonly app: App) {
 		this.composer = new Composer(app.tui);
+		this.questions = new QuestionPanel(app, () => this.target);
 		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());
 		this.composer.onSubmit = (text) => this.submitted(text);
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
@@ -174,7 +179,9 @@ export class SessionScreen {
 	updateLabel(): void {
 		const label = !this.target
 			? "no session · Enter starts one with this prompt"
-			: this.target.worker
+			: this.questions.current()
+				? "question pending · Enter answers · / commands"
+				: this.target.worker
 				? `worker ${this.target.worker.name} · read-only · Esc back`
 				: this.state() === "running" || this.state() === "waiting"
 					? "running · Enter steers · Ctrl+Q queues a follow-up · Esc aborts"
@@ -243,6 +250,11 @@ export class SessionScreen {
 			this.app.guard(() => this.app.command(text));
 			return;
 		}
+		const question = this.questions.current();
+		if (question && text !== "") {
+			this.app.guard(() => this.answerQuestion(question, text));
+			return;
+		}
 		if (!this.target) {
 			const images = [...staged];
 			this.app.guard(async () => {
@@ -253,6 +265,24 @@ export class SessionScreen {
 		}
 		const running = this.state() === "running" || this.state() === "waiting";
 		this.app.guard(() => this.send(text, running ? "steer" : "prompt"));
+	}
+
+	/** Answer an inline question (highlighted option or typed text), then refresh so the panel moves on or collapses. */
+	async answerQuestion(question: PendingQuestion, answer: string): Promise<void> {
+		if (this.answering) {
+			this.app.flash("still answering\u2026");
+			return;
+		}
+		this.answering = true;
+		try {
+			await this.app.api().answer(question.callId, { answer, conversationId: question.conversationId });
+			this.app.flash(`answered: ${answer.length > 40 ? `${answer.slice(0, 39)}…` : answer}`);
+		} finally {
+			this.answering = false;
+			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.
+			await this.app.refreshQuestions();
+		}
+		this.scroll.scrollToEnd();
 	}
 
 	/** `/attach <path>` stages a local image for the next message; `/attach clear` drops the staged ones. */

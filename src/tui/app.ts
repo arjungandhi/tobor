@@ -185,6 +185,7 @@ export class App {
 				{ component: this.band, basis: "auto" },
 				{ component: this.session.scroll, basis: 0, grow: 1, minSize: 3 },
 				{ component: this.session.strip, basis: "auto", shrink: 1 },
+				{ component: this.session.questions, basis: "auto", shrink: 1 },
 				{ component: this.session.composer, basis: "auto", shrink: 1, minSize: 3 },
 				{ component: this.status, basis: "auto" },
 			]),
@@ -529,6 +530,7 @@ export class App {
 		}
 		if (composer.isShowingAutocomplete()) return false;
 		const empty = composer.getText() === "";
+		if (empty && this.answerKey(data)) return true;
 		if (empty && matchesKey(data, "left")) {
 			const now = Date.now();
 			if (this.lastLeft > 0 && now - this.lastLeft <= 500) {
@@ -566,6 +568,24 @@ export class App {
 		if (matchesKey(data, KEYS.sessions)) return this.do(() => showSessions(this));
 		if (matchesKey(data, KEYS.workspaces)) return this.do(() => showWorkspaces(this));
 		if (matchesKey(data, KEYS.settings)) return this.do(() => showSettings(this));
+		return false;
+	}
+
+	/** Inline question panel keys (empty composer): Up/Down move the option highlight, Enter answers with it. */
+	private answerKey(data: string): boolean {
+		const s = this.session;
+		const question = s.questions.current();
+		if (!question?.options?.length) return false;
+		if (matchesKey(data, "up") || matchesKey(data, "down")) {
+			s.questions.move(matchesKey(data, "up") ? -1 : 1);
+			this.tui.requestRender();
+			return true;
+		}
+		if (matchesKey(data, "enter") && s.composer.stagedImages().length === 0) {
+			const answer = s.questions.selectedOption();
+			if (answer === undefined) return false;
+			return this.do(() => s.answerQuestion(question, answer));
+		}
 		return false;
 	}
 
