@@ -74,6 +74,7 @@ import dev.tobor.app.ui.screens.session.Item
 import dev.tobor.app.ui.screens.session.RawEntry
 import dev.tobor.app.ui.screens.session.TranscriptItem
 import dev.tobor.app.ui.screens.session.liveItems
+import dev.tobor.app.ui.screens.session.queuedItems
 import dev.tobor.app.ui.screens.session.present
 import dev.tobor.app.ui.screens.session.toItem
 import dev.tobor.app.ui.screens.session.toRaw
@@ -145,7 +146,7 @@ fun SessionScreen(
     val failed = live?.get("runFailure").present()
     val running = !failed && live?.get("run").present()
 
-    // ── transcript items: REST-paged earlier + watch view entries + live tail ──
+    // ── transcript items: REST-paged earlier + watch view entries + live tail + queued inbox ──
     var earlier by remember(sessionId) { mutableStateOf<List<RawEntry>>(emptyList()) }
     var earlierMore by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var loadingEarlier by remember(sessionId) { mutableStateOf(false) }
@@ -158,7 +159,7 @@ fun SessionScreen(
         }
         map.values.sortedBy { it.id }
     }
-    val rows: List<Item> = remember(merged, live) { merged.map { it.toItem() } + liveItems(live) }
+    val rows: List<Item> = remember(merged, live, docs) { merged.map { it.toItem() } + liveItems(live) + queuedItems(docs) }
     val earlierFlag = earlierMore
     val hasEarlier: Boolean = if (earlierFlag != null) earlierFlag else view?.get("before").present()
 
