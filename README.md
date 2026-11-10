@@ -27,23 +27,10 @@ file's `model`, then `defaults.worker_model`, else the director's model.
 
 ## systemd (user unit)
 
-```ini
-# ~/.config/systemd/user/tobor.service
-[Unit]
-Description=tobor node
-After=network-online.target
-
-[Service]
-Environment=TOBOR_HOME=%h/.local/share/tobor
-ExecStart=/usr/bin/env tobor node
-Restart=on-failure
-TimeoutStopSec=30
-
-[Install]
-WantedBy=default.target
-```
-
-`systemctl --user enable --now tobor` (plus `loginctl enable-linger $USER` to run without a login session).
+One template unit runs any number of nodes, each with its own `TOBOR_HOME` and ports (set in that home's `.tobor/config.yml`):
+copy `contrib/tobor@.service` to `~/.config/systemd/user/`, write `~/.config/tobor/nodes/<name>.env` per node
+(see `contrib/nodes/example.env`), then `systemctl --user enable --now tobor@<name>`
+(plus `loginctl enable-linger $USER` to run without a login session).
 
 ## Development
 
