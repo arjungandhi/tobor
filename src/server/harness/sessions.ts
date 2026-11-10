@@ -110,6 +110,8 @@ export class SessionIndex implements SessionIndexContract {
 	private readonly unsubscribe: (() => void)[] = [];
 	/** Sessions whose first exchange has been offered to the title model (once per process). */
 	private readonly titled = new Set<number>();
+	/** Title attempts currently running, for `titlesSettled`. */
+	private readonly titling = new Set<Promise<void>>();
 	/** Aborts in-flight title calls on `stop`. */
 	private readonly titleAbort = new AbortController();
 
@@ -315,12 +317,19 @@ export class SessionIndex implements SessionIndexContract {
 	private retitle(id: number): void {
 		if (this.titled.has(id)) return;
 		this.titled.add(id);
-		this.generateSessionTitle(id).then(
+		const run: Promise<void> = this.generateSessionTitle(id).then(
 			(done) => {
 				if (!done) this.titled.delete(id);
 			},
 			() => {},
 		);
+		this.titling.add(run);
+		void run.finally(() => this.titling.delete(run));
+	}
+
+	/** Resolves once every title attempt started so far has finished (applied, skipped or failed). */
+	async titlesSettled(): Promise<void> {
+		await Promise.all([...this.titling]);
 	}
 
 	/**
@@ -331,10 +340,12 @@ export class SessionIndex implements SessionIndexContract {
 	private async generateSessionTitle(id: number): Promise<boolean> {
 		const { harness, ctx, models } = this.o;
 		const cid = id as ConversationId;
+		if (this.titleAbort.signal.aborted) return true;
 		const entry = (await this.index()).sessions[String(id)];
 		const session = await harness.snapshot(SessionDoc, cid, ctx);
 		if (!entry || !session || session.worker || entry.kind !== "session" || entry.scheduleId) return true;
 		if ((session.titleSource ?? "prompt") !== "prompt") return true;
+		if (this.titleAbort.signal.aborted) return true;
 		const conversation = await harness.conversation(cid, ctx);
 		if (!conversation) return true;
 		const page = await conversation.entries({ order: "ascending" }, 30, undefined, ctx);
