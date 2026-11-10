@@ -208,7 +208,7 @@ export class SessionIndex implements SessionIndexContract {
 	async patch(id: SessionId, patch: PatchSessionRequest): Promise<SessionDetail> {
 		const cid = id as ConversationId;
 		const current = await this.o.harness.snapshot(SessionDoc, cid, this.o.ctx);
-		if (!current || current.createdAt === 0) throw new HostError(404, "not_found", `no session ${id}`);
+		if (!current) throw new HostError(404, "not_found", `no session ${id}`);
 		if (patch.title !== undefined && patch.title.trim() === "") throw new HostError(400, "invalid", "title is empty");
 		const change: { -readonly [K in keyof AgentChange]: AgentChange[K] } = {};
 		if (patch.model !== undefined) change.model = this.modelRef(patch.model);
@@ -382,7 +382,7 @@ export class SessionIndex implements SessionIndexContract {
 		const { harness, ctx } = this.o;
 		const cid = id as ConversationId;
 		const session = await harness.snapshot(SessionDoc, cid, ctx);
-		if (!session || (session.createdAt === 0 && !entry)) return undefined;
+		if (!session) return undefined;
 		const conversation = await harness.conversation(cid, ctx);
 		if (!conversation) return undefined;
 		const [live, usage, agent, latest] = await Promise.all([
