@@ -271,7 +271,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	]);
 
 	const roots: string[] = [];
-	for (const root0 of root.stringList("roots") ?? ["~"]) {
+	for (const root0 of root.stringList("roots") ?? [home]) {
 		const p = expandTilde(root0);
 		if (!isAbsolute(p)) root.fail("roots", `root ${JSON.stringify(root0)} must be absolute or start with ~`);
 		else roots.push(resolve(p));

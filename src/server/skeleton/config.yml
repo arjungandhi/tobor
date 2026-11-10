@@ -1,7 +1,7 @@
 # tobor node settings. Keys marked (operator) can only be changed by the operator, not by the agent.
 # Durations: 30m, 12h, 90d.
 
-roots: ["~"]                    # (operator) directories sessions may start in
+# roots: default is this TOBOR_HOME   # (operator) directories sessions may start in
 # env_file: agent.env           # relative to $TOBOR_HOME, never inside .tobor/
 # listen: 127.0.0.1:7879        # (operator)
 # artifacts_listen: 127.0.0.1:7880

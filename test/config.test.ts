@@ -77,6 +77,7 @@ artifacts: { theme: retro-log }
 	it("applies defaults to an empty file", () => {
 		const { config, errors } = parseConfigText("", HOME);
 		expect(errors).toEqual([]);
+		expect(config.roots).toEqual([HOME]);
 		expect(config.listen).toEqual({ host: "127.0.0.1", port: 7879 });
 		expect(config.artifacts_listen.port).toBe(7880);
 		expect(config.allowed_origins).toEqual(["http://127.0.0.1:7879"]);
