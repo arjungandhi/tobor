@@ -148,6 +148,7 @@ describe("skeleton", () => {
 	it("ships the documented layout", () => {
 		expect(Object.keys(files).sort()).toEqual(
 			[
+				".gitignore",
 				"AGENTS.md",
 				"RULES.md",
 				"agents/fast.md",
