@@ -14,7 +14,7 @@ import {
 import type { ApprovalMode, ThinkingLevel, WorkerState } from "../../../api/types.js";
 import { SessionDoc, WorkersDoc } from "../../../docs.js";
 
-/** How often the `await` phase re-checks the brief submission (pi-durable waits only on task ids). */
+/** How often the `await` phase re-checks the latest worker submission (pi-durable waits only on task ids). */
 export const WORKER_POLL_MS = 5000;
 
 /** Input of one `tobor.worker` holder, fully resolved by the `task` tool. */
@@ -142,21 +142,29 @@ export function createWorkerHolder(deps: WorkerHolderDeps = {}): WorkerHolderTas
 				changed(input);
 			},
 			async await(task, runtime, context) {
+				const input = task.input;
 				const checkpoint = task.state.checkpoint;
 				await runtime.commit(async (tx) => {
-					const record = await tx.submission(checkpoint.submissionId as SubmissionId);
+					// `agent_send` moves the record's submission on; poll the latest one.
+					const latest = (await tx.doc(WorkersDoc, input.directorId)).workers[input.workerId]?.submissionId ?? checkpoint.submissionId;
+					const record = await tx.submission(latest as SubmissionId);
 					if (record && (record.status === "queued" || record.status === "placed")) {
-						return { status: "sleeping", until: runtime.now() + (deps.pollMs ?? WORKER_POLL_MS), checkpoint };
+						return { status: "sleeping", until: runtime.now() + (deps.pollMs ?? WORKER_POLL_MS), checkpoint: { ...checkpoint, submissionId: latest } };
 					}
-					return { status: "running", checkpoint: { ...checkpoint, phase: "report" } };
+					return { status: "running", checkpoint: { ...checkpoint, submissionId: latest, phase: "report" } };
 				}, context);
 			},
 			async report(task, runtime, context) {
 				const input = task.input;
-				const { submissionId } = task.state.checkpoint;
+				const { conversationId, submissionId } = task.state.checkpoint;
 				const director = await runtime.conversation(input.directorId, context);
 				if (!director) throw new Error(`director conversation ${input.directorId} missing`);
 				await runtime.commit(async (tx) => {
+					// A follow-up that landed since `await` settled: keep waiting instead of reporting.
+					const newer = (await tx.doc(WorkersDoc, input.directorId)).workers[input.workerId]?.submissionId;
+					if (newer !== undefined && newer !== submissionId && (await settledResult(tx, await tx.submission(newer as SubmissionId))) === undefined) {
+						return { status: "running", checkpoint: { phase: "await", conversationId, submissionId: newer } };
+					}
 					const result = (await settledResult(tx, await tx.submission(submissionId as SubmissionId))) ?? {
 						state: "failed" as const,
 						answer: "",

@@ -131,7 +131,7 @@ export type WorkerRecord = {
 	conversationId?: number;
 	/** Deterministic request id of the brief submission (`<callId>:<i>`). */
 	requestId: string;
-	/** Brief submission id, once submitted. */
+	/** Latest submission id (the brief, or an `agent_send` follow-up), once submitted. */
 	submissionId?: number;
 	state: WorkerState;
 	createdAt: number;

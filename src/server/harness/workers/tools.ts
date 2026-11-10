@@ -1,5 +1,12 @@
-import { type ConversationId, defineTool, type EntryId, type EntryRecord, type JsonObject } from "@earendil-works/pi-durable";
-import { arr, int, obj, opt, str } from "@earendil-works/pi-schema";
+import {
+	type ConversationId,
+	defineTool,
+	type EntryId,
+	type EntryRecord,
+	type JsonObject,
+	type TaskId,
+} from "@earendil-works/pi-durable";
+import { arr, bool, int, obj, opt, str } from "@earendil-works/pi-schema";
 import type { AgentDefinition, WorkerState } from "../../../api/types.js";
 import { type Config, parseModelRef } from "../../../config/schema.js";
 import { SessionDoc, type WorkerRecord, WorkersDoc } from "../../../docs.js";
@@ -10,7 +17,7 @@ import { assistantText, createWorkerHolder, type WorkerInput } from "./holder.js
 import { workerSummary } from "./service.js";
 
 /** Director-only tools; never offered to workers. */
-export const DIRECTOR_TOOLS = ["task", "wait", "agent_output"] as const;
+export const DIRECTOR_TOOLS = ["task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send"] as const;
 
 /** What the workers module reads from the node, at call time. */
 export type WorkerHost = Pick<Host, "harness" | "config" | "events" | "agentData">;
@@ -58,7 +65,7 @@ export async function taskSpawnsAutoWorker(
 	return (await listAgents(cwd)).some((a) => names.has(a.name) && a.approval === "auto");
 }
 
-/** `task`, `wait`, `agent_output` and the `tobor.worker` task. `host` is read lazily (the Harness opens later). */
+/** `task`, `wait`, `agent_output`, `agent_list`, `agent_stop`, `agent_send` and the `tobor.worker` task. `host` is read lazily (the Harness opens later). */
 export function workersModule(host: () => WorkerHost, options: { pollMs?: number } = {}): ToolModule {
 	const holder = createWorkerHolder({
 		...options,
@@ -217,11 +224,110 @@ export function workersModule(host: () => WorkerHost, options: { pollMs?: number
 		},
 	});
 
+	const listTool = defineTool({
+		name: "agent_list",
+		description:
+			"List this session's workers with their state and answer. Ids work with `agent_output`, `agent_stop` and `agent_send`.",
+		parameters: obj({}),
+		replay: "safe",
+		async execute(_args, api, context) {
+			const doc = await api.snapshot(WorkersDoc, api.conversationId, context);
+			const workers = sortWorkers(Object.values(doc?.workers ?? {}));
+			if (workers.length === 0) return { output: [{ type: "text", text: "No workers in this session." }] };
+			const lines = workers.map((w) => {
+				const answer = w.answer?.split("\n", 1)[0] || (isLive(w) ? "(running)" : "(no final text)");
+				return `${w.id} ${w.name} (${w.agent}): ${w.state}${w.reason ? ` (${w.reason})` : ""} — ${answer}`;
+			});
+			return { output: [{ type: "text", text: lines.join("\n") }], details: { workers } };
+		},
+	});
+
+	const stopTool = defineTool({
+		name: "agent_stop",
+		description:
+			"Stop live workers: one by `id`, or every live one with `all`. Each stopped worker reports back as a message " +
+			"`[worker <name> finished: aborted (stopped)]`.",
+		parameters: obj({
+			id: opt(str({ description: "Worker id, e.g. w1" })),
+			all: opt(bool({ description: "Stop every live worker" })),
+		}),
+		async execute(args, api, context) {
+			if ((args.id === undefined) === (args.all !== true)) {
+				return { output: [{ type: "text", text: "agent_stop: pass exactly one of `id` or `all`" }], isError: true };
+			}
+			const doc = await api.snapshot(WorkersDoc, api.conversationId, context);
+			const records = Object.values(doc?.workers ?? {});
+			const targets = args.id === undefined ? sortWorkers(records.filter(isLive)) : records.filter((w) => w.id === args.id);
+			if (args.id !== undefined && targets.length === 0) {
+				return { output: [{ type: "text", text: `No worker ${args.id}` }], isError: true };
+			}
+			if (targets.length === 0) return { output: [{ type: "text", text: "No workers are running." }] };
+			const h = host();
+			const stopped: string[] = [];
+			const lines = await Promise.all(
+				targets.map(async (w) => {
+					if (!isLive(w)) return `${w.name} (${w.id}): already ${w.state}`;
+					await h.harness.abortTask(w.holderTaskId as TaskId, context);
+					stopped.push(w.id);
+					return `${w.name} (${w.id}): stopping; the abort report arrives as a message`;
+				}),
+			);
+			return { output: [{ type: "text", text: lines.join("\n") }], details: { stopped } };
+		},
+	});
+
+	const sendTool = defineTool({
+		name: "agent_send",
+		description:
+			"Send a follow-up message to a live worker to steer it. Its new answer arrives later as a message. " +
+			"Finished workers cannot be steered: spawn a new `task`.",
+		parameters: obj({
+			id: str({ description: "Worker id from `task`" }),
+			message: str({ description: "Follow-up for the worker" }),
+		}),
+		async execute(args, api, context) {
+			const fail = (text: string) => ({ output: [{ type: "text" as const, text }], isError: true as const });
+			const directorId = api.conversationId;
+			const doc = await api.snapshot(WorkersDoc, directorId, context);
+			const peek = doc?.workers[args.id];
+			if (!peek) return fail(`No worker ${args.id}`);
+			if (!isLive(peek)) return fail(`worker already ${peek.state}; spawn a new task`);
+			if (peek.conversationId === undefined || peek.submissionId === undefined) return fail("still starting; retry shortly");
+			const h = host();
+			const conversation = await h.harness.conversation(peek.conversationId as ConversationId, context);
+			if (!conversation) return fail(`worker conversation ${peek.conversationId} missing`);
+			// One commit: the admission precedes the doc write, and documents may be read and written around it.
+			const sent = await api.commit(async (tx) => {
+				const w = (await tx.doc(WorkersDoc, directorId)).workers[args.id];
+				if (!w) return `No worker ${args.id}`;
+				if (!isLive(w)) return `worker already ${w.state}; spawn a new task`;
+				const submissionId = await conversation.submit(tx, {
+					type: "input",
+					content: args.message,
+					requestId: `${api.callId}:send`,
+				});
+				w.submissionId = submissionId;
+				w.state = "running";
+				return undefined;
+			}, context);
+			if (sent !== undefined) return fail(sent);
+			void emitWorker(h, directorId, args.id);
+			return {
+				output: [{ type: "text", text: `${peek.name} (${peek.id}): sent; its answer arrives as a message` }],
+				details: { worker: peek.id },
+			};
+		},
+	});
+
 	return {
-		tools: [taskTool, waitTool, outputTool],
+		tools: [taskTool, waitTool, outputTool, listTool, stopTool, sendTool],
 		tasks: [holder],
 		docs: [WorkersDoc],
 	};
+}
+
+function sortWorkers(records: readonly Readonly<WorkerRecord>[]): Readonly<WorkerRecord>[] {
+	return [...records].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id, "en", { numeric: true }));
 }
 
 function entryText(entry: EntryRecord): string {

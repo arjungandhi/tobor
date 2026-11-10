@@ -148,7 +148,8 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 | `schedule_list`, `schedule_delete` | tobor | no |
 | `todo` | tobor; writes the doc `tobor.todo` (per conversation: `[{id, text, status: pending\|doing\|done}]`), rendered in the Session view | no |
 | `task` | tobor; spawns worker conversations (see Subagents) | only if it spawns an `approval: auto` worker |
-| `wait`, `agent_output` | tobor; read worker results | no |
+| `wait`, `agent_output`, `agent_list` | tobor; read worker results | no |
+| `agent_stop`, `agent_send` | tobor; stop a live worker, or steer it with a follow-up message | no |
 | `mcp__<server>__<tool>` | registered from `mcp.json` (see MCP) | per `mcp.approval`, default yes |
 
 **Approval.** `approval_mode: ask | auto` is set per conversation; the default comes from node `config.yml` (built-in default `auto`). `tobor.approvals` is declared with `fork: "initial"`, so a fork starts without the parent's session grants. In `ask`, a `beforeTool` hook on `ToolTask` gates `bash`, `write`, `edit`, `artifact_export`, `schedule_create`, MCP tools per `mcp.approval`, and `task` calls that spawn an `auto` worker:
@@ -189,7 +190,7 @@ The client keeps a replica by applying Chord ops (the TUI via `chord/delta.apply
 | `scout` | read-only research | `read`, and `bash` with a deny-pattern list (redirects, `rm`, `mv`, `git commit/push`, package installs…). A guardrail against mistakes, not containment |
 | `reviewer` | read-only review of finished work | as `scout` |
 
-**Modes.** `config.yml: defaults.mode: director | solo`, overridable per session (`POST /api/sessions {mode}`, stored in `tobor.session`). `solo` is the classic single agent with the full tool set. In `director`, the `preamble` section renders the director rules and the director's `modelTools` are limited to `read`, `todo`, `task`, `wait`, `agent_output` and the artifact tools. Workers get the tools from their definition.
+**Modes.** `config.yml: defaults.mode: director | solo`, overridable per session (`POST /api/sessions {mode}`, stored in `tobor.session`). `solo` is the classic single agent with the full tool set. In `director`, the `preamble` section renders the director rules and the director's `modelTools` are limited to `read`, `todo`, `task`, `wait`, `agent_output`, `agent_list`, `agent_stop`, `agent_send` and the artifact tools. Workers get the tools from their definition.
 
 **Director rules** (rendered text, condensed): you are a director for one-shot background workers, not a worker. Workers search, edit, run and build; you plan, dispatch and verify. Own the todo list. Split work into small independent tasks with clear file boundaries; spawn every independent task in one `task` call; `wait` only when blocked. Each brief is complete and self-contained (goal, target files, non-goals, interfaces, acceptance), one concern per worker, and one worker owns each shared file. Workers skip build/lint/tests mid-flight; one worker runs them after all land. Verify every result by reading the touched files and the worker's output. Report only exercised evidence. Pick agents by tier: `fast` (mechanical), `worker` (judgment), `scout` (research), `reviewer` (review).
 
@@ -197,7 +198,7 @@ The client keeps a replica by applying Chord ops (the TUI via `chord/delta.apply
 
 **`wait({ids?})`** (default: all unsettled workers) is declared `replay: "safe"`. It reacquires each worker submission with `harness.submission(id)` and awaits `Submission.wait`, then returns each worker's final assistant text (`settled.answer` entry), status/`unanswered` reason and `pi.usage`. Durability comes from the submissions, not the wait: after a crash the tool reruns and waits again. [INFERENCE] pi-durable's documented durable `waiting` is `on: TaskId[]`, not submission ids; whether a worker's run task id is usable there is an open question.
 
-**`agent_output({id, before?, limit?})`** returns a worker's final text and pages its transcript via `conversation.entries`. Workers are one-shot: no steer is exposed to the director; a correction is a new `task`.
+**`agent_output({id, before?, limit?})`** returns a worker's final text and pages its transcript via `conversation.entries`. `agent_list()` lists the session's workers; `agent_stop({id}|{all})` aborts live ones; `agent_send({id, message})` submits a follow-up to a live worker and the holder then awaits that newest submission. A correction to a finished worker is a new `task`.
 
 **Approval.** A worker inherits the session's `approval_mode` unless its definition says `auto`. Approval cards and ntfy show the worker name. The director's `task` call needs approval in `ask` only when it spawns an `approval: auto` worker.
 
