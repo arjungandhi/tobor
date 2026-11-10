@@ -74,6 +74,7 @@ fun SchedulesScreen(
     api: ToborApi,
     onOpenSession: (Long) -> Unit,
     onNew: () -> Unit,
+    onEdit: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -302,6 +303,7 @@ fun SchedulesScreen(
                                     onToggle = {
                                         mutate(s) { api.updateSchedule(s.id, UpdateScheduleRequest(enabled = !s.enabled)) }
                                     },
+                                    onEdit = { onEdit(s.id) },
                                     onDelete = { confirmDelete = s },
                                     onOpenSession = onOpenSession,
                                 )
@@ -337,6 +339,7 @@ private fun ScheduleRow(
     busy: Boolean,
     onClick: () -> Unit,
     onToggle: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit,
     onOpenSession: (Long) -> Unit,
 ) {
@@ -409,6 +412,17 @@ private fun ScheduleRow(
                             disabledContentColor = ToborColors.subtle,
                         ),
                     ) { Text(if (s.enabled) "disable" else "enable", fontFamily = FontFamilies.Righteous, fontSize = 12.sp) }
+                    OutlinedButton(
+                        onClick = onEdit,
+                        enabled = !busy,
+                        modifier = Modifier.height(32.dp),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp, ToborColors.muted),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = ToborColors.fg,
+                            disabledContentColor = ToborColors.subtle,
+                        ),
+                    ) { Text("Edit", fontFamily = FontFamilies.Righteous, fontSize = 12.sp) }
                     OutlinedButton(
                         onClick = onDelete,
                         enabled = !busy,
