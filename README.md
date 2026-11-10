@@ -1,48 +1,56 @@
 # tobor
 
-A small, self-hosted remote agent harness. Each host runs one tobor node: a Node process that embeds
-[`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) 1.5.1 as its agent loop and
-serves an HTTP+WS API. Clients (the TUI first; web and Android later) start, watch, steer, approve, abort and schedule
-agent sessions on that host. Sessions are durable conversations in one SQLite file, so they survive restarts and
-client disconnects. Design: [`design_doc_v3.md`](design_doc_v3.md).
+A self-hosted remote agent harness. Each host runs one tobor node: a Node process embedding
+[`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) as its agent loop and serving an
+HTTP+WS API. Clients (the TUI first) start, watch, steer, approve, abort and schedule durable sessions on that host.
+Tools: hashline `read`/`edit`, `write`, `bash`, artifacts, schedules, `todo`, director workers (`.tobor/agents/*.md`:
+`worker` sonnet, `fast`/`scout` haiku, `reviewer` sonnet) and MCP servers. The node has no auth: bind it to a private
+network (e.g. Tailscale). Design: [`design_doc_v3.md`](design_doc_v3.md).
 
-- **Tools:** hashline `read`/`edit`, `write`, `bash`, artifacts, schedules, `todo`, plus MCP servers.
-- **Director mode:** the session agent plans and dispatches background workers defined in `.tobor/agents/*.md`.
-- **Approvals:** `ask` mode gates mutating tools; pending approvals persist and show in every client.
-- **Artifacts:** published HTML revisions on a separate origin, PDF export, retro-log theme.
-- **No auth in the node:** bind it to a private network (e.g. Tailscale). One install per host, no hub.
+## Quickstart
 
-## Layout
+Requires Node ≥ 22.19 and git; Chrome/Chromium enables artifact PDFs.
 
 ```
-$TOBOR_HOME/                 # --home → TOBOR_HOME → ~/.local/share/tobor
-├── tobor.sqlite             # pi-durable state and tobor docs
-├── auth.json                # credentials (0600)
-├── agent.env                # env_file: API keys, MCP tokens
-├── node.json                # system conversation id, ntfy topic
-├── .tobor/                  # git repo: AGENTS.md RULES.md config.yml mcp.json agents/ skills/ design-systems/
-└── artifacts/               # feed.jsonl, store/, pdf/
-```
-
-## Usage
-
-Requires Node ≥ 22.19.
-
-```
-tobor init                   # create $TOBOR_HOME and the .tobor repo
-tobor login anthropic        # Claude Pro/Max OAuth (prints a URL, paste the code)
-tobor node                   # run the node (API :7879, artifacts :7880)
-tobor tui [host:port]        # terminal client
+npm install && npm run build && npm link   # puts `tobor` (dist/cli.js) on PATH
+export TOBOR_HOME=~/.local/share/tobor     # or --home DIR on every command
+tobor init                   # $TOBOR_HOME, the .tobor/ git repo (config.yml, agents/, skills/), node.json
+$EDITOR $TOBOR_HOME/.tobor/config.yml     # roots: directories sessions may start in
+tobor login anthropic        # Claude Pro/Max OAuth; or put ANTHROPIC_API_KEY=… in $TOBOR_HOME/agent.env
+tobor node                   # API on 127.0.0.1:7879, artifacts on :7880
+tobor tui 127.0.0.1:7879     # terminal client
 tobor backup <file>          # VACUUM INTO a copy of tobor.sqlite
 ```
+
+Worker models: a `task` item's `model` wins, then `agents.model_overrides.<agent>` in config.yml, then the agent
+file's `model`, then `defaults.worker_model`, else the director's model.
+
+## systemd (user unit)
+
+```ini
+# ~/.config/systemd/user/tobor.service
+[Unit]
+Description=tobor node
+After=network-online.target
+
+[Service]
+Environment=TOBOR_HOME=%h/.local/share/tobor
+ExecStart=/usr/bin/env tobor node
+Restart=on-failure
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+`systemctl --user enable --now tobor` (plus `loginctl enable-linger $USER` to run without a login session).
 
 ## Development
 
 ```
-npm install
 npm run typecheck            # tsc --noEmit
 npm test                     # vitest run
-npm run build                # tsc -p tsconfig.build.json → dist/
+npm run build                # tsc → dist/, then copies artifact themes/vendor and the init skeleton
 npm run dev:node -- --home /tmp/tobor-dev
-npm run dev:tui -- localhost:7879
+ANTHROPIC_API_KEY=… node --import tsx test/integration/smoke.ts   # real-model end-to-end smoke (after build)
 ```
