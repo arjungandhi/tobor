@@ -21,8 +21,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import dev.tobor.app.api.ToborApi
 import dev.tobor.app.data.SettingsStore
-import dev.tobor.app.ui.screens.NewScheduleScreen
 import dev.tobor.app.ui.screens.NewSessionScreen
+import dev.tobor.app.ui.screens.ScheduleFormScreen
 import dev.tobor.app.ui.screens.SchedulesScreen
 import dev.tobor.app.ui.screens.SessionScreen
 import dev.tobor.app.ui.screens.SessionsScreen
@@ -94,13 +94,25 @@ fun AppNav() {
                     api = api,
                     onOpenSession = { id -> nav.navigate("session/$id") },
                     onNew = { nav.navigate("schedules/new") },
+                    onEdit = { id -> nav.navigate("schedules/edit/$id") },
                     onBack = { nav.popBackStack() },
                 )
             }
             composable("schedules/new") {
-                NewScheduleScreen(
+                ScheduleFormScreen(
                     api = api,
-                    onCreated = { nav.popBackStack() },
+                    onDone = { nav.popBackStack() },
+                    onBack = { nav.popBackStack() },
+                )
+            }
+            composable(
+                "schedules/edit/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                ScheduleFormScreen(
+                    api = api,
+                    editId = entry.arguments?.getString("id"),
+                    onDone = { nav.popBackStack() },
                     onBack = { nav.popBackStack() },
                 )
             }
