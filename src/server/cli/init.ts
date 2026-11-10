@@ -10,7 +10,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { artifactsSkill } from "../../artifacts/tools.js";
 import type { CliArgs } from "../../cli.js";
 import { paths as homePaths } from "../../config/home.js";
-import { migrateHomeLayout } from "../../config/migrate.js";
+import { ensureStateDir, migrateHomeLayout } from "../../config/migrate.js";
 import { ensureSystemConversation, readNodeJson, writeNodeJson } from "../harness/boot.js";
 import { skeletonFiles } from "../skeleton/index.js";
 
@@ -33,8 +33,6 @@ export async function initHome(
 	await mkdir(home, { recursive: true, mode: 0o700 });
 	await mkdir(paths.toborDir, { recursive: true });
 	await migrateHomeLayout(home);
-	await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
-	await mkdir(paths.artifacts, { recursive: true });
 	await mkdir(paths.designSystemsDir, { recursive: true });
 
 	const created: string[] = [];
@@ -45,6 +43,8 @@ export async function initHome(
 		await writeFile(target, content);
 		created.push(join(".tobor", rel));
 	}
+	await ensureStateDir(home);
+	await mkdir(paths.artifacts, { recursive: true });
 	if (!(await exists(paths.agentEnv))) {
 		await writeFile(paths.agentEnv, "# API keys and other secrets, KEY=value per line.\n", { mode: 0o600 });
 		created.push(join(".tobor", "state", "agent.env"));

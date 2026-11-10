@@ -23,9 +23,15 @@ export async function migrateHomeLayout(home: string): Promise<void> {
 	}
 	if (moves.length === 0) return;
 
+	await ensureStateDir(home);
+	for (const name of moves) await rename(join(home, name), join(p.stateDir, name));
+}
+
+/** Create `.tobor/state/` (mode 0700) and make sure `.tobor/.gitignore` lists it, so state is never auto-committed. */
+export async function ensureStateDir(home: string): Promise<void> {
+	const p = paths(home);
 	await mkdir(p.stateDir, { recursive: true, mode: 0o700 });
 	await ensureStateIgnored(p.toborDir);
-	for (const name of moves) await rename(join(home, name), join(p.stateDir, name));
 }
 
 /** Make `.tobor/.gitignore` list `state/`, creating the file or appending the line. */
