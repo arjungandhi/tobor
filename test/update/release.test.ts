@@ -15,7 +15,7 @@ import {
 	targetFor,
 	versionFromTag,
 } from "../../src/server/release.js";
-import { reexecEnv, UpdateChecker, upgradeSelf } from "../../src/server/update.js";
+import { reexecEnv, stopGracefully, UpdateChecker, upgradeSelf } from "../../src/server/update.js";
 import { HostError } from "../../src/host.js";
 
 const sha = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -185,6 +185,25 @@ describe("reexecEnv", () => {
 		expect(out).toEqual({ PATH: "/bin", HOME: "/h" });
 		expect("TOBOR_ASSET_ROOT" in out).toBe(false);
 		expect(env.TOBOR_ASSET_ROOT).toBe("/old/assets");
+	});
+});
+
+describe("stopGracefully", () => {
+	it("waits for a hook that finishes in time", async () => {
+		let done = false;
+		expect(await stopGracefully(async () => { await new Promise((r) => setTimeout(r, 10)); done = true; }, 1000)).toBe(true);
+		expect(done).toBe(true);
+		expect(await stopGracefully(undefined)).toBe(true);
+	});
+
+	it("gives up on a hung hook after the timeout", async () => {
+		const started = Date.now();
+		expect(await stopGracefully(() => new Promise<void>(() => {}), 50)).toBe(false);
+		expect(Date.now() - started).toBeLessThan(1000);
+	});
+
+	it("proceeds when the hook throws", async () => {
+		expect(await stopGracefully(async () => { throw new Error("boom"); }, 1000)).toBe(false);
 	});
 });
 

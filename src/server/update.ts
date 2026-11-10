@@ -19,6 +19,9 @@ import {
 } from "./release.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Longest the graceful stop may take before a restart proceeds anyway. */
+export const SHUTDOWN_TIMEOUT_MS = 10_000;
+
 /** Delay between answering `POST /api/upgrade|restart` and restarting, so the response flushes first. */
 export const RESTART_DELAY_MS = 300;
 /** Exit code that tells systemd (`RestartForceExitStatus=75` in contrib/tobor@.service) to relaunch the node. */
@@ -220,6 +223,28 @@ export function scheduleRestart(delayMs: number = RESTART_DELAY_MS): void {
 }
 
 /**
+ * Run the graceful stop `hook`, but never wait on it longer than `timeoutMs` (or past a throw): a hung `host.shutdown()`
+ * must not leave a live process that is neither serving nor restarting. Returns true when the hook finished cleanly.
+ */
+export async function stopGracefully(hook: (() => Promise<void>) | undefined, timeoutMs: number = SHUTDOWN_TIMEOUT_MS): Promise<boolean> {
+	if (!hook) return true;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<"timeout">((resolve) => {
+		timer = setTimeout(() => resolve("timeout"), timeoutMs);
+	});
+	try {
+		const result = await Promise.race([hook().then(() => "done" as const), timeout]);
+		if (result === "timeout") console.error(`update: graceful stop did not finish within ${timeoutMs}ms, restarting anyway`);
+		return result === "done";
+	} catch (err) {
+		console.error("update: graceful stop failed, restarting anyway:", err);
+		return false;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
  * Environment for the re-exec'd node: a copy of `env` without `TOBOR_ASSET_ROOT`. compile-entry.ts does
  * `TOBOR_ASSET_ROOT ??= extract()`, so an inherited value would make the new binary skip extraction and serve the old
  * package.json/skeleton/themes.
@@ -235,7 +260,7 @@ export function reexecEnv(env: NodeJS.ProcessEnv = process.env): Record<string, 
  * and exit 0.
  */
 export async function restartNode(): Promise<never> {
-	await shutdownHook?.();
+	await stopGracefully(shutdownHook);
 	if (process.env.INVOCATION_ID) process.exit(RESTART_EXIT_CODE);
 	// Compiled binaries get their arguments after the embedded script at argv[1]; from source argv[1] is the script.
 	const args = BUILD === "dev" ? process.argv.slice(1) : process.argv.slice(2);
