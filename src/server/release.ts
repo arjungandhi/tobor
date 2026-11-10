@@ -160,12 +160,19 @@ export async function replaceFile(tmp: string, dest: string): Promise<void> {
 	await rename(tmp, dest);
 }
 
+let tempCounter = 0;
+
+/** A temp path next to `dest`, unique per call (pid + counter + random) so concurrent downloads never share a file. */
+export function tempDownloadPath(dest: string): string {
+	return join(dirname(dest), `.${basename(dest)}.${process.pid}.${++tempCounter}.${Math.random().toString(36).slice(2, 8)}.download`);
+}
+
 /**
  * Download `url` next to `dest`, verify it hashes to `sha256`, then atomically rename it over `dest`. A mismatch or
  * failure leaves `dest` untouched and removes the temp file. Renaming over a running binary is safe on Linux.
  */
 export async function downloadAndReplace(url: string, dest: string, sha256: string, options: { fetch?: FetchFn; userAgent?: string; signal?: AbortSignal } = {}): Promise<void> {
-	const tmp = join(dirname(dest), `.${basename(dest)}.${process.pid}.download`);
+	const tmp = tempDownloadPath(dest);
 	const actual = await downloadFile(url, tmp, options);
 	if (actual !== sha256.toLowerCase()) {
 		await rm(tmp, { force: true });

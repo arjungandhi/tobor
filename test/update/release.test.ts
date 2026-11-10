@@ -10,6 +10,7 @@ import {
 	fetchLatestRelease,
 	isNewer,
 	parseManifest,
+	tempDownloadPath,
 	sha256File,
 	targetFor,
 	versionFromTag,
@@ -154,6 +155,26 @@ describe("downloadFile errors", () => {
 		const dest = join(dir, "nope", "tobor");
 		await expect(downloadAndReplace("https://dl/x", dest, sha("x"), { fetch: bytes("x") })).rejects.toThrow(/ENOENT/);
 		expect(await readdir(dir)).toEqual([]);
+	});
+});
+
+describe("tempDownloadPath", () => {
+	it("is unique per call, next to the destination", () => {
+		const dest = join(dir, "tobor");
+		const names = new Set(Array.from({ length: 100 }, () => tempDownloadPath(dest)));
+		expect(names.size).toBe(100);
+		for (const n of names) expect(n.startsWith(join(dir, ".tobor."))).toBe(true);
+	});
+
+	it("lets concurrent downloads to one destination succeed without clobbering each other", async () => {
+		const dest = join(dir, "tobor");
+		await writeFile(dest, "old");
+		await Promise.all([
+			downloadAndReplace("https://dl/x", dest, sha("new"), { fetch: bytes("new") }),
+			downloadAndReplace("https://dl/x", dest, sha("new"), { fetch: bytes("new") }),
+		]);
+		expect(await readFile(dest, "utf8")).toBe("new");
+		expect(await readdir(dir)).toEqual(["tobor"]);
 	});
 });
 
