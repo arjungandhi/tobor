@@ -334,7 +334,7 @@ export class SessionIndex implements SessionIndexContract {
 
 	/**
 	 * Name a session from its first exchange with the title model, once it first settles. Plain sessions only (not
-	 * workers or schedule runs), and only while the title is still the prompt-derived one. Resolves false when there was
+	 * workers or schedule runs), and only while `titleSource` is exactly "prompt" (a session without one predates titling and may have been renamed). Resolves false when there was
 	 * nothing to title yet (so a later idle may retry); any model failure keeps the prompt title.
 	 */
 	private async generateSessionTitle(id: number): Promise<boolean> {
@@ -344,7 +344,7 @@ export class SessionIndex implements SessionIndexContract {
 		const entry = (await this.index()).sessions[String(id)];
 		const session = await harness.snapshot(SessionDoc, cid, ctx);
 		if (!entry || !session || session.worker || entry.kind !== "session" || entry.scheduleId) return true;
-		if ((session.titleSource ?? "prompt") !== "prompt") return true;
+		if (session.titleSource !== "prompt") return true;
 		if (this.titleAbort.signal.aborted) return true;
 		const conversation = await harness.conversation(cid, ctx);
 		if (!conversation) return true;
@@ -370,7 +370,7 @@ export class SessionIndex implements SessionIndexContract {
 		let applied = false;
 		await harness.commit(async (tx) => {
 			const doc = await tx.doc(SessionDoc, cid);
-			if ((doc.titleSource ?? "prompt") !== "prompt") return;
+			if (doc.titleSource !== "prompt") return;
 			const index = await tx.doc(SessionsDoc, this.o.systemConversationId as ConversationId);
 			const row = index.sessions[String(id)];
 			if (!row) return;

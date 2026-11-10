@@ -379,6 +379,26 @@ describe("system prompt sections", () => {
 			expect((await t.host.sessions.list())[0]?.title).toBe("mine");
 		});
 
+		it("never retitles a session without a titleSource (it predates titling)", async () => {
+			const t = await start();
+			const gate = Promise.withResolvers<void>();
+			const title = titleStep("Model title");
+			t.script([async () => (await gate.promise, fauxAssistantMessage("done"))]);
+			t.scriptTitle([title.step]);
+			const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "old session" });
+			await t.host.harness.commit(async (tx) => {
+				delete (await tx.doc(SessionDoc, id as ConversationId)).titleSource;
+			}, ctx);
+			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).not.toHaveProperty("titleSource");
+			gate.resolve();
+			await t.settle(submissionId);
+			await t.reachedState(id, "idle");
+			await t.host.sessions.titlesSettled();
+			expect(title.seen).toEqual([]);
+			expect((await t.host.sessions.get(id))?.title).toBe("old session");
+			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).not.toHaveProperty("titleSource");
+		});
+
 		it("keeps the prompt title when the title call fails", async () => {
 			const t = await start();
 			const title = titleStep({ error: "boom" });

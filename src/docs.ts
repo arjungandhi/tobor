@@ -56,7 +56,7 @@ export type SessionDocValue = {
 	createdAt: number;
 	/** Present on worker conversations. */
 	worker?: WorkerIdentity;
-	/** Who set `title`: the first prompt, the title model, or the operator's rename. Absent means "prompt". */
+	/** Who set `title`: the first prompt, the title model, or the operator's rename. Absent on sessions that predate titling: unknown, never retitled. */
 	titleSource?: TitleSource;
 };
 
