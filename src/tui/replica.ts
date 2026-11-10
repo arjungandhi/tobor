@@ -18,6 +18,7 @@ export type Block =
 	| { kind: "earlier"; key: string }
 	| { kind: "gap"; key: string; after: number; upTo: number }
 	| { kind: "user"; key: string; text: string }
+	| { kind: "queued"; key: string; text: string; mode: "steer" | "followUp" }
 	| { kind: "assistant"; key: string; text: string; streaming: boolean }
 	| { kind: "thinking"; key: string; text: string; streaming: boolean }
 	| ToolBlock
@@ -62,6 +63,20 @@ function messageOf(entry: EntryRecord): Message | undefined {
 /** `pi.live` of a view (empty when absent). */
 export function liveOf(docs: WatchValue["docs"] | undefined): LiveState {
 	return (docs?.["pi.live"] ?? {}) as LiveState;
+}
+
+/** Messages waiting in `pi.inbox` (internal `write` items excluded). */
+function queuedOf(docs: WatchValue["docs"] | undefined): Array<{ id: string; mode: "steer" | "followUp"; content: Message["content"] }> {
+	type Item = { id?: unknown; mode?: unknown; content?: Message["content"] };
+	const items = docs?.["pi.inbox"]?.items;
+	if (!Array.isArray(items)) return [];
+	const queued: Array<{ id: string; mode: "steer" | "followUp"; content: Message["content"] }> = [];
+	for (const item of items as Item[]) {
+		if (item?.mode !== "steer" && item?.mode !== "followUp") continue;
+		if (typeof item.id !== "string") continue;
+		queued.push({ id: item.id, mode: item.mode, content: item.content });
+	}
+	return queued;
 }
 
 /** Sum `pi.usage.models` into tokens and USD. */
@@ -188,6 +203,7 @@ export function deriveBlocks(
 		const { reason, detail, taskId } = live.runFailure;
 		blocks.push({ kind: "notice", key: `fail:${taskId}`, level: "error", text: `run ended without an answer: ${reason}${detail ? ` — ${detail}` : ""}` });
 	}
+	for (const item of queuedOf(docs)) blocks.push({ kind: "queued", key: `q:${item.id}`, text: textOf(item.content), mode: item.mode });
 	return blocks;
 }
 
