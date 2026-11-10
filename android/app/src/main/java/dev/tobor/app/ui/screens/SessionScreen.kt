@@ -26,8 +26,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -55,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EntryRecord
+import dev.tobor.app.api.PatchSessionRequest
 import dev.tobor.app.api.PendingApproval
 import dev.tobor.app.api.SessionDetail
 import dev.tobor.app.api.ToborApi
@@ -234,8 +239,51 @@ fun SessionScreen(
     var composeError by remember(sessionId) { mutableStateOf<String?>(null) }
     var steerMode by remember(sessionId) { mutableStateOf("steer") }
 
+    var showMenu by remember(sessionId) { mutableStateOf(false) }
+    var confirmDelete by remember(sessionId) { mutableStateOf(false) }
+
     val title = if (isWorker == true) "worker · $sessionId"
     else (detail?.title?.takeIf { it.isNotBlank() } ?: "session").lowercase()
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            containerColor = ToborColors.raised,
+            title = {
+                Text("delete session", fontFamily = Righteous, fontSize = 18.sp, color = ToborColors.gold)
+            },
+            text = {
+                Text(
+                    "Delete session %03d “%s”? This cannot be undone.".format(sessionId, title),
+                    fontFamily = CourierPrime,
+                    fontSize = 13.sp,
+                    color = ToborColors.fg,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        scope.launch {
+                            try {
+                                api.deleteSession(sessionId)
+                                onBack()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                error = e.brief()
+                            }
+                        }
+                    },
+                ) { Text("delete", fontFamily = Righteous, color = ToborColors.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text("cancel", fontFamily = Righteous, color = ToborColors.muted)
+                }
+            },
+        )
+    }
 
     Column(
         Modifier
@@ -295,6 +343,48 @@ fun SessionScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                 ) {
                     Text("abort", fontFamily = SpecialElite, fontSize = 12.sp)
+                }
+            }
+            if (isWorker == false) {
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "more", tint = ToborColors.muted)
+                    }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (detail?.archived == true) "unarchive" else "archive",
+                                    fontFamily = SpecialElite,
+                                    fontSize = 13.sp,
+                                    color = ToborColors.fg,
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                val archive = detail?.archived != true
+                                scope.launch {
+                                    try {
+                                        api.patchSession(sessionId, PatchSessionRequest(archived = archive))
+                                        onBack()
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        error = e.brief()
+                                    }
+                                }
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text("delete", fontFamily = SpecialElite, fontSize = 13.sp, color = ToborColors.error)
+                            },
+                            onClick = {
+                                showMenu = false
+                                confirmDelete = true
+                            },
+                        )
+                    }
                 }
             }
             Box(Modifier.padding(end = 4.dp))
