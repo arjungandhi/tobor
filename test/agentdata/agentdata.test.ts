@@ -157,6 +157,17 @@ describe("AgentData files", () => {
 });
 
 describe("AgentData self-edits", () => {
+	it("never stages state/, even when .gitignore does not list it", async () => {
+		await mkdir(join(dir, "state"), { recursive: true });
+		await writeFile(join(dir, "state", "auth.json"), "{}");
+		await data.watch();
+		await writeFile(join(dir, "AGENTS.md"), "# node\n");
+		await until(() => events.length > 0);
+		expect(git("ls-files")).not.toMatch(/state/);
+		expect(git("show", "--stat", "--format=%s", "HEAD")).not.toMatch(/state/);
+		expect(await readFile(join(dir, "state", "auth.json"), "utf8")).toBe("{}");
+	});
+
 	it("commits agent edits as agent: <paths>", async () => {
 		await data.watch();
 		await writeFile(join(dir, "AGENTS.md"), "# node\n");

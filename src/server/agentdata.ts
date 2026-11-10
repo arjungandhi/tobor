@@ -176,7 +176,7 @@ export class AgentData implements AgentDataService {
 
 	/** Validate and commit uncommitted changes (made outside `write`/`remove`); revert the invalid ones. */
 	private async sweep(): Promise<void> {
-		const changed = await this.changedPaths();
+		const changed = (await this.changedPaths()).filter((rel) => !isStatePath(rel));
 		if (changed.length === 0) return;
 		const ctx = { home: this.o.home, toborDir: this.dir };
 		const good: string[] = [];
@@ -229,7 +229,8 @@ export class AgentData implements AgentDataService {
 
 	/** Paths with uncommitted changes (worktree or index), relative to `.tobor/`. */
 	private async changedPaths(): Promise<string[]> {
-		const out = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+		// `state/` is excluded at the git level, so editing `.gitignore` can never expose it to the sweep.
+		const out = await this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude)state"]);
 		const fields = out.split("\0");
 		const paths = new Set<string>();
 		for (let i = 0; i < fields.length; i++) {
@@ -244,7 +245,9 @@ export class AgentData implements AgentDataService {
 	}
 
 	/** Stage and commit exactly `rels`; returns the new HEAD (or the current one when nothing changed). */
-	private async commit(rels: string[], message: string): Promise<string> {
+	private async commit(all: string[], message: string): Promise<string> {
+		const rels = all.filter((rel) => !isStatePath(rel));
+		if (rels.length === 0) return (await this.git(["rev-parse", "HEAD"]).catch(() => "")).trim();
 		await this.git(["add", "-A", "--", ...rels]);
 		const staged = await this.git(["diff", "--cached", "--name-only", "-z", "--", ...rels]);
 		if (staged === "") return (await this.git(["rev-parse", "HEAD"]).catch(() => "")).trim();
@@ -311,6 +314,11 @@ export class AgentData implements AgentDataService {
 		this.queue = next.catch(() => {});
 		return next;
 	}
+}
+
+/** The top-level `state/` (node state): never staged, committed or swept, whatever `.gitignore` says. */
+function isStatePath(rel: string): boolean {
+	return rel === "state" || rel.startsWith("state/");
 }
 
 /** The value at a dotted key path. */
