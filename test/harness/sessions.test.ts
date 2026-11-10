@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../../src/api/types.js";
 import { type BootedHost, boot } from "../../src/server/harness/boot.js";
 import { DIRECTOR_RULES, PREAMBLE } from "../../src/server/harness/sections.js";
-import { deriveState, summarizeUsage, titleFromPrompt } from "../../src/server/harness/sessions.js";
+import { deriveState, type SessionIndex, summarizeUsage, titleFromPrompt } from "../../src/server/harness/sessions.js";
 import { SessionDoc } from "../../src/docs.js";
 import { entryText, fakeBash, fauxModels, tempHome } from "./helpers.js";
 
@@ -33,6 +33,8 @@ type Started = {
 	states: { id: number; state: SessionState }[];
 	reachedState(id: number, state: SessionState): Promise<void>;
 	settle(submissionId: number): Promise<SettledSubmissionRecord>;
+	/** Resolves once every title attempt started so far has finished. */
+	titlesSettled(): Promise<void>;
 };
 
 async function start(): Promise<Started> {
@@ -54,7 +56,8 @@ async function start(): Promise<Started> {
 	};
 	const settle = async (submissionId: number) =>
 		(await host.harness.submission(submissionId as SubmissionId, ctx))!.wait(ctx);
-	return { home, root, host, script: faux.script, scriptTitle: faux.scriptTitle, states, reachedState, settle };
+	const titlesSettled = () => (host.sessions as SessionIndex).titlesSettled();
+	return { home, root, host, script: faux.script, scriptTitle: faux.scriptTitle, states, reachedState, settle, titlesSettled };
 }
 
 describe("pure helpers", () => {
@@ -313,7 +316,6 @@ describe("system prompt sections", () => {
 			};
 			return { step, seen, called: called.promise };
 		}
-		const quiet = () => new Promise<void>((r) => setTimeout(r, 60));
 
 		it("replaces the prompt title with a cleaned model title after the first idle", async () => {
 			const t = await start();
@@ -334,9 +336,12 @@ describe("system prompt sections", () => {
 
 			// Later exchanges never retitle.
 			t.script([fauxAssistantMessage("again")]);
-			t.scriptTitle([titleStep("Something else").step]);
+			const second = titleStep("Something else");
+			t.scriptTitle([second.step]);
 			await t.settle((await t.host.sessions.input(id, { content: "more", mode: "follow_up", requestId: "r2" })).submissionId);
-			await quiet();
+			await vi.waitFor(() => expect(t.states.filter((s) => s.id === id && s.state === "idle").length).toBeGreaterThanOrEqual(2));
+			await t.titlesSettled();
+			expect(second.seen).toEqual([]);
 			expect((await t.host.sessions.get(id))?.title).toBe("Reply with pong");
 		});
 
@@ -352,13 +357,16 @@ describe("system prompt sections", () => {
 		it("never overwrites a rename made before the first idle", async () => {
 			const t = await start();
 			const title = titleStep("Model title");
-			t.script([fauxAssistantMessage("done")]);
+			const gate = Promise.withResolvers<void>();
+			t.script([async () => (await gate.promise, fauxAssistantMessage("done"))]);
 			t.scriptTitle([title.step]);
 			const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "work" });
+			// The first reply is held back, so the rename lands before the session can go idle.
 			await t.host.sessions.patch(id, { title: "mine" });
+			gate.resolve();
 			await t.settle(submissionId);
 			await t.reachedState(id, "idle");
-			await quiet();
+			await t.titlesSettled();
 			expect(title.seen).toEqual([]);
 			expect((await t.host.sessions.get(id))?.title).toBe("mine");
 			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).toMatchObject({ titleSource: "user" });
@@ -374,9 +382,10 @@ describe("system prompt sections", () => {
 			await title.called;
 			await t.host.sessions.patch(id, { title: "mine" });
 			gate.resolve();
-			await quiet();
+			await t.titlesSettled();
 			expect((await t.host.sessions.get(id))?.title).toBe("mine");
 			expect((await t.host.sessions.list())[0]?.title).toBe("mine");
+			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).toMatchObject({ titleSource: "user" });
 		});
 
 		it("never retitles a session without a titleSource (it predates titling)", async () => {
@@ -393,7 +402,7 @@ describe("system prompt sections", () => {
 			gate.resolve();
 			await t.settle(submissionId);
 			await t.reachedState(id, "idle");
-			await t.host.sessions.titlesSettled();
+			await t.titlesSettled();
 			expect(title.seen).toEqual([]);
 			expect((await t.host.sessions.get(id))?.title).toBe("old session");
 			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).not.toHaveProperty("titleSource");
@@ -406,7 +415,7 @@ describe("system prompt sections", () => {
 			t.scriptTitle([title.step]);
 			const { id } = await t.host.sessions.create({ cwd: t.root, prompt: "keep me" });
 			await title.called;
-			await quiet();
+			await t.titlesSettled();
 			expect((await t.host.sessions.get(id))?.title).toBe("keep me");
 			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).toMatchObject({ titleSource: "prompt" });
 		});
@@ -419,7 +428,7 @@ describe("system prompt sections", () => {
 			const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "nightly job", kind: "schedule", scheduleId: "s1" });
 			await t.settle(submissionId);
 			await t.reachedState(id, "idle");
-			await quiet();
+			await t.titlesSettled();
 			expect(title.seen).toEqual([]);
 			expect((await t.host.sessions.get(id))?.title).toBe("nightly job");
 		});
