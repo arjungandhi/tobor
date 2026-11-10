@@ -22,6 +22,7 @@ import type {
 	ModelsResponse,
 	PatchSessionRequest,
 	PendingApproval,
+	PendingQuestion,
 	PutToborFileRequest,
 	Schedule,
 	SessionDetail,
@@ -74,6 +75,7 @@ export interface Host {
 	readonly systemConversationId: number;
 	readonly sessions: SessionIndex;
 	readonly approvals: ApprovalService;
+	readonly questions: QuestionService;
 	readonly workers: WorkerService;
 	readonly schedules: ScheduleService;
 	readonly artifacts: ArtifactService;
@@ -160,6 +162,30 @@ export interface ApprovalService {
 		call: { callId: string; tool: string; args: unknown },
 		ctx: Context,
 	): Promise<GateResult>;
+}
+
+/** How an `ask_user` wait ended. */
+export type AskResult = { kind: "answered"; text: string } | { kind: "timeout" } | { kind: "cancelled" };
+
+/** Questions: records in each conversation's `tobor.questions`, waited on with `harness.watchDoc`. */
+export interface QuestionService {
+	/** Every pending question across conversations, oldest first (survives restarts). */
+	pending(): Promise<PendingQuestion[]>;
+	/** Pending questions of one session and its workers. */
+	pendingFor(sessionId: SessionId): Promise<PendingQuestion[]>;
+	/** Find a pending question by call id (the API path carries only `callId`). */
+	find(callId: string): Promise<PendingQuestion | undefined>;
+	/** Commit the operator's answer. Throws 404 if unknown, 409 if already answered. */
+	answer(conversationId: SessionId, callId: string, text: string): Promise<void>;
+	/**
+	 * The `ask_user` tool body: commit a pending record, emit `question.asked`, notify, and wait for an answer, the
+	 * timeout, or `ctx` cancellation. Idempotent per `callId`.
+	 */
+	ask(
+		conversationId: SessionId,
+		call: { callId: string; question: string; options?: string[] },
+		ctx: Context,
+	): Promise<AskResult>;
 }
 
 /** Director-mode workers: background `tobor.worker` holder tasks recorded in the director's `tobor.workers`. */

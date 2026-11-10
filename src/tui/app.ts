@@ -23,6 +23,7 @@ import type {
 	EventsFrame,
 	NodeEvent,
 	PendingApproval,
+	PendingQuestion,
 	SessionId,
 	SessionSummary,
 	WhoamiResponse,
@@ -44,6 +45,7 @@ import {
 } from "./workspaces.js";
 import { COMMANDS, HELP, KEYS, matchesBinding, QuitGate } from "./keys.js";
 import { showApprovals } from "./screens/approvals.js";
+import { showQuestions } from "./screens/questions.js";
 import { showArtifacts } from "./screens/artifacts.js";
 import { showFiles } from "./screens/files.js";
 import { offerSave, showWorkspaces } from "./screens/workspaces.js";
@@ -155,6 +157,7 @@ export class App {
 	whoami: WhoamiResponse | undefined;
 	sessions: SessionSummary[] = [];
 	approvals: PendingApproval[] = [];
+	questions: PendingQuestion[] = [];
 	eventsState: SocketState = "closed";
 	private events: ReconnectingSocket<EventsFrame> | undefined;
 	/** Open modals, bottom to top; `cancel` dismisses one as if Esc was pressed. */
@@ -228,6 +231,7 @@ export class App {
 		this.whoami = undefined;
 		this.sessions = [];
 		this.approvals = [];
+		this.questions = [];
 		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
 		this.events = new ReconnectingSocket<EventsFrame>({
@@ -295,16 +299,23 @@ export class App {
 		return this.workspace ? lastSession(this.statePath, this.workspace.name) : undefined;
 	}
 
-	/** Refetch whoami, sessions and approvals (on connect and after every reconnect; `/api/events` is lossy). */
+	/** Refetch whoami, sessions, approvals and questions (on connect and after every reconnect; `/api/events` is lossy). */
 	async refresh(): Promise<void> {
 		const client = this.client;
 		if (!client) return;
 		try {
-			const [whoami, sessions, approvals] = await Promise.all([client.whoami(), client.sessions(), client.approvals()]);
+			// A node without `ask_user` support has no /api/questions; treat that as no questions.
+			const [whoami, sessions, approvals, questions] = await Promise.all([
+				client.whoami(),
+				client.sessions(),
+				client.approvals(),
+				client.questions().catch(() => []),
+			]);
 			if (client !== this.client) return;
 			this.whoami = whoami;
 			this.sessions = sessions;
 			this.approvals = approvals;
+			this.questions = questions;
 			this.session.rebuild();
 		} catch (err) {
 			if (client === this.client) this.flash(`${this.workspace?.name}: ${(err as Error).message}`);
@@ -330,6 +341,11 @@ export class App {
 		return new Set(this.approvals.filter((a) => a.conversationId === conversationId).map((a) => a.callId));
 	}
 
+	/** Pending `ask_user` questions of one conversation, by call id. */
+	askingCalls(conversationId: SessionId): Set<string> {
+		return new Set(this.questions.filter((q) => q.conversationId === conversationId).map((q) => q.callId));
+	}
+
 	private onEvent(event: NodeEvent): void {
 		switch (event.type) {
 			case "approval.requested": {
@@ -345,6 +361,21 @@ export class App {
 			}
 			case "approval.resolved":
 				this.approvals = this.approvals.filter((a) => !(a.callId === event.callId && a.conversationId === event.conversationId));
+				this.session.rebuild();
+				break;
+			case "question.asked": {
+				const { question } = event;
+				if (!this.questions.some((q) => q.callId === question.callId && q.conversationId === question.conversationId)) {
+					this.questions = [...this.questions, question];
+				}
+				const where = question.worker ? `${question.worker} in #${question.sessionId}` : `#${question.sessionId}`;
+				this.notify(`question from ${where}: ${question.question}`);
+				this.flash(`? question from ${where} · Alt+Shift+U`);
+				this.session.rebuild();
+				break;
+			}
+			case "question.answered":
+				this.questions = this.questions.filter((q) => !(q.callId === event.callId && q.conversationId === event.conversationId));
 				this.session.rebuild();
 				break;
 			case "session.state":
@@ -390,6 +421,17 @@ export class App {
 		const approvals = await client.approvals();
 		if (client !== this.client) return;
 		this.approvals = approvals;
+		this.session.rebuild();
+		this.changed();
+	}
+
+	/** Refetch pending questions only. */
+	async refreshQuestions(): Promise<void> {
+		const client = this.client;
+		if (!client) return;
+		const questions = await client.questions();
+		if (client !== this.client) return;
+		this.questions = questions;
 		this.session.rebuild();
 		this.changed();
 	}
@@ -440,6 +482,8 @@ export class App {
 		}
 		const pending = this.approvals.length;
 		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Alt+Shift+A`));
+		const asked = this.questions.length;
+		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · Alt+Shift+U`));
 		this.status.set(segments, "? help · / commands");
 		s.updateLabel();
 		this.tui.requestRender();
@@ -508,6 +552,7 @@ export class App {
 		}
 		if (matchesBinding(data, KEYS.followUp)) return this.do(() => s.queueFollowUp());
 		if (matchesBinding(data, KEYS.approvals)) return this.do(() => showApprovals(this));
+		if (matchesBinding(data, KEYS.questions)) return this.do(() => showQuestions(this));
 		if (matchesBinding(data, KEYS.workers)) return this.do(() => showWorkers(this));
 		if (matchesKey(data, KEYS.workerTranscript)) return this.do(() => openWorkerTranscript(this));
 		if (matchesBinding(data, KEYS.model)) return this.do(() => pickModel(this));
@@ -536,6 +581,8 @@ export class App {
 				return newSession(this);
 			case "approvals":
 				return showApprovals(this);
+			case "questions":
+				return showQuestions(this);
 			case "workers":
 				return showWorkers(this);
 			case "model":

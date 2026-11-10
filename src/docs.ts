@@ -106,6 +106,40 @@ export const ApprovalsDoc = defineDoc<ApprovalsDocValue>({
 	initial: () => ({ pending: {}, decisions: {}, session: {} }),
 });
 
+// ─── tobor.questions (per conversation, fork: initial) ──────────────────────────────────────────────────────────────
+
+/** The operator's answer (or why there is none). The first answer wins. */
+export type QuestionAnswer = {
+	text: string;
+	decidedAt: number;
+	/** `operator` (API), `timeout` (tool), or `cancelled` (abort while waiting). */
+	reason: "operator" | "timeout" | "cancelled";
+};
+
+/** One `ask_user` call, committed by the tool before it waits; pending until `answer` is set. */
+export type QuestionRecord = {
+	callId: string;
+	conversationId: number;
+	question: string;
+	/** Suggested answers; free text is always allowed. */
+	options?: string[];
+	createdAt: number;
+	/** `createdAt + approval_timeout`; the tool gives up with reason `timeout` after it. */
+	expiresAt: number;
+	/** Worker name when the conversation is a worker. */
+	worker?: string;
+	answer?: QuestionAnswer;
+};
+
+/** Question state of one conversation, keyed by call id. A fork starts empty. */
+export type QuestionsDocValue = { questions: Record<string, QuestionRecord> };
+
+export const QuestionsDoc = defineDoc<QuestionsDocValue>({
+	kind: "tobor.questions",
+	fork: "initial",
+	initial: () => ({ questions: {} }),
+});
+
 // ─── tobor.todo (per conversation) ──────────────────────────────────────────────────────────────────────────────────
 
 /** Todo item status. */
@@ -188,4 +222,4 @@ export const SchedulesDoc = defineDoc<SchedulesDocValue>({
 });
 
 /** Every tobor doc token, for `ToolModule.docs` and inspection. */
-export const TOBOR_DOCS = [SessionsDoc, SessionDoc, ApprovalsDoc, TodoDoc, WorkersDoc, SchedulesDoc] as const;
+export const TOBOR_DOCS = [SessionsDoc, SessionDoc, ApprovalsDoc, QuestionsDoc, TodoDoc, WorkersDoc, SchedulesDoc] as const;

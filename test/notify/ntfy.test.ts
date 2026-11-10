@@ -76,6 +76,16 @@ describe("NtfyNotifier", () => {
 		expect(Buffer.from(title.slice(10, -2), "base64").toString()).toBe("schedule nightly — done");
 	});
 
+	it("styles question notifications and gates them on notify.on", async () => {
+		const on = config(`notify: { ntfy: { url: "${base}", topic: t } }\n`);
+		await new NtfyNotifier({ config: () => on }).send({ event: "question", title: "Question: which db?", message: "which db?" });
+		expect(received[0]?.headers).toMatchObject({ priority: "4", tags: "question" });
+		const off = new NtfyNotifier({ config: () => config(`notify: { ntfy: { url: "${base}", topic: t }, on: [approval] }\n`) });
+		expect(off.enabled("question")).toBe(false);
+		await off.send({ event: "question", title: "x", message: "y" });
+		expect(received).toHaveLength(1);
+	});
+
 	it("is disabled when ntfy is unconfigured or the event is filtered out", async () => {
 		const off = new NtfyNotifier({ config: () => config("") });
 		expect(off.enabled("approval")).toBe(false);

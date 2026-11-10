@@ -12,6 +12,8 @@ import { SessionDoc, SessionsDoc } from "../../src/docs.js";
 import { EventBus } from "../../src/events.js";
 import type { Notification } from "../../src/host.js";
 import { type ScheduleHost, Schedules } from "../../src/server/harness/schedules/service.js";
+import type { QuestionService } from "../../src/host.js";
+import { questionsModule } from "../../src/server/harness/questions/tool.js";
 import { schedulesModule } from "../../src/server/harness/schedules/tools.js";
 import { composeExtension } from "../../src/tools/registry.js";
 
@@ -54,7 +56,7 @@ async function setup() {
 	let host: ScheduleHost | undefined;
 	const schedules = new Schedules(() => host as ScheduleHost);
 	const registry = createRegistry();
-	registry.install(composeExtension("tobor", [schedulesModule(schedules.task, () => schedules)]));
+	registry.install(composeExtension("tobor", [schedulesModule(schedules.task, () => schedules), questionsModule(() => ({}) as QuestionService)]));
 	harness = await Harness.open(new MemoryStorage(), { models, registry }, ctx);
 	const system = await harness.createConversation({ ownership: { kind: "ownerless" } }, ctx);
 	const config = validateConfig({ defaults: { model: "faux/faux-1" } }, cwd).config;
@@ -101,6 +103,21 @@ describe("schedules", () => {
 			"done",
 		]);
 		expect(notes.map((n) => n.title)).toEqual(["schedule ping: done"]);
+	});
+
+	it("withholds ask_user from a scheduled run, since nobody is there to answer", async () => {
+		const { schedules, cwd, h } = await setup();
+		const at = new Date(Date.now() + 150).toISOString();
+		const { id } = await schedules.create({ name: "quiet", at, tz: "UTC", cwd, prompt: "x" });
+		const run = await until(async () => {
+			const r = (await schedules.get(id))?.runs[0];
+			return r?.status === "done" ? r : undefined;
+		});
+		const scheduled = (await h.conversation(run.conversationId as ConversationId, ctx))!;
+		expect((await scheduled.agent(ctx)).tools.map((t) => t.name)).not.toContain("ask_user");
+		// an ordinary conversation still gets it
+		const ordinary = await h.createConversation({ ownership: { kind: "ownerless" } }, ctx);
+		expect((await ordinary.agent(ctx)).tools.map((t) => t.name)).toContain("ask_user");
 	});
 
 	it("skips a one-shot missed by more than the grace", async () => {

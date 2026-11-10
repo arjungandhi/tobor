@@ -32,8 +32,8 @@ export type ApiError = {
 export type OkResponse = { ok: true };
 
 /**
- * Session lifecycle as shown to clients: `waiting` means at least one approval is pending; `working` means the
- * director is idle (no run, no failure) while background workers are still live.
+ * Session lifecycle as shown to clients: `waiting` means at least one approval or `ask_user` question is pending;
+ * `working` means the director is idle (no run, no failure) while background workers are still live.
  */
 export type SessionState = "idle" | "running" | "waiting" | "failed" | "working";
 
@@ -100,7 +100,7 @@ export type SessionSummary = {
 	state: SessionState;
 	/** Present when `state` is `failed`. */
 	failure?: SessionFailure;
-	/** Number of pending approvals (session plus its workers). */
+	/** Number of pending approvals and questions (session plus its workers). */
 	pending: number;
 	usage: UsageSummary;
 	archived: boolean;
@@ -225,6 +225,41 @@ export type DecideApprovalResponse = OkResponse;
 
 /** How a resolved approval ended. */
 export type ApprovalOutcome = ApprovalDecision | "timeout" | "cancelled";
+
+// ─── Questions (`ask_user`) ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** A question the agent asked the operator (from `tobor.questions`) and is waiting on. */
+export type PendingQuestion = {
+	/** Conversation that asked (a session or a worker). */
+	conversationId: SessionId;
+	/** Top-level session the conversation belongs to (equals `conversationId` unless a worker). */
+	sessionId: SessionId;
+	/** Worker name when a worker asked. */
+	worker?: string;
+	/** Model tool call id. */
+	callId: string;
+	question: string;
+	/** Suggested answers; free text is always allowed. */
+	options?: string[];
+	createdAt: Millis;
+	/** When the wait gives up (`createdAt + approval_timeout`). */
+	expiresAt: Millis;
+};
+
+/** `GET /api/questions` → every pending question across conversations, oldest first. */
+export type ListQuestionsResponse = PendingQuestion[];
+
+/** `POST /api/questions/:callId`. `conversationId` disambiguates if two conversations share a call id. */
+export type AnswerQuestionRequest = {
+	answer: string;
+	conversationId?: SessionId;
+};
+
+/** Response to `POST /api/questions/:callId`; a second answer gets 409. */
+export type AnswerQuestionResponse = OkResponse;
+
+/** How a question ended. */
+export type QuestionOutcome = "answered" | "timeout" | "cancelled";
 
 // ─── Workers ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -520,6 +555,10 @@ export type NodeEvent =
 	| { type: "approval.requested"; approval: PendingApproval }
 	/** A pending approval was decided, timed out or cancelled. */
 	| { type: "approval.resolved"; conversationId: SessionId; callId: string; outcome: ApprovalOutcome }
+	/** The agent asked the operator a question (`ask_user`) and is waiting. */
+	| { type: "question.asked"; question: PendingQuestion }
+	/** A pending question was answered, timed out or cancelled. */
+	| { type: "question.answered"; conversationId: SessionId; callId: string; outcome: QuestionOutcome }
 	/** A worker changed state. */
 	| { type: "worker.state"; sessionId: SessionId; worker: WorkerSummary }
 	/** The agent published an artifact revision. */

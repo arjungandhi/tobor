@@ -3,9 +3,10 @@
 import type { Config, NotifyEvent } from "../../config/schema.js";
 import type { Notification, Notifier } from "../../host.js";
 
-/** ntfy priority (1–5) and emoji tags per event; approvals are urgent. */
+/** ntfy priority (1–5) and emoji tags per event; approvals are urgent, questions nearly so. */
 const STYLE: Record<NotifyEvent, { priority: number; tags: string }> = {
 	approval: { priority: 5, tags: "warning,lock" },
+	question: { priority: 4, tags: "question" },
 	error: { priority: 4, tags: "x" },
 	settled: { priority: 3, tags: "white_check_mark" },
 };

@@ -24,6 +24,8 @@ import { ApprovalService, type GatePredicate } from "./approvals.js";
 import { FileCredentialStore } from "./credentials.js";
 import { EnvCache, loadEnvFile } from "./env.js";
 import { createModels } from "./models.js";
+import { QuestionService } from "./questions/service.js";
+import { questionsModule } from "./questions/tool.js";
 import { createSections } from "./sections.js";
 import { SessionIndex } from "./sessions.js";
 
@@ -40,6 +42,7 @@ export type CoreServices = {
 	readonly events: EventBus;
 	readonly sessions: SessionIndex;
 	readonly approvals: ApprovalService;
+	readonly questions: QuestionService;
 	readonly auth: AuthService;
 	readonly credentials: FileCredentialStore;
 	readonly env: EnvCache;
@@ -80,7 +83,7 @@ export type BootOptions = {
 export interface BootedHost extends Host {
 	readonly core: CoreServices;
 	/**
-	 * Cancel `ctx` and release resources. With approvals pending the Harness is left open (closing would settle their
+	 * Cancel `ctx` and release resources. With approvals or questions pending the Harness is left open (closing would settle their
 	 * waits), so the process must exit right after; otherwise the Harness is closed.
 	 */
 	shutdown(): Promise<"closed" | "left_open">;
@@ -111,6 +114,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		mcpNeedsApproval: () => plugged.mcp && ((tool: string) => plugged.mcp!.needsApproval(tool)),
 		gates: plugins.gates ?? {},
 	});
+	const questions = new QuestionService({ events, config: getConfig, notify: () => plugged.notify });
 	const coreModule: ToolModule = {
 		tools: [],
 		sections: createSections(paths),
@@ -119,7 +123,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 	};
 	const registry = createRegistry();
 	const installTools = (extra: readonly ToolModule[]) =>
-		registry.install(composeExtension("tobor", [coreModule, ...plugins.modules, ...extra]));
+		registry.install(composeExtension("tobor", [coreModule, questionsModule(() => questions), ...plugins.modules, ...extra]));
 	installTools([]);
 
 	const env = new EnvCache({ shellEnv: envVars, idleMs: () => config.defaults.idle });
@@ -137,6 +141,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		BACKGROUND_CONTEXT,
 	);
 	approvals.attach(harness);
+	questions.attach(harness);
 
 	const { context: ctx, cancel } = withCancel(BACKGROUND_CONTEXT);
 	const systemConversationId = await ensureSystemConversation(harness, paths.nodeJson, ctx);
@@ -148,6 +153,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		events,
 		config: getConfig,
 		approvals,
+		questions,
 		ctx,
 	});
 	const auth = new AuthService({ models, credentials, config: getConfig });
@@ -163,6 +169,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		events,
 		sessions,
 		approvals,
+		questions,
 		auth,
 		credentials,
 		env,
@@ -186,6 +193,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		systemConversationId,
 		sessions,
 		approvals,
+		questions,
 		workers: plugged.workers ?? unavailable("workers"),
 		schedules: plugged.schedules ?? unavailable("schedules"),
 		artifacts: plugged.artifacts ?? unavailable("artifacts"),
@@ -213,7 +221,8 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 			auth.cancelLogins();
 			await plugged.mcp?.close().catch(() => {});
 			const pending = await approvals.pending().catch(() => []);
-			if (pending.length > 0) {
+			const asked = await questions.pending().catch(() => []);
+			if (pending.length + asked.length > 0) {
 				await env.cleanup();
 				return "left_open";
 			}

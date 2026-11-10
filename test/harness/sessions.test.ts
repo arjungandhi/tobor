@@ -62,7 +62,7 @@ async function start(): Promise<Started> {
 }
 
 describe("pure helpers", () => {
-	it("derives state from pi.live and pending approvals", () => {
+	it("derives state from pi.live and pending approvals or questions", () => {
 		const run = { taskId: 1, inputs: [], turns: 0 } as unknown as NonNullable<LiveState["run"]>;
 		const failure = { taskId: 1, inputs: [], reason: "model_error", detail: "boom" } as unknown as NonNullable<LiveState["runFailure"]>;
 		expect(deriveState(undefined, 0, 0)).toEqual({ state: "idle" });
@@ -210,6 +210,26 @@ describe("SessionIndex", () => {
 		expect(t.states.filter((s) => s.id === id).map((s) => s.state)).toEqual(["running", "waiting", "running", "idle"]);
 	});
 
+	it("reports waiting while an ask_user question is pending", async () => {
+		const t = await start();
+		t.script([
+			fauxAssistantMessage(fauxToolCall("ask_user", { question: "Which database?" }, { id: "call-1" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("ok"),
+		]);
+		const asked = Promise.withResolvers<void>();
+		t.host.events.on("question.asked", () => asked.resolve());
+		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "build it" });
+		await asked.promise;
+		await t.reachedState(id, "waiting");
+		expect((await t.host.sessions.list())[0]).toMatchObject({ state: "waiting", pending: 1 });
+		expect(await t.host.sessions.get(id)).toMatchObject({ state: "waiting", pending: 1 });
+		await t.host.questions.answer(id, "call-1", "sqlite");
+		expect(await t.settle(submissionId)).toMatchObject({ status: "done" });
+		await t.reachedState(id, "idle");
+		expect(t.states.filter((s) => s.id === id).map((s) => s.state)).toEqual(["running", "waiting", "running", "idle"]);
+		expect((await t.host.sessions.get(id))?.pending).toBe(0);
+	});
+
 	it("aborts a running session", async () => {
 		const t = await start();
 		const gate = Promise.withResolvers<void>();
@@ -348,15 +368,73 @@ describe("system prompt sections", () => {
 		expect(text).not.toContain(DIRECTOR_RULES.split("\n")[0]!);
 	});
 
+	describe("ask_user prompt gating", () => {
+		/** The prompt of a session whose model tools are narrowed by `remove` (the way workers and schedule runs lack ask_user). */
+		async function gatedPrompt(mode: "director" | "solo", remove: string[]) {
+			const t = await start();
+			let captured = "";
+			t.script([
+				(context) => {
+					captured = JSON.stringify(context.messages) + JSON.stringify((context as { systemPrompt?: string }).systemPrompt ?? "");
+					return fauxAssistantMessage("ok");
+				},
+			]);
+			const { id } = await t.host.sessions.create({ cwd: t.root, mode });
+			const conversation = (await t.host.harness.conversation(id as ConversationId, ctx))!;
+			const tools = t.host.registry.snapshot().tools().map((x) => x.tool);
+			await conversation.configure({ modelTools: { remove: tools.filter((x) => remove.includes(x.name)) } }, ctx);
+			const submission = await conversation.submit({ type: "input", content: "hi" }, ctx);
+			await t.settle(submission.id);
+			return captured;
+		}
+		const RULE = "ask the user with `ask_user`";
+
+		it("tells sessions that offer ask_user to use it, in the preamble and a guidance section", async () => {
+			const text = await gatedPrompt("solo", []);
+			expect(text).toContain(RULE);
+			expect(text).toContain("Asking the operator");
+		});
+
+		it("says nothing about ask_user when the request does not offer it", async () => {
+			const text = await gatedPrompt("solo", ["ask_user"]);
+			expect(text).toContain(PREAMBLE.split("\n")[0]!);
+			expect(text).not.toContain("ask_user");
+			expect(text).not.toContain("Asking the operator");
+		});
+
+		it("keeps the director rules but drops their ask_user line without the tool", async () => {
+			const withTool = await gatedPrompt("director", []);
+			expect(withTool).toContain("workers cannot ask");
+			const without = await gatedPrompt("director", ["ask_user"]);
+			expect(without).toContain(DIRECTOR_RULES.split("\n")[0]!);
+			expect(without).not.toContain("workers cannot ask");
+			expect(without).not.toContain("ask_user");
+		});
+	});
+
 	it("limits director model tools and restores them in solo", async () => {
 		const t = await start();
 		t.script([fauxAssistantMessage("a")]);
 		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "hi", mode: "director" });
 		await t.settle(submissionId);
 		const conversation = (await t.host.harness.conversation(id as ConversationId, ctx))!;
-		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual([]);
+		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["ask_user"]);
 		await t.host.sessions.patch(id, { mode: "solo" });
-		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["bash"]);
+		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["ask_user", "bash"]);
+	});
+
+	it("never offers ask_user to schedule-kind sessions, whatever the mode", async () => {
+		const t = await start();
+		const names = async (id: number) =>
+			(await (await t.host.harness.conversation(id as ConversationId, ctx))!.agent(ctx)).tools.map((x) => x.name);
+		const solo = await t.host.sessions.create({ cwd: t.root, mode: "solo", kind: "schedule", scheduleId: "s1" });
+		expect(await names(solo.id)).toEqual(["bash"]);
+		await t.host.sessions.patch(solo.id, { mode: "director" });
+		expect(await names(solo.id)).toEqual([]);
+		await t.host.sessions.patch(solo.id, { mode: "solo" });
+		expect(await names(solo.id)).toEqual(["bash"]);
+		const director = await t.host.sessions.create({ cwd: t.root, mode: "director", kind: "schedule", scheduleId: "s2" });
+		expect(await names(director.id)).toEqual([]);
 	});
 
 	describe("generated titles", () => {

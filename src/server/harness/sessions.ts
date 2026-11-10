@@ -44,13 +44,14 @@ import {
 	type SessionIndex as SessionIndexContract,
 } from "../../host.js";
 import { findGitRoot, resolveCwd } from "./env.js";
+import { ASK_USER } from "./questions/tool.js";
 import { generateTitle, resolveTitleModel } from "./titles.js";
 import { isLive } from "./workers/tools.js";
 
 /** Tools the model sees in `director` mode; `artifact_*` tools are added from the registry. */
-export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send", "fetch_url", "web_search"];
+export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send", "fetch_url", "web_search", "ask_user"];
 
-/** What `SessionIndex` reads pending approvals from. */
+/** What `SessionIndex` reads pending approvals and questions from. */
 export type PendingSource = { pending(): Promise<{ sessionId: SessionId }[]> };
 
 /** Dependencies of `SessionIndex`. */
@@ -62,13 +63,14 @@ export type SessionIndexOptions = {
 	events: EventBus;
 	config: () => Config;
 	approvals: PendingSource;
+	questions: PendingSource;
 	/** Node lifetime context. */
 	ctx: Context;
 };
 
 /**
- * Client-facing state of a conversation from its `pi.live` doc, its pending approval count and its live worker count.
- * Precedence: run (`waiting`/`running`) > failure > live workers (`working`) > `idle`.
+ * Client-facing state of a conversation from its `pi.live` doc, its pending approval and question count and its live
+ * worker count. Precedence: run (`waiting`/`running`) > failure > live workers (`working`) > `idle`.
  */
 export function deriveState(
 	live: Readonly<LiveState> | undefined,
@@ -126,10 +128,12 @@ export class SessionIndex implements SessionIndexContract {
 	private readonly titleAbort = new AbortController();
 
 	constructor(private readonly o: SessionIndexOptions) {
-		const onApproval = (conversationId: number) => void this.sessionOf(conversationId).then((id) => this.refresh(id));
+		const onPending = (conversationId: number) => void this.sessionOf(conversationId).then((id) => this.refresh(id));
 		this.unsubscribe.push(
-			o.events.on("approval.requested", (e) => onApproval(e.approval.sessionId)),
-			o.events.on("approval.resolved", (e) => onApproval(e.conversationId)),
+			o.events.on("approval.requested", (e) => onPending(e.approval.sessionId)),
+			o.events.on("approval.resolved", (e) => onPending(e.conversationId)),
+			o.events.on("question.asked", (e) => onPending(e.question.sessionId)),
+			o.events.on("question.answered", (e) => onPending(e.conversationId)),
 			o.events.on("worker.state", (e) => void this.refresh(e.sessionId)),
 		);
 	}
@@ -175,7 +179,7 @@ export class SessionIndex implements SessionIndexContract {
 		const prompt = options.prompt?.trim() ? options.prompt : undefined;
 		const title = titleFromPrompt(prompt ?? "");
 		const systemId = this.o.systemConversationId as ConversationId;
-		const modelTools = this.modelTools(mode);
+		const modelTools = this.modelTools(mode, kind === "schedule");
 		const conversation = await harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
@@ -242,7 +246,10 @@ export class SessionIndex implements SessionIndexContract {
 		const change: { -readonly [K in keyof AgentChange]: AgentChange[K] } = {};
 		if (patch.model !== undefined) change.model = this.modelRef(patch.model);
 		if (patch.thinking !== undefined) change.thinkingLevel = patch.thinking;
-		if (patch.mode !== undefined && patch.mode !== current.mode) change.modelTools = this.modelTools(patch.mode) ?? null;
+		if (patch.mode !== undefined && patch.mode !== current.mode) {
+			const unattended = (await this.index()).sessions[String(id)]?.kind === "schedule";
+			change.modelTools = this.modelTools(patch.mode, unattended) ?? null;
+		}
 		const systemId = this.o.systemConversationId as ConversationId;
 		await this.o.harness.commit(async (tx) => {
 			const session = await tx.doc(SessionDoc, cid);
@@ -473,13 +480,19 @@ export class SessionIndex implements SessionIndexContract {
 		return ref;
 	}
 
-	/** `modelTools` for a mode: the director's list resolved against the registry, unset for `solo`. */
-	private modelTools(mode: SessionMode): ToolRegistration[] | undefined {
-		if (mode !== "director") return undefined;
+	/**
+	 * `modelTools` for a mode: the director's list resolved against the registry, unset for `solo`. `unattended` (schedule
+	 * runs, which nobody is watching) withholds `ask_user`, which would block until the approval timeout.
+	 */
+	private modelTools(mode: SessionMode, unattended = false): ToolRegistration[] | { remove: ToolRegistration[] } | undefined {
+		const tools = this.o.registry.snapshot().tools();
+		if (mode !== "director") {
+			return unattended ? { remove: tools.map((t) => t.tool).filter((t) => t.name === ASK_USER) } : undefined;
+		}
 		const out: ToolRegistration[] = [];
 		const seen = new Set<string>();
-		for (const { tool } of this.o.registry.snapshot().tools()) {
-			if (seen.has(tool.name)) continue;
+		for (const { tool } of tools) {
+			if (seen.has(tool.name) || (unattended && tool.name === ASK_USER)) continue;
 			if (DIRECTOR_TOOLS.includes(tool.name) || tool.name.startsWith("artifact_")) {
 				seen.add(tool.name);
 				out.push(tool);
@@ -490,7 +503,8 @@ export class SessionIndex implements SessionIndexContract {
 
 	private async pendingCounts(): Promise<Map<number, number>> {
 		const counts = new Map<number, number>();
-		for (const p of await this.o.approvals.pending()) counts.set(p.sessionId, (counts.get(p.sessionId) ?? 0) + 1);
+		const pending = await Promise.all([this.o.approvals.pending(), this.o.questions.pending()]);
+		for (const p of pending.flat()) counts.set(p.sessionId, (counts.get(p.sessionId) ?? 0) + 1);
 		return counts;
 	}
 

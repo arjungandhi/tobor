@@ -127,6 +127,19 @@ describe("replica over constructed ops", () => {
 		expect(replica.running).toBe(true);
 	});
 
+	it("marks a call awaiting an ask_user answer, whether its slot is pending or running", () => {
+		const replica = new ConversationReplica(noEntries);
+		replica.snapshot(initialView());
+		const ops = streamingOps();
+		for (const batch of ops) replica.apply(batch);
+		const call = new Set([APPROVAL_CALL]);
+		expect(replica.blocks(undefined, call).at(-1)).toMatchObject({ kind: "tool", status: "question" });
+		expect(replica.blocks(call, call).at(-1)).toMatchObject({ kind: "tool", status: "approval" });
+		expect(replica.blocks(undefined, new Set(["other"])).at(-1)).toMatchObject({ kind: "tool", status: "pending" });
+		const blocks = deriveBlocks([], { "pi.live": { tools: [{ callId: "q", name: "ask_user", status: "running" }] } } as never, new Set(), new Set(["q"]));
+		expect(blocks).toEqual([expect.objectContaining({ kind: "tool", name: "ask_user", status: "question" })]);
+	});
+
 	it("runs the approved tool, then finishes the answer", () => {
 		const replica = new ConversationReplica(noEntries);
 		replica.snapshot(initialView());

@@ -6,6 +6,7 @@ import type { HomePaths } from "../../config/home.js";
 import { SessionDoc } from "../../docs.js";
 import type { Section } from "../../tools/registry.js";
 import { findGitRoot } from "./env.js";
+import { ASK_USER } from "./questions/tool.js";
 
 /** tobor's identity and working style; replaced by `.tobor/SYSTEM.md` when present. */
 export const PREAMBLE = `You are tobor, a coding agent running on the operator's host. You work through tools against the real file system and shell; there is no sandbox.
@@ -16,6 +17,9 @@ Working style:
 - Verify with real commands where it matters, and report only what you observed.
 - Be concise. Lead with the result, then the evidence. Say plainly when something is blocked and why.`;
 
+/** Appended to the default preamble only when this request offers \`ask_user\` (not to workers or unattended runs). */
+export const ASK_USER_RULE = `- When the request is ambiguous, something important is unclear, or options differ materially, ask the user with \`ask_user\` (or end your turn with the question) instead of guessing.`;
+
 /** Director-mode rules, appended to the preamble when the session's mode is `director`. */
 export const DIRECTOR_RULES = `You are a director for one-shot background workers, not a worker. Workers search, edit, run and build; you plan, dispatch and verify.
 - Own the todo list (\`todo\`): keep it current as work is planned, dispatched and verified.
@@ -25,6 +29,9 @@ export const DIRECTOR_RULES = `You are a director for one-shot background worker
 - Verify every result: read the touched files and the worker's output (\`agent_output\`). Re-orient with \`agent_list\`; steer a live worker with \`agent_send\`; stop an obsolete one with \`agent_stop\`. A correction to a finished worker is a new \`task\`.
 - Report only exercised evidence.
 - Pick agents by tier: \`fast\` (mechanical), \`worker\` (judgment), \`scout\` (read-only research), \`reviewer\` (read-only review).`;
+
+/** Director rule that goes with \`ask_user\`; appended after `DIRECTOR_RULES` when this request offers the tool. */
+export const DIRECTOR_ASK_RULE = `- When the request is ambiguous or options differ materially, ask the user with \`ask_user\` before dispatching; workers cannot ask.`;
 
 /** Guidance for tobor's own tools: hashline read/edit and artifacts. */
 export const TOOLS_GUIDANCE = `Reading and editing files:
@@ -116,8 +123,12 @@ export function createSections(paths: HomePaths): Section[] {
 	return [
 		section("preamble", async (input, ctx) => {
 			const session = await input.read.snapshot(SessionDoc, input.conversationId, ctx);
-			const base = (await readText(paths.systemMd))?.trim() || PREAMBLE;
-			return session?.mode === "director" && !session.worker ? `${base}\n\n${DIRECTOR_RULES}` : base;
+			const custom = (await readText(paths.systemMd))?.trim();
+			// `agent.tools` is what this request offers: workers and schedule runs have no `ask_user`, so they are not told to use it.
+			const asks = input.agent.tools.some((t) => t.name === ASK_USER);
+			const base = custom || (asks ? `${PREAMBLE}\n${ASK_USER_RULE}` : PREAMBLE);
+			if (session?.mode !== "director" || session.worker) return base;
+			return `${base}\n\n${DIRECTOR_RULES}${asks ? `\n${DIRECTOR_ASK_RULE}` : ""}`;
 		}),
 		section("append_system", async (input) => {
 			const project = await projectDir(input.agent.cwd);

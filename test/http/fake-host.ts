@@ -59,6 +59,7 @@ export function fakeHost(results: Record<string, unknown> = {}) {
 		ctx: BACKGROUND_CONTEXT,
 		sessions: service("sessions"),
 		approvals: service("approvals"),
+		questions: service("questions"),
 		workers: service("workers"),
 		schedules: service("schedules"),
 		artifacts: service("artifacts"),

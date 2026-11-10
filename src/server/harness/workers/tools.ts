@@ -16,8 +16,8 @@ import { selectTools } from "./agents.js";
 import { assistantText, createWorkerHolder, type WorkerInput } from "./holder.js";
 import { workerSummary } from "./service.js";
 
-/** Director-only tools; never offered to workers. */
-export const DIRECTOR_TOOLS = ["task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send"] as const;
+/** Tools never offered to workers: the director's, and `ask_user` (workers report to the director, not the operator). */
+export const DIRECTOR_TOOLS = ["task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send", "ask_user"] as const;
 
 /** What the workers module reads from the node, at call time. */
 export type WorkerHost = Pick<Host, "harness" | "config" | "events" | "agentData">;

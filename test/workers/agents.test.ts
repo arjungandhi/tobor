@@ -111,6 +111,10 @@ describe("tool selection", () => {
 		expect(selectTools(available, undefined, DIRECTOR_TOOLS)).toEqual(["read", "bash", "edit", "mcp__gh__list", "mcp__gh__create", "mcp__x__y"]);
 	});
 
+	it("never gives default workers ask_user", () => {
+		expect(selectTools([...available, "ask_user"], undefined, DIRECTOR_TOOLS)).not.toContain("ask_user");
+	});
+
 	it("keeps registry order for listed tools", () => {
 		expect(selectTools(available, ["mcp__gh__*", "read"], DIRECTOR_TOOLS)).toEqual(["read", "mcp__gh__list", "mcp__gh__create"]);
 	});
