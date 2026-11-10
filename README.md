@@ -1,6 +1,6 @@
 # tobor
 
-A self-hosted remote agent harness. Each host runs one tobor node: a Node process embedding
+A self-hosted remote agent harness. Each host runs one tobor node: a Bun process embedding
 [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) as its agent loop and serving an
 HTTP+WS API. Clients (the TUI first) start, watch, steer, approve, abort and schedule durable sessions on that host.
 Tools: hashline `read`/`edit`, `write`, `bash`, artifacts, schedules, `todo`, director workers (`.tobor/agents/*.md`:
@@ -9,10 +9,11 @@ network (e.g. Tailscale). Design: [`design_doc_v3.md`](design_doc_v3.md).
 
 ## Quickstart
 
-Requires Node ≥ 22.19 and git; Chrome/Chromium enables artifact PDFs.
+Requires git; Chrome/Chromium enables artifact PDFs. Building needs Bun ≥ 1.4.4; the result is a single
+self-contained binary (no Bun or node_modules needed to run it).
 
 ```
-npm install && npm run build && npm link   # puts `tobor` (dist/cli.js) on PATH
+bun install && bun run build && cp dist/tobor ~/.local/bin/   # dist/tobor: single-file binary
 export TOBOR_HOME=~/.local/share/tobor     # or --home DIR on every command
 tobor init                   # $TOBOR_HOME, the .tobor/ git repo (config.yml, agents/, skills/), node.json
 $EDITOR $TOBOR_HOME/.tobor/config.yml     # roots: directories sessions may start in
@@ -69,16 +70,20 @@ sets `default`). Runtime state (last open session per workspace) lives in `$XDG_
 ## systemd (user unit)
 
 One template unit runs any number of nodes, each with its own `TOBOR_HOME` and ports (set in that home's `.tobor/config.yml`):
-copy `contrib/tobor@.service` to `~/.config/systemd/user/`, write `~/.config/tobor/nodes/<name>.env` per node
-(see `contrib/nodes/example.env`), then `systemctl --user enable --now tobor@<name>`
+copy `contrib/tobor@.service` to `~/.config/systemd/user/` (it runs `~/.local/bin/tobor node`), write
+`~/.config/tobor/nodes/<name>.env` per node (see `contrib/nodes/example.env`), then `systemctl --user enable --now tobor@<name>`
 (plus `loginctl enable-linger $USER` to run without a login session).
 
 ## Development
 
 ```
-npm run typecheck            # tsc --noEmit
-npm test                     # vitest run
-npm run build                # tsc → dist/, then copies artifact themes/vendor and the init skeleton
-npm run dev:node -- --home /tmp/tobor-dev
-ANTHROPIC_API_KEY=… node --import tsx test/integration/smoke.ts   # real-model end-to-end smoke (after build)
+bun run typecheck            # tsc --noEmit
+bun run test                 # vitest run (under Bun)
+bun run build                # gen:assets, then bun build --compile → dist/tobor (build:arm64 → dist/tobor-arm64)
+bun run dev node --home /tmp/tobor-dev   # run from source
+ANTHROPIC_API_KEY=… bun test/integration/smoke.ts   # real-model end-to-end smoke (after build)
 ```
+
+The binary embeds `package.json`, the init skeleton and the artifact themes/vendor (`build/gen-assets.ts` globs them
+into `build/assets.generated.ts`); on first run it extracts them to `$XDG_CACHE_HOME/tobor/assets/<hash>/` and points
+`$TOBOR_ASSET_ROOT` there. From source the files are read in place.

@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 EnvironmentFile=%h/.config/tobor/nodes/%i.env
-ExecStart=/usr/bin/env tobor node
+ExecStart=%h/.local/bin/tobor node
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30
