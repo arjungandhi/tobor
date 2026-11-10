@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import {
 	type Component,
+	decodeKittyPrintable,
 	type Focusable,
 	Input,
 	isFocusable,
@@ -60,7 +61,7 @@ export class Panel implements Component, Focusable {
 	private _focused = false;
 	private lines: string[];
 	private readonly child: Component | undefined;
-	private readonly hint: string;
+	private hint: string;
 	private readonly onKey: ((data: string) => boolean) | undefined;
 
 	constructor(
@@ -84,6 +85,11 @@ export class Panel implements Component, Focusable {
 
 	get capturesViewportInput(): boolean {
 		return this.child?.capturesViewportInput ?? false;
+	}
+
+	/** Replace the bottom-border hint. */
+	setHint(hint: string): void {
+		this.hint = hint;
 	}
 
 	/** Replace the body lines. */
@@ -142,6 +148,8 @@ export class App {
 	private modals: { handle: OverlayHandle; cancel: () => void }[] = [];
 	private exit: ((code: number) => void) | undefined;
 	private readonly quitGate = new QuitGate();
+	/** When the last bare Left press happened on an empty composer (for the ←← sessions gesture). */
+	private lastLeft = 0;
 	/** Generation whose initial session/picker was already opened (connect and the first events open both try). */
 	private initialOpened = 0;
 	private generation = 0;
@@ -459,6 +467,16 @@ export class App {
 		}
 		if (composer.isShowingAutocomplete()) return false;
 		const empty = composer.getText() === "";
+		if (empty && matchesKey(data, "left")) {
+			const now = Date.now();
+			if (this.lastLeft > 0 && now - this.lastLeft <= 500) {
+				this.lastLeft = 0;
+				return this.do(() => showSessions(this));
+			}
+			this.lastLeft = now;
+			return false;
+		}
+		this.lastLeft = 0;
 		if (matchesKey(data, KEYS.navigate) && empty) return s.moveSelection(0);
 		if (matchesKey(data, KEYS.help) && empty) return this.do(() => this.help());
 		if (matchesBinding(data, KEYS.exit) && empty) {
@@ -576,16 +594,12 @@ export class App {
 		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number } = {},
 	): Promise<Picked<T> | undefined> {
 		const { promise, resolve } = Promise.withResolvers<Picked<T> | undefined>();
-		const selectItems: SelectItem[] = items.map((item, i) => ({
+		const entries: SelectItem[] = items.map((item, i) => ({
 			value: String(i),
 			label: item.label,
 			...(item.description === undefined ? {} : { description: item.description }),
 		}));
-		const list = new SelectList(selectItems, this.listRows(options.lines?.length ?? 0), selectListTheme, {
-			minPrimaryColumnWidth: 12,
-			maxPrimaryColumnWidth: 48,
-		});
-		if (options.selected !== undefined) list.setSelectedIndex(options.selected);
+		const rows = this.listRows(options.lines?.length ?? 0);
 		let close = (): void => {};
 		const finish = (result: Picked<T> | undefined): void => {
 			close();
@@ -596,15 +610,72 @@ export class App {
 			const picked = item ? items[Number(item.value)] : undefined;
 			finish(picked ? { key, value: picked.value } : items.length === 0 ? { key } : undefined);
 		};
-		list.onSelect = () => chosen("enter");
-		list.onCancel = () => finish(undefined);
+		// SelectList has no setItems and its setFilter is a prefix match on value, so a filter rebuilds the list from
+		// the matching entries; their values stay the original indexes, so a choice maps back to `items`.
+		const makeList = (shown: SelectItem[]): SelectList => {
+			const next = new SelectList(shown, rows, selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
+			next.onSelect = () => chosen("enter");
+			next.onCancel = () => finish(undefined);
+			return next;
+		};
+		let list = makeList(entries);
+		if (options.selected !== undefined) list.setSelectedIndex(options.selected);
+		const child: Component = {
+			get capturesViewportInput() {
+				return list.capturesViewportInput;
+			},
+			render: (width) => list.render(width),
+			handleInput: (data) => list.handleInput(data),
+			handleMouse: (event) => list.handleMouse(event),
+			invalidate: () => list.invalidate(),
+		};
+		const baseHint = `${options.hint ?? "Enter select · Esc close"}${items.length === 0 ? "" : " · / filter"}`;
+		let query: string | undefined;
+		const refilter = (): void => {
+			if (query === undefined) {
+				list = makeList(entries);
+				panel.setHint(baseHint);
+			} else {
+				const needle = query.toLowerCase();
+				list = makeList(entries.filter((e) => `${e.label} ${e.description ?? ""}`.toLowerCase().includes(needle)));
+				panel.setHint(`/${query}▏ · Enter select · Esc ${query === "" ? "close" : "clear filter"}`);
+			}
+			this.tui.requestRender();
+		};
 		const panel = new Panel(title, {
 			lines: items.length === 0 ? [...(options.lines ?? []), c.dim("(none)")] : (options.lines ?? []),
-			child: items.length === 0 ? undefined : list,
-			hint: options.hint ?? "Enter select · Esc close",
+			child: items.length === 0 ? undefined : child,
+			hint: items.length === 0 ? (options.hint ?? "Enter select · Esc close") : baseHint,
 			onKey: (data) => {
 				if (items.length === 0 && (matchesKey(data, "enter") || matchesKey(data, "escape"))) {
 					finish(undefined);
+					return true;
+				}
+				if (query !== undefined) {
+					if (matchesKey(data, "escape")) {
+						if (query === "") finish(undefined);
+						else {
+							query = undefined;
+							refilter();
+						}
+						return true;
+					}
+					if (matchesKey(data, "backspace")) {
+						query = query.slice(0, -1);
+						refilter();
+						return true;
+					}
+					const typed = data.length === 1 && data >= " " && data !== "\x7f" ? data : decodeKittyPrintable(data);
+					if (typed && !isKeyRelease(data)) {
+						query += typed;
+						refilter();
+						return true;
+					}
+					return false;
+				}
+				if (items.length > 0 && data === "/") {
+					query = "";
+					refilter();
 					return true;
 				}
 				const key = options.keys?.find((k) => data === k);

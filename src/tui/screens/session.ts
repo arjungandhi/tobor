@@ -64,7 +64,7 @@ export class SessionScreen {
 		this.composer = new Composer(app.tui);
 		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());
 		this.composer.onSubmit = (text) => this.submitted(text);
-		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L sessions · Ctrl+T workspaces · ? help");
+		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
 	}
 
 	/** Watch a conversation: snapshot then ops; reconnects resume from the replica's window. */
@@ -107,7 +107,7 @@ export class SessionScreen {
 		this.workers = [];
 		this.strip.update([], undefined);
 		this.watchState = "closed";
-		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L sessions · Ctrl+T workspaces · ? help");
+		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
 		this.transcript.update([]);
 	}
 

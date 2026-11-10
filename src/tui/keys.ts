@@ -51,6 +51,7 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["Ctrl+P", "cycle to the next model"],
 	["Ctrl+N", "new session"],
 	["Ctrl+L", "sessions"],
+	["←← (empty composer)", "sessions list"],
 	["Ctrl+T", "switch workspace (saved nodes, with reachability)"],
 	["Ctrl+,", "settings: node defaults, workspaces and TUI preferences"],
 	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],
