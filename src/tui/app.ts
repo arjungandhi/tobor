@@ -462,6 +462,7 @@ export class App {
 				});
 				break;
 			case "session.updated":
+				this.session.onSessionUpdated(event.id, event.deleted);
 				void this.refreshSessions().then(() => this.session.syncTitle(this.sessions));
 				break;
 			case "worker.state":

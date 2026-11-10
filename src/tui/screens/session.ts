@@ -65,6 +65,8 @@ export class SessionScreen {
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
 	private loadingEarlier = false;
 	private answering = false;
+	/** Stale guard for `refreshDetail`/`patch`: the latest detail fetch wins. */
+	private detailFetch = 0;
 	/** Stale guards for `refreshWorkers`: the latest fetch wins, and events newer than a fetch's start win over its result. */
 	private workersFetch = 0;
 	private eventSeq = 0;
@@ -133,6 +135,7 @@ export class SessionScreen {
 		this.detail = undefined;
 		this.replica = undefined;
 		this.workers = [];
+		this.detailFetch++;
 		this.workersFetch++;
 		this.workerStamp.clear();
 		this.strip.update([], undefined);
@@ -216,9 +219,10 @@ export class SessionScreen {
 	private async refreshDetail(): Promise<void> {
 		const target = this.target;
 		if (!target || target.worker) return;
+		const fetchId = ++this.detailFetch;
 		try {
 			const detail = await this.app.api().session(target.id);
-			if (target !== this.target) return;
+			if (target !== this.target || fetchId !== this.detailFetch) return;
 			this.detail = detail;
 			target.title = detail.title;
 		} catch (err) {
@@ -236,6 +240,19 @@ export class SessionScreen {
 		target.title = title;
 		if (this.detail) this.detail = { ...this.detail, title };
 		this.app.changed();
+	}
+
+	/** Apply a `session.updated` event: close the view when the open session was deleted, else refresh its title/detail. */
+	onSessionUpdated(id: SessionId, deleted?: boolean): void {
+		const target = this.target;
+		if (!target || target.id !== id) return;
+		if (deleted) {
+			this.app.flash(`session #${id} was deleted`);
+			this.close();
+			this.app.changed();
+			return;
+		}
+		void this.refreshDetail();
 	}
 
 	/** Refetch the workers of the open session. */
@@ -404,9 +421,12 @@ export class SessionScreen {
 	async patch(req: PatchSessionRequest): Promise<void> {
 		const target = this.target;
 		if (!target || target.worker) throw new Error("no session open");
+		const fetchId = ++this.detailFetch;
 		const detail = await this.app.api().patchSession(target.id, req);
-		target.title = detail.title;
-		if (target === this.target) this.detail = detail;
+		if (target === this.target && fetchId === this.detailFetch) {
+			target.title = detail.title;
+			this.detail = detail;
+		}
 		await this.app.refreshSessions();
 	}
 
