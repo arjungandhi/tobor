@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, extname, join, resolve } from "node:path";
+import { assetPath } from "../assets.js";
 import { DEFAULT_THEME } from "../config/schema.js";
 
 /** A resolved theme: docs, tokens with fonts inlined, Tailwind config, optional logo. */
@@ -25,9 +25,8 @@ function isDir(path: string): boolean {
 	}
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
-/** Root of the non-TS artifact assets (`themes/`, `vendor/`); falls back to `src/artifacts` when running from `dist/`. */
-export const ASSET_ROOT = isDir(join(here, "themes")) ? here : resolve(here, "../../src/artifacts");
+/** Root of the non-TS artifact assets (`themes/`, `vendor/`): this module's dir, or its copy under `$TOBOR_ASSET_ROOT`. */
+export const ASSET_ROOT = assetPath("src/artifacts", new URL(".", import.meta.url));
 /** Built-in themes shipped with tobor. */
 export const BUILTIN_THEMES_DIR = join(ASSET_ROOT, "themes");
 

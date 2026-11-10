@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { assetPath } from "../../assets.js";
 
-/** Skeleton files shipped next to this module (the build must copy them beside the compiled `index.js`). */
+/** Skeleton files shipped next to this module (embedded by build/gen-assets.ts in a compiled binary). */
 const FILES = [
 	"AGENTS.md",
 	"RULES.md",
@@ -16,6 +16,6 @@ const FILES = [
 /** Files `tobor init` writes into `$TOBOR_HOME/.tobor/`, keyed by path relative to it. */
 export function skeletonFiles(): Record<string, string> {
 	const files: Record<string, string> = { "mcp.json": `${JSON.stringify({ servers: {} }, null, "\t")}\n` };
-	for (const path of FILES) files[path] = readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+	for (const path of FILES) files[path] = readFileSync(assetPath(`src/server/skeleton/${path}`, new URL(path, import.meta.url)), "utf8");
 	return files;
 }
