@@ -53,6 +53,9 @@ export class ApiRequestError extends Error {
 	}
 }
 
+/** Request timeout when the body carries image attachments (up to 8 × 5 MB). */
+const UPLOAD_TIMEOUT_MS = 120_000;
+
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /** Typed HTTP client for one node's API. */
@@ -112,7 +115,7 @@ export class ApiClient {
 
 	/** `POST /api/sessions`. */
 	createSession(req: CreateSessionRequest): Promise<CreateSessionResponse> {
-		return this.request("POST", "/api/sessions", req);
+		return this.request("POST", "/api/sessions", req, req.attachments?.length ? UPLOAD_TIMEOUT_MS : undefined);
 	}
 
 	/** `PATCH /api/sessions/:id`. */
@@ -127,7 +130,7 @@ export class ApiClient {
 
 	/** `POST /api/sessions/:id/input`. */
 	input(id: SessionId, req: InputRequest): Promise<InputResponse> {
-		return this.request("POST", `/api/sessions/${id}/input`, req);
+		return this.request("POST", `/api/sessions/${id}/input`, req, req.attachments?.length ? UPLOAD_TIMEOUT_MS : undefined);
 	}
 
 	/** `POST /api/sessions/:id/abort`. */
