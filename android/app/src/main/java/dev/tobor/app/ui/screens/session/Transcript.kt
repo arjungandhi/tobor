@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EntryRecord
 import dev.tobor.app.ui.markdown.MarkdownText
+import dev.tobor.app.ui.markdown.linkifyUrls
 import dev.tobor.app.ui.theme.CourierPrime
 import dev.tobor.app.ui.theme.SpecialElite
 import dev.tobor.app.ui.theme.Tag
@@ -348,6 +350,7 @@ private fun CardShell(
     bodySize: Int = 12,
     onToggle: (() -> Unit)? = null,
     expanded: Boolean = false,
+    linkify: Boolean = false,
 ) {
     val shape = RoundedCornerShape(4.dp)
     Column(
@@ -362,7 +365,7 @@ private fun CardShell(
         header()
         if (expanded && body != null) {
             Text(
-                body,
+                if (linkify) remember(body) { linkifyUrls(body) } else AnnotatedString(body),
                 color = bodyMuted,
                 fontFamily = CourierPrime,
                 fontSize = bodySize.sp,
@@ -396,6 +399,7 @@ private fun ToolResultCard(item: Item.ToolResult) {
         body = clip(item.text.ifEmpty { "(empty)" }, 4000),
         onToggle = { open = !open },
         expanded = open,
+        linkify = true,
     )
 }
 
