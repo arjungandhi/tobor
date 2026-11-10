@@ -7,7 +7,6 @@ import {
 	matchesKey,
 	type OverlayHandle,
 	ProcessTerminal,
-	ScrollView,
 	type SelectItem,
 	SelectList,
 	TuiAltScreen,
@@ -135,12 +134,10 @@ export class App {
 	) {
 		this.tui = new TuiAltScreen(this.terminal, false, undefined, { mouse: true, openUrl: openExternal });
 		this.session = new SessionScreen(this);
-		const scroll = new ScrollView(this.session.transcript, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
-		this.session.scroll = scroll;
 		this.tui.setLayoutRoot(
 			new VStack([
 				{ component: this.band, basis: "auto" },
-				{ component: scroll, basis: 0, grow: 1, minSize: 3 },
+				{ component: this.session.scroll, basis: 0, grow: 1, minSize: 3 },
 				{ component: this.session.strip, basis: "auto", shrink: 1 },
 				{ component: this.session.composer, basis: "auto", shrink: 1, minSize: 3 },
 				{ component: this.status, basis: "auto" },
@@ -388,7 +385,6 @@ export class App {
 	private onInput(data: string): TuiInputListenerResult {
 		if (this.modals.length > 0) return undefined;
 		const consumed = this.handleKey(data);
-		this.session.maybeLoadEarlier();
 		return consumed ? { consume: true } : undefined;
 	}
 

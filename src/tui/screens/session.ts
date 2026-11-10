@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ScrollView } from "@earendil-works/pi-tui";
+import { type Component, ScrollView } from "@earendil-works/pi-tui";
 import type {
 	InputMode,
 	PatchSessionRequest,
@@ -18,6 +18,27 @@ import { c } from "../theme.js";
 import { newSession } from "./new-session.js";
 import { WorkersStrip } from "./workers.js";
 
+/** The transcript's primary scroll view; scrolling up into its top calls `onTop` (to load earlier history). */
+class TranscriptScroll extends ScrollView {
+	constructor(
+		content: Component,
+		private readonly onTop: () => void,
+	) {
+		super(content, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
+	}
+
+	override scrollBy(lines: number): number {
+		const remaining = super.scrollBy(lines);
+		if (lines < 0 && this.scrollTop === 0) this.onTop();
+		return remaining;
+	}
+
+	override scrollToStart(): void {
+		super.scrollToStart();
+		this.onTop();
+	}
+}
+
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
 export type SessionTarget = {
 	id: SessionId;
@@ -30,7 +51,7 @@ export class SessionScreen {
 	readonly transcript = new Transcript();
 	readonly strip = new WorkersStrip();
 	readonly composer: Composer;
-	scroll: ScrollView | undefined;
+	readonly scroll: TranscriptScroll;
 	target: SessionTarget | undefined;
 	detail: SessionDetail | undefined;
 	replica: ConversationReplica | undefined;
@@ -41,6 +62,7 @@ export class SessionScreen {
 
 	constructor(private readonly app: App) {
 		this.composer = new Composer(app.tui);
+		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());
 		this.composer.onSubmit = (text) => this.submitted(text);
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L sessions · Ctrl+T hosts · ? help");
 	}
@@ -71,7 +93,7 @@ export class SessionScreen {
 		this.watch.start();
 		void this.refreshDetail();
 		this.rebuild();
-		this.scroll?.scrollToEnd();
+		this.scroll.scrollToEnd();
 		this.app.changed();
 	}
 
@@ -216,7 +238,7 @@ export class SessionScreen {
 		if (target.worker) throw new Error("worker transcripts are read-only · Esc back");
 		await this.app.api().input(target.id, { content, mode, requestId: randomUUID() });
 		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
-		this.scroll?.scrollToEnd();
+		this.scroll.scrollToEnd();
 	}
 
 	/** Ctrl+S: send the composer text as a steer while running (a prompt when idle). */
@@ -253,7 +275,7 @@ export class SessionScreen {
 	moveSelection(delta: number): boolean {
 		if (!this.transcript.moveSelection(delta)) return false;
 		const line = this.transcript.selectedLine();
-		if (line !== undefined) this.scroll?.scrollTo(Math.max(0, line - 2), { disableFollow: true });
+		if (line !== undefined) this.scroll.scrollTo(Math.max(0, line - 2), { disableFollow: true });
 		this.app.tui.requestRender();
 		return true;
 	}
@@ -261,7 +283,7 @@ export class SessionScreen {
 	/** Leave navigation mode and follow the end again. */
 	clearSelection(): void {
 		this.transcript.clearSelection();
-		this.scroll?.scrollToEnd();
+		this.scroll.scrollToEnd();
 		this.app.tui.requestRender();
 	}
 
@@ -295,9 +317,7 @@ export class SessionScreen {
 	}
 
 	/** Load earlier history when the transcript is scrolled to its top. */
-	maybeLoadEarlier(): void {
-		const scroll = this.scroll;
-		if (!scroll || scroll.isFollowingEnd || scroll.scrollTop > 0) return;
+	private maybeLoadEarlier(): void {
 		if (this.replica?.items[0]?.kind !== "earlier") return;
 		this.app.guard(() => this.loadEarlier());
 	}
