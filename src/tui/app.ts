@@ -40,6 +40,7 @@ import { newSession } from "./screens/new-session.js";
 import { showSchedules } from "./screens/schedules.js";
 import { pickModel, SessionScreen } from "./screens/session.js";
 import { showSessions } from "./screens/sessions.js";
+import { showSettings } from "./screens/settings.js";
 import { openWorkerTranscript, showWorkers } from "./screens/workers.js";
 import { c, selectListTheme } from "./theme.js";
 
@@ -438,6 +439,7 @@ export class App {
 		if (matchesKey(data, KEYS.newSession)) return this.do(() => newSession(this));
 		if (matchesKey(data, KEYS.sessions)) return this.do(() => showSessions(this));
 		if (matchesKey(data, KEYS.contexts)) return this.do(() => showHosts(this));
+		if (matchesKey(data, KEYS.settings)) return this.do(() => showSettings(this));
 		return false;
 	}
 
@@ -472,6 +474,8 @@ export class App {
 				return showLogin(this);
 			case "host":
 				return showHosts(this);
+			case "settings":
+				return showSettings(this);
 			case "help":
 				return this.help();
 			case "quit":
@@ -486,7 +490,7 @@ export class App {
 				return showSessions(this);
 			case "approval": {
 				if (arg !== "ask" && arg !== "auto") throw new Error("usage: /approval ask|auto");
-				if (arg === "auto" && !(await this.confirm("approval mode", ["Switch this session to auto? Tools will run without asking."]))) return;
+				if (arg === "auto" && !(await this.confirmAuto("approval mode", "Switch this session to auto? Tools will run without asking."))) return;
 				return s.patch({ approval_mode: arg });
 			}
 			default:
@@ -602,6 +606,11 @@ export class App {
 			{ lines },
 		);
 		return picked?.value === true;
+	}
+
+	/** Confirm switching to auto approval, unless the `confirm_auto` preference is off. */
+	async confirmAuto(title: string, question: string): Promise<boolean> {
+		return this.config.prefs?.confirm_auto === false || this.confirm(title, [question]);
 	}
 
 	/** A read-only message; resolves when closed. */

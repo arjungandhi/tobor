@@ -13,11 +13,22 @@ export type TuiContext = {
 	lastSession?: number;
 };
 
+/** TUI preferences (`prefs` in tui.json), edited on the settings screen. */
+export type TuiPrefs = {
+	/** Ask before switching a session or the node default to auto approval (default true). */
+	confirm_auto?: boolean;
+	/** Editor command for agent files; overrides `$VISUAL`/`$EDITOR`. */
+	editor?: string;
+	/** Directory artifact PDFs are saved to (default `~/Downloads`). */
+	pdf_dir?: string;
+};
+
 /** Contents of `~/.config/tobor/tui.json`. */
 export type TuiConfig = {
 	/** Name of the active context. */
 	active?: string;
 	contexts: TuiContext[];
+	prefs?: TuiPrefs;
 };
 
 /** `$XDG_CONFIG_HOME/tobor/tui.json`, default `~/.config/tobor/tui.json`. */
@@ -81,7 +92,25 @@ function parseConfig(data: unknown, path: string): TuiConfig {
 		contexts.push(typeof lastSession === "number" ? { name, host, lastSession } : { name, host });
 	}
 	const active = typeof record.active === "string" && contexts.some((x) => x.name === record.active) ? record.active : undefined;
-	return active === undefined ? { contexts } : { active, contexts };
+	const prefs = parsePrefs(record.prefs, path);
+	return { ...(active === undefined ? {} : { active }), contexts, ...(prefs ? { prefs } : {}) };
+}
+
+function parsePrefs(data: unknown, path: string): TuiPrefs | undefined {
+	if (data === undefined) return undefined;
+	if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error(`${path}: prefs must be an object`);
+	const { confirm_auto, editor, pdf_dir } = data as Record<string, unknown>;
+	const prefs: TuiPrefs = {};
+	if (typeof confirm_auto === "boolean") prefs.confirm_auto = confirm_auto;
+	if (typeof editor === "string" && editor !== "") prefs.editor = editor;
+	if (typeof pdf_dir === "string" && pdf_dir !== "") prefs.pdf_dir = pdf_dir;
+	return prefs;
+}
+
+/** Set (or with `undefined`, clear) one preference. */
+export function setPref<K extends keyof TuiPrefs>(config: TuiConfig, key: K, value: TuiPrefs[K] | undefined): TuiConfig {
+	const { [key]: _, ...rest } = config.prefs ?? {};
+	return { ...config, prefs: value === undefined ? rest : { ...rest, [key]: value } };
 }
 
 /** Write the config atomically, creating its directory. */
@@ -99,7 +128,7 @@ export function addOrSelect(config: TuiConfig, input: string, name?: string): Tu
 	if (existing) return { ...config, active: existing.name };
 	let unique = name?.trim() || host;
 	for (let n = 2; config.contexts.some((x) => x.name === unique); n++) unique = `${name?.trim() || host}-${n}`;
-	return { active: unique, contexts: [...config.contexts, { name: unique, host }] };
+	return { ...config, active: unique, contexts: [...config.contexts, { name: unique, host }] };
 }
 
 /** Make the context named `name` active. */
@@ -112,7 +141,7 @@ export function selectContext(config: TuiConfig, name: string): TuiConfig {
 export function removeContext(config: TuiConfig, name: string): TuiConfig {
 	const contexts = config.contexts.filter((x) => x.name !== name);
 	const active = config.active === name ? contexts[0]?.name : config.active;
-	return active === undefined ? { contexts } : { active, contexts };
+	return { ...(active === undefined ? {} : { active }), contexts, ...(config.prefs ? { prefs: config.prefs } : {}) };
 }
 
 /** The active context, if any. */

@@ -13,6 +13,7 @@ import type {
 	EventsFrame,
 	InputRequest,
 	InputResponse,
+	ListAgentsResponse,
 	ListApprovalsResponse,
 	ListArtifactRevisionsResponse,
 	ListArtifactsResponse,
@@ -150,6 +151,11 @@ export class ApiClient {
 	/** `GET /api/models`. */
 	models(): Promise<ModelsResponse> {
 		return this.request("GET", "/api/models");
+	}
+
+	/** `GET /api/agents` (node agents). */
+	agents(): Promise<ListAgentsResponse> {
+		return this.request("GET", "/api/agents");
 	}
 
 	/** `GET /api/auth`. */

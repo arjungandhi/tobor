@@ -5,13 +5,13 @@ import type { ArtifactRevision } from "../../api/types.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
 
-/** `~/Downloads/<project>-<slug>-r<n>.pdf`. */
+/** `<dir>/<project>-<slug>-r<n>.pdf`, by default in `~/Downloads`. */
 export function pdfPath(rev: ArtifactRevision, dir = join(homedir(), "Downloads")): string {
 	const safe = `${rev.projectId}-${rev.slug}-r${rev.revision}`.replace(/[^A-Za-z0-9._-]+/g, "_");
 	return join(dir, `${safe}.pdf`);
 }
 
-/** Artifacts feed: Enter prints the viewer URLs, `p` saves the latest revision's PDF to ~/Downloads, `v` lists revisions. */
+/** Artifacts feed: Enter prints the viewer URLs, `p` saves the latest revision's PDF (prefs `pdf_dir`, default ~/Downloads), `v` lists revisions. */
 export async function showArtifacts(app: App): Promise<void> {
 	const client = app.api();
 	const artifacts = await client.artifacts();
@@ -59,7 +59,8 @@ export async function showArtifacts(app: App): Promise<void> {
 async function downloadPdf(app: App, rev: ArtifactRevision): Promise<void> {
 	app.flash(`rendering PDF of ${rev.title}…`);
 	const bytes = await app.api().download(rev.pdfUrl);
-	const path = pdfPath(rev);
+	const dir = app.config.prefs?.pdf_dir;
+	const path = dir ? pdfPath(rev, dir.replace(/^~(?=\/|$)/, homedir())) : pdfPath(rev);
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, bytes);
 	app.flash(`saved ${path}`);

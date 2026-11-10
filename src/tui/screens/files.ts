@@ -6,7 +6,7 @@ import { ApiRequestError } from "../client.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
 
-/** Agent files: browse `.tobor/`; Enter on a file opens `$EDITOR` on a temp copy and PUTs it back when changed. */
+/** Agent files: browse `.tobor/`; Enter on a file opens the editor (prefs `editor`, `$VISUAL`, `$EDITOR`, vi) on a temp copy and PUTs it back when changed. */
 export async function showFiles(app: App, dir = ""): Promise<void> {
 	const listing = await app.api().file(dir);
 	if (listing.type === "file") return editFile(app, listing.path);
@@ -33,7 +33,7 @@ async function editFile(app: App, path: string): Promise<void> {
 	try {
 		await writeFile(local, file.content);
 		for (;;) {
-			const editor = process.env.VISUAL || process.env.EDITOR || "vi";
+			const editor = app.config.prefs?.editor || process.env.VISUAL || process.env.EDITOR || "vi";
 			const quoted = `'${local.replace(/'/g, "'\\''")}'`;
 			const result = await app.suspend(() => spawnSync(`${editor} ${quoted}`, { stdio: "inherit", shell: true }));
 			if (result.error) throw new Error(`${editor}: ${result.error.message}`);
