@@ -44,6 +44,11 @@ export const TOOLS_GUIDANCE = `Reading and editing files:
 Artifacts:
 - For reports, dashboards and other documents meant to be viewed, create an artifact: \`artifact_create\` scaffolds \`.tobor/artifacts/<slug>/index.html\`, edit it, then \`artifact_publish\` and share the returned URL. \`artifact_export\` renders a PDF.`;
 
+/** Output format for replies; always emitted (unlike the preamble) so clients can render the subset they support. */
+export const OUTPUT_FORMAT = `Output format:
+- Format replies in markdown limited to **bold**, *italic*, \`inline code\`, [text](url) links, # to ### headings, bulleted or numbered lists, and fenced code blocks.
+- Do not use tables, images or HTML; use lists instead of tables.`;
+
 /** Read a text file, or undefined when it is absent or unreadable. */
 async function readText(path: string): Promise<string | undefined> {
 	try {
@@ -138,6 +143,7 @@ export function createSections(paths: HomePaths): Section[] {
 			);
 		}),
 		section("tools", () => TOOLS_GUIDANCE),
+		section("output_format", () => OUTPUT_FORMAT),
 		section("rules", async (input) => {
 			const project = await projectDir(input.agent.cwd);
 			return joinFiles([paths.rulesMd, ...(project ? [join(project.tobor, "RULES.md")] : [])], true);
