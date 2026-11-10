@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EntryRecord
+import dev.tobor.app.ui.markdown.MarkdownText
 import dev.tobor.app.ui.theme.CourierPrime
 import dev.tobor.app.ui.theme.SpecialElite
 import dev.tobor.app.ui.theme.Tag
@@ -303,12 +304,7 @@ private fun AssistantBlock(item: Item.Assistant) {
         }
         item.blocks.forEach { b ->
             when (b) {
-                is Block.Text -> if (b.text.isNotEmpty()) Text(
-                    b.text,
-                    color = ToborColors.fg,
-                    fontFamily = CourierPrime,
-                    fontSize = 14.sp,
-                )
+                is Block.Text -> if (b.text.isNotEmpty()) MarkdownText(b.text)
                 is Block.Thinking -> ThinkingRow(b.text)
                 is Block.Call -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("→ ${b.name}", color = ToborColors.gold, fontFamily = SpecialElite, fontSize = 12.sp)
