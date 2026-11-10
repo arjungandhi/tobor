@@ -289,6 +289,50 @@ describe("system prompt sections", () => {
 		expect(text).not.toContain(DIRECTOR_RULES.split("\n")[0]!);
 	});
 
+	describe("ask_user prompt gating", () => {
+		/** The prompt of a session whose model tools are narrowed by `remove` (the way workers and schedule runs lack ask_user). */
+		async function gatedPrompt(mode: "director" | "solo", remove: string[]) {
+			const t = await start();
+			let captured = "";
+			t.script([
+				(context) => {
+					captured = JSON.stringify(context.messages) + JSON.stringify((context as { systemPrompt?: string }).systemPrompt ?? "");
+					return fauxAssistantMessage("ok");
+				},
+			]);
+			const { id } = await t.host.sessions.create({ cwd: t.root, mode });
+			const conversation = (await t.host.harness.conversation(id as ConversationId, ctx))!;
+			const tools = t.host.registry.snapshot().tools().map((x) => x.tool);
+			await conversation.configure({ modelTools: { remove: tools.filter((x) => remove.includes(x.name)) } }, ctx);
+			const submission = await conversation.submit({ type: "input", content: "hi" }, ctx);
+			await t.settle(submission.id);
+			return captured;
+		}
+		const RULE = "ask the user with `ask_user`";
+
+		it("tells sessions that offer ask_user to use it, in the preamble and a guidance section", async () => {
+			const text = await gatedPrompt("solo", []);
+			expect(text).toContain(RULE);
+			expect(text).toContain("Asking the operator");
+		});
+
+		it("says nothing about ask_user when the request does not offer it", async () => {
+			const text = await gatedPrompt("solo", ["ask_user"]);
+			expect(text).toContain(PREAMBLE.split("\n")[0]!);
+			expect(text).not.toContain("ask_user");
+			expect(text).not.toContain("Asking the operator");
+		});
+
+		it("keeps the director rules but drops their ask_user line without the tool", async () => {
+			const withTool = await gatedPrompt("director", []);
+			expect(withTool).toContain("workers cannot ask");
+			const without = await gatedPrompt("director", ["ask_user"]);
+			expect(without).toContain(DIRECTOR_RULES.split("\n")[0]!);
+			expect(without).not.toContain("workers cannot ask");
+			expect(without).not.toContain("ask_user");
+		});
+	});
+
 	it("limits director model tools and restores them in solo", async () => {
 		const t = await start();
 		t.script([fauxAssistantMessage("a")]);
