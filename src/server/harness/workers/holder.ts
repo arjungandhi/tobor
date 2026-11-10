@@ -160,16 +160,13 @@ export function createWorkerHolder(deps: WorkerHolderDeps = {}): WorkerHolderTas
 				const director = await runtime.conversation(input.directorId, context);
 				if (!director) throw new Error(`director conversation ${input.directorId} missing`);
 				await runtime.commit(async (tx) => {
-					// A follow-up that landed since `await` settled: keep waiting instead of reporting.
+					// Settle on the latest submission: a follow-up that landed since `await` settled is waited for, or reported if it already settled.
 					const newer = (await tx.doc(WorkersDoc, input.directorId)).workers[input.workerId]?.submissionId;
-					if (newer !== undefined && newer !== submissionId && (await settledResult(tx, await tx.submission(newer as SubmissionId))) === undefined) {
-						return { status: "running", checkpoint: { phase: "await", conversationId, submissionId: newer } };
+					const latest = newer ?? submissionId;
+					const result = await settledResult(tx, await tx.submission(latest as SubmissionId));
+					if (result === undefined) {
+						return { status: "running", checkpoint: { phase: "await", conversationId, submissionId: latest } };
 					}
-					const result = (await settledResult(tx, await tx.submission(submissionId as SubmissionId))) ?? {
-						state: "failed" as const,
-						answer: "",
-						reason: "unsettled",
-					};
 					await director.submit(tx, {
 						type: "input",
 						content: reportText(input.name, result.state, result.answer, result.reason),
