@@ -26,17 +26,17 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-/** A newer GitHub release than the running app. [sha256] comes from the release's manifest.json when present. */
+/** A newer GitHub release than the running app. [sha256] comes from the release's manifest.json; it is required. */
 data class UpdateInfo(
     val version: String,
     val apkUrl: String,
-    val sha256: String?,
+    val sha256: String,
     val notes: String?,
 )
 
 /**
  * Self-updater for sideloaded installs: reads GitHub's `releases/latest`, compares the tag to our own versionName,
- * downloads `tobor.apk` (sha256-checked against `manifest.json`) into cache and hands it to the package installer.
+ * downloads `tobor.apk` (sha256-checked against `manifest.json`; fails closed if no checksum is available) into cache and hands it to the package installer.
  *
  * Holds Compose state so screens can observe it; one instance lives in `AppNav`. All failures are logged and surfaced
  * through [status], never thrown.
@@ -148,7 +148,7 @@ class AppUpdater(context: Context) {
         val assets = (release["assets"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         val apk = assets.firstOrNull { it.str("name") == APK_NAME }?.str("browser_download_url") ?: return null
         val manifestUrl = assets.firstOrNull { it.str("name") == "manifest.json" }?.str("browser_download_url")
-        val sha = manifestUrl?.let { runCatching { shaFromManifest(getText(it)) }.getOrNull() }
+        val sha = requireSha(manifestUrl) { getText(it) }
         return UpdateInfo(tag.removePrefix("v"), apk, sha, release.str("body")?.takeIf { it.isNotBlank() })
     }
 
@@ -156,27 +156,11 @@ class AppUpdater(context: Context) {
         val dir = File(app.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val out = File(dir, APK_NAME)
-        val digest = MessageDigest.getInstance("SHA-256")
         val req = Request.Builder().url(info.apkUrl).header("User-Agent", USER_AGENT).build()
         client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) throw IOException("download failed: HTTP ${r.code}")
             val body = r.body ?: throw IOException("empty download")
-            body.byteStream().use { input ->
-                out.outputStream().use { o ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        o.write(buf, 0, n)
-                        digest.update(buf, 0, n)
-                    }
-                }
-            }
-        }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        if (info.sha256 != null && !info.sha256.equals(actual, ignoreCase = true)) {
-            out.delete()
-            throw IOException("checksum mismatch")
+            body.byteStream().use { input -> copyVerified(input, out, info.sha256) }
         }
         return out
     }
@@ -220,6 +204,46 @@ class AppUpdater(context: Context) {
                 if (c != 0) return c
             }
             return 0
+        }
+
+        /**
+         * Resolves the expected sha256 for the APK via [fetch] of the manifest at [manifestUrl]. Fails closed: a missing
+         * manifest, a failed fetch/parse, or no android entry throws, so an unverifiable update is never offered.
+         */
+        internal fun requireSha(manifestUrl: String?, fetch: (String) -> String): String {
+            if (manifestUrl == null) throw IOException("release has no manifest.json; refusing unverified update")
+            val sha = try {
+                shaFromManifest(fetch(manifestUrl))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw IOException("could not read manifest.json; refusing unverified update: ${e.message ?: e.javaClass.simpleName}", e)
+            }
+            if (sha.isNullOrBlank()) throw IOException("manifest.json has no checksum for $APK_NAME; refusing unverified update")
+            return sha
+        }
+
+        /** Copies [input] to [out] and checks its sha256 against [expected]; deletes [out] and throws on mismatch. */
+        internal fun copyVerified(input: java.io.InputStream, out: File, expected: String) {
+            if (expected.isBlank()) {
+                out.delete()
+                throw IOException("no checksum available; refusing unverified update")
+            }
+            val digest = MessageDigest.getInstance("SHA-256")
+            out.outputStream().use { o ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    o.write(buf, 0, n)
+                    digest.update(buf, 0, n)
+                }
+            }
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!expected.trim().equals(actual, ignoreCase = true)) {
+                out.delete()
+                throw IOException("checksum mismatch")
+            }
         }
 
         /** sha256 of the android `tobor.apk` entry in manifest.json, or null. */
