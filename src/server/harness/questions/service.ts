@@ -178,22 +178,24 @@ export class QuestionService implements QuestionServiceContract {
 		};
 		const signal = ctx.abortSignal;
 		const onAbort = () => done.resolve({ kind: "cancelled" });
+		let stopWatch: (() => Promise<void>) | undefined;
 		if (signal?.aborted) onAbort();
 		signal?.addEventListener("abort", onAbort, { once: true });
 		const cancelTimer = this.setTimer(() => done.resolve({ kind: "timeout" }), Math.max(0, expiresAt - this.now()));
-		const watch = await harness.watchDoc(QuestionsDoc, id, BACKGROUND_CONTEXT);
-		if (watch) {
-			check(watch.value);
-			watch.start(async (call) => {
-				if (call.kind === "value") check(call.value);
-			});
-		}
 		try {
+			const watch = await harness.watchDoc(QuestionsDoc, id, BACKGROUND_CONTEXT);
+			if (watch) {
+				stopWatch = async () => void (await watch.stop());
+				check(watch.value);
+				watch.start(async (call) => {
+					if (call.kind === "value") check(call.value);
+				});
+			}
 			return await done.promise;
 		} finally {
 			cancelTimer();
 			signal?.removeEventListener("abort", onAbort);
-			await watch?.stop();
+			await stopWatch?.();
 		}
 	}
 

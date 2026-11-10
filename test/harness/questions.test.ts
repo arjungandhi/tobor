@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, MemoryStorage } from "@earendil-works/pi-durable";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NodeEventType } from "../../src/api/types.js";
 import { validateConfig } from "../../src/config/load.js";
 import { QuestionsDoc, SessionDoc, type WorkerIdentity } from "../../src/docs.js";
@@ -46,6 +46,7 @@ async function setup(notifyOn = true) {
 		events,
 		script,
 		sent,
+		timers,
 		advance(ms: number) {
 			clock += ms;
 			for (const t of [...timers]) {
@@ -172,6 +173,17 @@ describe("QuestionService.ask", () => {
 		expect(await answered).toMatchObject({ callId: "q1", outcome: "cancelled" });
 		expect(await s.harness.snapshot(QuestionsDoc, c.id, ctx)).toMatchObject({ questions: {} });
 		expect(await s.questions.pending()).toEqual([]);
+	});
+
+	it("releases its timer and abort listener when watching the doc fails", async () => {
+		const s = await setup();
+		const c = await s.conversation();
+		const { context } = withCancel(ctx);
+		const removed = vi.spyOn(context.abortSignal!, "removeEventListener");
+		vi.spyOn(s.harness, "watchDoc").mockRejectedValueOnce(new Error("watch failed"));
+		await expect(s.questions.ask(c.id, call("q1"), context)).rejects.toThrow("watch failed");
+		expect(s.timers.size).toBe(0);
+		expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
 	});
 
 	it("a rerun re-attaches to a persisted pending record without asking again", async () => {
