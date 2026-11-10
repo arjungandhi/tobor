@@ -20,7 +20,7 @@ export function builtinSkeleton(): Record<string, string> {
 		"RULES.md": "# Rules\n\n- Ask before destructive operations outside the session's working directory.\n",
 		"config.yml": [
 			"# tobor node config; every key is optional. Edits apply to the next request.",
-			"roots: [~]",
+			'roots: ["~"]',
 			"env_file: agent.env",
 			"listen: 127.0.0.1:7879",
 			"defaults:",

@@ -392,7 +392,7 @@ export class SessionIndex implements SessionIndexContract {
 			conversation.entries({ order: "descending" }, 5, undefined, ctx),
 		]);
 		const createdAt = entry?.createdAt ?? session.createdAt;
-		const stamped = latest.items.map((e) => (e.model?.[0] as { timestamp?: number } | undefined)?.timestamp);
+		const stamped = latest.items.map((e) => e.model?.[0]?.timestamp);
 		const updatedAt = Math.max(createdAt, ...stamped.filter((t): t is number => typeof t === "number"));
 		const { state, failure } = deriveState(live, pending);
 		const summary: SessionSummary = {
