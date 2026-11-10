@@ -1,9 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ApiError } from "../../api/types.js";
+import type { ApiError, ImageAttachment } from "../../api/types.js";
 import { HostError } from "../../host.js";
 
 /** Maximum accepted request body. */
 export const BODY_LIMIT = 1024 * 1024;
+
+/** Most image attachments on one message. */
+export const MAX_ATTACHMENTS = 8;
+
+/** Most decoded bytes of one image attachment (5 MiB). */
+export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+/** Accepted attachment media types. */
+export const IMAGE_MIME_TYPES: readonly ImageAttachment["mimeType"][] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/** Body limit for routes that take attachments: `BODY_LIMIT` for the fields plus the base64 of a full set of images. */
+export const ATTACHMENTS_BODY_LIMIT = BODY_LIMIT + MAX_ATTACHMENTS * Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4;
 
 /** An HTTP-layer failure (bad input, unknown route) answered as an `ApiError`. */
 export class HttpError extends Error {
@@ -129,4 +141,43 @@ export function parseInt10(text: string | null | undefined, name: string): numbe
 	const n = Number(text);
 	if (!Number.isSafeInteger(n)) throw invalid(`${name} is out of range`);
 	return n;
+}
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** Decoded byte length of a base64 string already known to be well formed (length a multiple of 4). */
+function decodedLength(data: string): number {
+	const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+	return (data.length / 4) * 3 - padding;
+}
+
+/**
+ * Optional image attachments: an array of at most `MAX_ATTACHMENTS` `{ type: "image", data, mimeType }` objects, `data`
+ * standard padded base64 (no `data:` prefix) decoding to 1..`MAX_ATTACHMENT_BYTES` bytes, `mimeType` one of
+ * `IMAGE_MIME_TYPES`. An empty array is the same as absent.
+ */
+export function optAttachments(body: Record<string, unknown>, key = "attachments"): ImageAttachment[] | undefined {
+	const v = body[key];
+	if (v === undefined) return undefined;
+	if (!Array.isArray(v)) throw invalid(`${key} must be an array`);
+	if (v.length > MAX_ATTACHMENTS) throw invalid(`${key} must have at most ${MAX_ATTACHMENTS} items`);
+	const out = v.map((item: unknown, i): ImageAttachment => {
+		const at = `${key}[${i}]`;
+		if (typeof item !== "object" || item === null || Array.isArray(item)) throw invalid(`${at} must be an object`);
+		const a = item as Record<string, unknown>;
+		if (a.type !== "image") throw invalid(`${at}.type must be "image"`);
+		const mimeType = a.mimeType;
+		if (typeof mimeType !== "string" || !(IMAGE_MIME_TYPES as readonly string[]).includes(mimeType)) {
+			throw invalid(`${at}.mimeType must be one of ${IMAGE_MIME_TYPES.join(", ")}`);
+		}
+		const data = a.data;
+		if (typeof data !== "string" || data === "" || data.length % 4 !== 0 || !BASE64.test(data)) {
+			throw invalid(`${at}.data must be non-empty base64 without a data: prefix`);
+		}
+		if (decodedLength(data) > MAX_ATTACHMENT_BYTES) {
+			throw invalid(`${at} is larger than ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`);
+		}
+		return { type: "image", data, mimeType: mimeType as ImageAttachment["mimeType"] };
+	});
+	return out.length > 0 ? out : undefined;
 }

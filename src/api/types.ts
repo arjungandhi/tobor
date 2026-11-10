@@ -135,6 +135,16 @@ export type SessionDetail = SessionSummary & {
 	workers: number;
 };
 
+/**
+ * An image sent with a prompt or input. `data` is base64 with no `data:` URI prefix. Limits: at most 8 per message and
+ * 5 MiB decoded per image; violations answer 400.
+ */
+export type ImageAttachment = {
+	type: "image";
+	data: string;
+	mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+};
+
 /** `POST /api/sessions`: create, configure and (when `prompt` is given) submit the first prompt. */
 export type CreateSessionRequest = {
 	/** Must realpath inside a configured root. */
@@ -146,6 +156,8 @@ export type CreateSessionRequest = {
 	mode?: SessionMode;
 	/** First prompt; also seeds the title. Omit for an idle session with no turns. */
 	prompt?: string;
+	/** Images sent with the first prompt. With attachments, `prompt` may be empty (an image-only first message). */
+	attachments?: ImageAttachment[];
 };
 
 /** Response to `POST /api/sessions`. */
@@ -172,7 +184,10 @@ export type InputMode = "prompt" | "steer" | "follow_up";
 
 /** `POST /api/sessions/:id/input`. */
 export type InputRequest = {
+	/** Message text; may be empty when `attachments` is non-empty. */
 	content: string;
+	/** Images sent with the message (max 8, 5 MiB decoded each). */
+	attachments?: ImageAttachment[];
 	mode: InputMode;
 	/** Client-chosen idempotency key; a repeat with the same id returns the same submission. */
 	requestId: string;

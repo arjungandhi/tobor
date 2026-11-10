@@ -14,6 +14,7 @@ import type {
 	CwdsResponse,
 	EntriesQuery,
 	EntriesResponse,
+	ImageAttachment,
 	InputMode,
 	ListSessionsResponse,
 	LoginCodeResponse,
@@ -98,6 +99,8 @@ export type CreateSessionOptions = {
 	mode?: SessionMode;
 	/** First input; seeds the title (first 60 characters). Absent or blank: the session is created idle with no turns. */
 	prompt?: string;
+	/** Images sent with the first input; with them the session is submitted even when `prompt` is blank. */
+	attachments?: ImageAttachment[];
 	/** Default `session`. */
 	kind?: SessionKind;
 	/** With `kind: "schedule"`. */
@@ -125,7 +128,10 @@ export interface SessionIndex {
 	/** Abort (including background workers) and remove from the index. */
 	delete(id: SessionId): Promise<void>;
 	/** Submit input: `prompt`/`follow_up` queue while busy, `steer` uses `whenBusy: "steer"`. Idempotent per `requestId`. */
-	input(id: SessionId, input: { content: string; mode: InputMode; requestId: string }): Promise<{ submissionId: SubmissionId }>;
+	input(
+		id: SessionId,
+		input: { content: string; attachments?: ImageAttachment[]; mode: InputMode; requestId: string },
+	): Promise<{ submissionId: SubmissionId }>;
 	/** Abort the current run and its foreground tasks. */
 	abort(id: SessionId): Promise<void>;
 	/** Start a conversation watch for one socket; the caller sends `value`, then forwards ops, and stops it on close. */

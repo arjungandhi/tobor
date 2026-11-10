@@ -10,8 +10,8 @@ export type RouteContext = {
 	/** Decoded path parameters (`:name`, and `*name` for the rest of the path). */
 	params: Record<string, string>;
 	query: URLSearchParams;
-	/** The JSON body as an object (400 otherwise). */
-	body(): Promise<Record<string, unknown>>;
+	/** The JSON body as an object (400 otherwise); `limit` overrides the default body size cap. */
+	body(limit?: number): Promise<Record<string, unknown>>;
 };
 
 /** A non-200 JSON reply. */
@@ -61,7 +61,7 @@ export class Router {
 					res,
 					params,
 					query: url.searchParams,
-					body: async () => asObject(await readJson(req)),
+					body: async (limit) => asObject(await readJson(req, limit)),
 				};
 				const result = await route.handler(ctx);
 				if (res.headersSent) return;
