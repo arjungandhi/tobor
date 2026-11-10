@@ -67,6 +67,8 @@ export type Config = {
 		mode: SessionMode;
 		/** Live workers per session. */
 		max_workers: number;
+		/** `provider/modelId` for workers whose agent file sets no `model`; unset, workers inherit the director's. */
+		worker_model?: string;
 		/** Idle time (ms) before an env cache entry for a cwd is released. */
 		idle: number;
 		/** Time (ms) before a pending approval is denied with reason `timeout`. */
@@ -76,6 +78,11 @@ export type Config = {
 	retention: { context: number; documents: number };
 	/** MCP settings (node-level only). */
 	mcp: { approval: Record<string, McpApprovalPolicy> };
+	/** Worker agent settings. */
+	agents: {
+		/** Per agent name, a `provider/modelId` replacing the agent file's `model` (a `task` item `model` still wins). */
+		model_overrides: Record<string, string>;
+	};
 	/** Artifact settings. */
 	artifacts: { theme: string };
 };

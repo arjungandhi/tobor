@@ -1,7 +1,7 @@
 import { type ConversationId, defineTool, type EntryId, type EntryRecord, type JsonObject } from "@earendil-works/pi-durable";
 import { arr, int, obj, opt, str } from "@earendil-works/pi-schema";
 import type { AgentDefinition, WorkerState } from "../../../api/types.js";
-import { parseModelRef } from "../../../config/schema.js";
+import { type Config, parseModelRef } from "../../../config/schema.js";
 import { SessionDoc, type WorkerRecord, WorkersDoc } from "../../../docs.js";
 import type { Host } from "../../../host.js";
 import type { ToolModule } from "../../../tools/registry.js";
@@ -15,8 +15,20 @@ export const DIRECTOR_TOOLS = ["task", "wait", "agent_output"] as const;
 /** What the workers module reads from the node, at call time. */
 export type WorkerHost = Pick<Host, "harness" | "config" | "events" | "agentData">;
 
-/** One requested worker, as the `task` tool takes it. */
-export type TaskItem = { agent: string; name?: string; task: string; context?: string };
+/** One requested worker, as the `task` tool takes it. `model` (`provider/modelId`) overrides the agent's. */
+export type TaskItem = { agent: string; name?: string; task: string; context?: string; model?: string };
+
+/**
+ * The model a worker runs: the `task` item's `model`, then `agents.model_overrides[agent]`, then the agent file's
+ * `model`, then `defaults.worker_model`; undefined inherits the director's.
+ */
+export function resolveWorkerModel(
+	item: Pick<TaskItem, "model">,
+	def: Pick<AgentDefinition, "name" | "model">,
+	config: Pick<Config, "agents" | "defaults">,
+): string | undefined {
+	return item.model ?? config.agents.model_overrides[def.name] ?? def.model ?? config.defaults.worker_model;
+}
 
 const LIVE: readonly WorkerState[] = ["starting", "running"];
 
@@ -68,6 +80,7 @@ export function workersModule(host: () => WorkerHost, options: { pollMs?: number
 					name: opt(str({ description: "Short label; default <agent>-<id>" })),
 					task: str({ description: "What to do, with acceptance criteria" }),
 					context: opt(str({ description: "Shared background prepended to the task" })),
+					model: opt(str({ description: "provider/modelId; overrides the agent's model" })),
 				}),
 				{ minItems: 1 },
 			),
@@ -98,10 +111,15 @@ export function workersModule(host: () => WorkerHost, options: { pollMs?: number
 						out.push({ name: label, error: `max_workers (${maxWorkers}) reached; wait for a worker to finish` });
 						continue;
 					}
+					const modelName = resolveWorkerModel(item, def, h.config);
+					const model = modelName === undefined ? undefined : parseModelRef(modelName);
+					if (modelName !== undefined && (!model || !api.models.getModel(model.provider, model.modelId))) {
+						out.push({ name: label, error: `unknown model ${modelName}` });
+						continue;
+					}
 					seq += 1;
 					const id = `w${seq}`;
 					const name = item.name ?? `${def.name}-${id}`;
-					const model = def.model === undefined ? undefined : parseModelRef(def.model);
 					const input: WorkerInput = {
 						workerId: id,
 						name,

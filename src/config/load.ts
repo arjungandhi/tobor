@@ -264,6 +264,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		"allowed_origins",
 		"notify",
 		"defaults",
+		"agents",
 		"retention",
 		"mcp",
 		"artifacts",
@@ -319,7 +320,8 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	}
 
 	const d = root.child("defaults");
-	d.only(["model", "thinking", "approval_mode", "max_turns", "mode", "max_workers", "idle", "approval_timeout"]);
+	d.only(["model", "thinking", "approval_mode", "max_turns", "mode", "max_workers", "worker_model", "idle", "approval_timeout"]);
+	const workerModel = d.model("worker_model");
 	const defaults: Config["defaults"] = {
 		model: d.model("model") ?? DEFAULT_MODEL,
 		thinking: d.oneOf<ThinkingLevel>("thinking", THINKING_LEVELS) ?? "high",
@@ -327,6 +329,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		max_turns: d.positiveInt("max_turns") ?? 100,
 		mode: d.oneOf<SessionMode>("mode", SESSION_MODES) ?? "director",
 		max_workers: d.positiveInt("max_workers") ?? 8,
+		...(workerModel ? { worker_model: workerModel } : {}),
 		idle: d.duration("idle") ?? 30 * UNIT_MS.m!,
 		approval_timeout: d.duration("approval_timeout") ?? 12 * UNIT_MS.h!,
 	};
@@ -341,6 +344,15 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	const mcp = root.child("mcp");
 	mcp.only(["approval"]);
 	const approval = readMcpApproval(mcp.child("approval"));
+
+	const agents = root.child("agents");
+	agents.only(["model_overrides"]);
+	const overrides = agents.child("model_overrides");
+	const modelOverrides: Record<string, string> = {};
+	for (const name of Object.keys(overrides.obj)) {
+		const model = overrides.model(name);
+		if (model !== undefined) modelOverrides[name] = model;
+	}
 
 	const art = root.child("artifacts");
 	art.only(["theme"]);
@@ -360,6 +372,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 			defaults,
 			retention,
 			mcp: { approval },
+			agents: { model_overrides: modelOverrides },
 			artifacts: { theme },
 		},
 		errors,

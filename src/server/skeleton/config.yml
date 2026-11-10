@@ -19,8 +19,11 @@ defaults:
   max_turns: 100
   mode: director                # director | solo
   max_workers: 8
+  # worker_model: anthropic/claude-sonnet-5-5   # workers whose agent file sets no model
   idle: 30m
   approval_timeout: 12h
+
+# agents: { model_overrides: { worker: anthropic/claude-opus-5-5 } }   # beats the agent file, not a task item's model
 
 retention: { context: 30d, documents: 90d }
 # mcp: { approval: { github: { allow: [list_issues], ask: [create_issue] } } }   # (operator)
