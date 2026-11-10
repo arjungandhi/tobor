@@ -81,6 +81,7 @@ internal sealed interface Item {
     data class Divider(override val key: String, val label: String) : Item
     data class LiveTool(override val key: String, val name: String, val status: String, val output: String) : Item
     data class Failure(override val key: String, val reason: String, val detail: String?) : Item
+    data class Queued(override val key: String, val mode: String, val text: String) : Item
 }
 
 // ───────────────────────── parsing ─────────────────────────
@@ -184,6 +185,20 @@ internal fun liveItems(live: JsonObject?): List<Item> {
     return out
 }
 
+/** Pending steer/follow-up messages from docs["pi.inbox"]; "write" items are not user messages and are dropped. */
+internal fun queuedItems(docs: JsonObject?): List<Item> {
+    val items = ((docs?.get("pi.inbox") as? JsonObject)?.get("items") as? JsonArray) ?: return emptyList()
+    return runCatching {
+        items.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val mode = o["mode"].str()
+            if (mode != "steer" && mode != "followUp") return@mapNotNull null
+            val id = o["id"].str() ?: return@mapNotNull null
+            Item.Queued("q:$id", mode, plainText(o["content"]))
+        }
+    }.getOrElse { emptyList() }
+}
+
 // ───────────────────────── composables ─────────────────────────
 
 private fun clip(s: String, max: Int): String =
@@ -205,6 +220,7 @@ internal fun TranscriptItem(item: Item) {
             fontSize = 12.sp,
         )
         is Item.LiveTool -> LiveToolCard(item)
+        is Item.Queued -> QueuedCard(item)
         is Item.Failure -> Column(
             Modifier
                 .fillMaxWidth()
@@ -224,6 +240,32 @@ internal fun TranscriptItem(item: Item) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun QueuedCard(item: Item.Queued) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .alpha(0.6f)
+            .background(ToborColors.raised, RoundedCornerShape(4.dp))
+            .padding(10.dp),
+    ) {
+        Text(
+            "queued · ${if (item.mode == "followUp") "follow-up" else "steer"}",
+            color = ToborColors.subtle,
+            fontFamily = SpecialElite,
+            fontSize = 10.sp,
+        )
+        Text(
+            clip(item.text, 8000),
+            color = ToborColors.muted,
+            fontFamily = CourierPrime,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(top = 2.dp),
+        )
     }
 }
 
