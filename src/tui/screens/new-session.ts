@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { ApprovalMode, SessionMode } from "../../api/types.js";
 import type { App } from "../app.js";
 import { parseNodeConfig, sessionDefaults } from "../node-config.js";
@@ -14,12 +15,13 @@ export async function newSession(app: App, prompt?: string): Promise<void> {
 	if (config.type !== "file") throw new Error("config.yml is a directory");
 	const defaults = sessionDefaults(parseNodeConfig(config.content));
 	const defaultModel = defaults.model ?? models.defaults.model;
-	const mark = (value: string, fallback: string): string => (value === fallback ? DEFAULT : "  ");
+	const mark = (value: string, preset: string): string => (value === preset ? DEFAULT : "  ");
 	const dirs = [...new Set([...cwds.recent, ...cwds.roots])];
+	const machine = app.whoami?.host ?? app.context?.name ?? "node";
 	const cwdPick = await app.pick(
 		"new session · working directory",
 		[
-			...dirs.map((dir) => ({ value: dir, label: dir, description: cwds.roots.includes(dir) ? "root" : "recent" })),
+			...dirs.map((dir) => ({ value: dir, label: `${basename(dir) || dir} @ ${machine}`, description: `${dir} · ${cwds.roots.includes(dir) ? "root" : "recent"}` })),
 			{ value: OTHER, label: "other…", description: "type a path inside a root" },
 		],
 		{ lines: [c.dim(`roots limit where a session starts, not what the agent can touch · roots: ${cwds.roots.join(", ") || "none"}`)] },
