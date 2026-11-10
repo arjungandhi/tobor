@@ -1,9 +1,22 @@
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { paths } from "../src/config/home.js";
 import { migrateHomeLayout } from "../src/config/migrate.js";
+
+// Lets a test fail the rename of the database itself, to simulate a crash after the sidecars moved.
+const failDbRename = vi.hoisted(() => ({ on: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		rename: async (from: string, to: string) => {
+			if (failDbRename.on && from.endsWith("/tobor.sqlite")) throw new Error("simulated crash");
+			return actual.rename(from, to);
+		},
+	};
+});
 
 const exists = (path: string) => stat(path).then(() => true, () => false);
 
@@ -55,6 +68,24 @@ describe("migrateHomeLayout", () => {
 		expect(await readFile(p.nodeJson, "utf8")).toBe("new");
 		expect(await readFile(join(home, "node.json"), "utf8")).toBe("node.json");
 		expect(await readFile(p.auth, "utf8")).toBe("auth.json");
+	});
+
+	it("moves the database last, so a crash mid-migration is finished by the next run", async () => {
+		const home = await legacyHome();
+		const p = paths(home);
+		failDbRename.on = true;
+		try {
+			await expect(migrateHomeLayout(home)).rejects.toThrow("simulated crash");
+		} finally {
+			failDbRename.on = false;
+		}
+		expect(await exists(join(home, "tobor.sqlite"))).toBe(true);
+
+		await migrateHomeLayout(home);
+		for (const name of ["tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm"]) {
+			expect(await exists(join(home, name)), name).toBe(false);
+			expect(await readFile(join(p.stateDir, name), "utf8")).toBe(name);
+		}
 	});
 
 	it("leaves a fresh or missing home untouched", async () => {

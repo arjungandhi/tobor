@@ -6,7 +6,9 @@ import { paths } from "./home.js";
 
 /** Legacy root-level entries that move into `.tobor/state/` (the database sidecars only together with the database). */
 const FILES = ["auth.json", "agent.env", "node.json", "artifacts"] as const;
-const DB_FILES = ["tobor.sqlite", "tobor.sqlite-wal", "tobor.sqlite-shm"] as const;
+/** The database moves last: while it is still at the root a crashed migration stays discoverable and the next run finishes it. */
+const DB_FILES = ["tobor.sqlite-wal", "tobor.sqlite-shm", "tobor.sqlite"] as const;
+const DB = "tobor.sqlite";
 
 /**
  * Move legacy root-level state files of `home` into `.tobor/state/`, each only when the legacy file exists and the new
@@ -18,7 +20,7 @@ export async function migrateHomeLayout(home: string): Promise<void> {
 	const p = paths(home);
 	const moves: string[] = FILES.filter((name) => existsSync(join(home, name)) && !existsSync(join(p.stateDir, name)));
 	// -wal/-shm travel only with their database; a stale sidecar is never paired with a database already at the new location.
-	if (existsSync(join(home, DB_FILES[0])) && !existsSync(p.db)) {
+	if (existsSync(join(home, DB)) && !existsSync(p.db)) {
 		moves.push(...DB_FILES.filter((name) => existsSync(join(home, name)) && !existsSync(join(p.stateDir, name))));
 	}
 	if (moves.length === 0) return;
