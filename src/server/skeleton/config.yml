@@ -6,8 +6,6 @@
 # listen: 127.0.0.1:7879        # (operator)
 # artifacts_listen: 127.0.0.1:7880
 # public_url: http://localhost:7879
-# allowed_hosts: []             # (operator)
-# allowed_origins: []           # (operator)
 # notify:
 #   ntfy: { url: https://ntfy.sh, topic: tobor-change-me }
 #   on: [approval, error, settled]

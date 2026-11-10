@@ -269,8 +269,6 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		"artifacts_listen",
 		"public_url",
 		"artifacts_url",
-		"allowed_hosts",
-		"allowed_origins",
 		"notify",
 		"defaults",
 		"agents",
@@ -300,17 +298,6 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	const artifactsListen = root.listen("artifacts_listen") ?? { host: listen.host, port: listen.port + 1 };
 	const publicUrl = root.url("public_url") ?? `http://${displayHost(listen.host)}:${listen.port}`;
 	const artifactsUrl = root.url("artifacts_url") ?? `http://${displayHost(artifactsListen.host)}:${artifactsListen.port}`;
-
-	let allowedHosts = root.stringList("allowed_hosts");
-	if (!allowedHosts) {
-		const set = new Set<string>([new URL(publicUrl).host, new URL(artifactsUrl).host]);
-		for (const h of ["localhost", "127.0.0.1"]) {
-			set.add(`${h}:${listen.port}`);
-			set.add(`${h}:${artifactsListen.port}`);
-		}
-		allowedHosts = [...set];
-	}
-	const allowedOrigins = root.stringList("allowed_origins") ?? [new URL(publicUrl).origin];
 
 	const notify = root.child("notify");
 	notify.only(["ntfy", "on"]);
@@ -399,8 +386,6 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 			artifacts_listen: artifactsListen,
 			public_url: publicUrl,
 			artifacts_url: artifactsUrl,
-			allowed_hosts: allowedHosts,
-			allowed_origins: allowedOrigins,
 			notify: { ...(ntfy ? { ntfy } : {}), on },
 			defaults,
 			retention,

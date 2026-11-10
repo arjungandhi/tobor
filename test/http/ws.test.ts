@@ -10,11 +10,9 @@ afterEach(async () => {
 	servers = [];
 });
 
-const ORIGIN = "http://localhost:4000";
-
 /** Connect and collect frames; resolves once open (or with the HTTP status on rejection). */
-async function connect(port: number, path: string, origin = ORIGIN) {
-	const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, { origin });
+async function connect(port: number, path: string) {
+	const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
 	const frames: unknown[] = [];
 	const waiters: (() => void)[] = [];
 	ws.on("message", (d) => {
@@ -89,9 +87,8 @@ describe("watch socket", () => {
 		expect(c.frames).toEqual([{ t: "end", reason: "not_found" }]);
 	});
 
-	it("rejects foreign origins, bad from, and unknown paths before upgrading", async () => {
+	it("rejects bad from and unknown paths before upgrading", async () => {
 		const { port } = await start({});
-		expect((await connect(port, "/api/sessions/5/watch", "http://evil.example")).status).toBe(403);
 		expect((await connect(port, "/api/sessions/5/watch?from=%7Bnope")).status).toBe(400);
 		expect((await connect(port, "/api/nope")).status).toBe(404);
 	});

@@ -6,7 +6,6 @@ import type { WatchEnd } from "@earendil-works/chord/watch";
 import { WebSocket, WebSocketServer } from "ws";
 import type { EventsFrame, WatchFrame, WatchWindow } from "../../api/types.js";
 import type { Host } from "../../host.js";
-import { checkRequest } from "./guards.js";
 import { toApiError } from "./json.js";
 
 /** Pause sending while a socket buffers more than this. */
@@ -20,10 +19,8 @@ export class ApiSockets {
 
 	constructor(private readonly host: Host) {}
 
-	/** Handle an HTTP upgrade: guard, route, or reject. */
+	/** Handle an HTTP upgrade: route or reject. */
 	upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-		const failure = checkRequest(req, this.host.config, true);
-		if (failure) return reject(socket, failure.status, failure.error);
 		const url = new URL(req.url ?? "/", "http://local");
 		if (url.pathname === "/api/events") {
 			this.wss.handleUpgrade(req, socket, head, (ws) => this.events(ws));

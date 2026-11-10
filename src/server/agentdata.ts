@@ -22,8 +22,6 @@ export const OPERATOR_ONLY_KEYS = [
 	"defaults.approval_mode",
 	"mcp.approval",
 	"roots",
-	"allowed_origins",
-	"allowed_hosts",
 	"listen",
 	"artifacts_listen",
 ] as const;

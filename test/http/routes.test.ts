@@ -19,19 +19,15 @@ async function api(results: Record<string, unknown> = {}) {
 	return { ...f, port: s.address.port };
 }
 
-const ORIGIN = { origin: "http://localhost:4000" };
-
 describe("guards over HTTP", () => {
-	it("403 on a foreign Host, 403 on a foreign Origin, 415 without JSON", async () => {
+	it("accepts any Host and Origin, 415 without JSON", async () => {
 		const { port, calls } = await api({ "sessions.abort": undefined });
-		expect((await http(port, "GET", "/api/cwds", { headers: { host: "evil.example" } })).status).toBe(403);
+		expect((await http(port, "GET", "/api/cwds", { headers: { host: "evil.example" } })).status).toBe(200);
 		expect((await http(port, "GET", "/api/cwds", { headers: { host: "localhost:4000" } })).status).toBe(200);
-		const evil = await http(port, "POST", "/api/sessions/1/abort", { body: {}, headers: { origin: "http://evil.example" } });
-		expect(evil).toMatchObject({ status: 403, body: { code: "forbidden_origin" } });
 		const text = await http(port, "POST", "/api/sessions/1/abort", { body: "x", headers: { "content-type": "text/plain" } });
 		expect(text.status).toBe(415);
-		expect(calls.filter((c) => c.method === "sessions.abort")).toHaveLength(0);
-		expect((await http(port, "POST", "/api/sessions/1/abort", { body: {}, headers: ORIGIN })).status).toBe(200);
+		expect((await http(port, "POST", "/api/sessions/1/abort", { body: {}, headers: { origin: "http://evil.example" } })).status).toBe(200);
+		expect(calls.filter((c) => c.method === "sessions.abort")).toHaveLength(1);
 		expect((await http(port, "POST", "/api/sessions/1/abort", { body: {} })).status).toBe(200);
 	});
 
@@ -143,7 +139,7 @@ describe("routes", () => {
 			"auth.status": { anthropic: { source: "oauth" } },
 			"auth.loginStart": { url: "https://x" },
 			"auth.loginCode": { ok: true, auth: { source: "oauth" } },
-			"auth.models": { models: [], providers: {}, defaults: { model: "a/b", thinking: "low" } },
+			"auth.models": { models: [], providers: {}, defaults: { model: "a/b", thinking: "low", approval_mode: "auto", mode: "director" } },
 			"sessions.cwds": { roots: ["/w"], recent: [] },
 			"mcp.status": [{ server: "s", tools: 1 }],
 			"agentData.listAgents": [{ name: "a" }],
@@ -206,7 +202,7 @@ describe("routes", () => {
 });
 
 describe("artifacts listener", () => {
-	it("serves PDFs, 503 while rendering, delegates the rest, checks Host", async () => {
+	it("serves PDFs, 503 while rendering, delegates the rest", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "tobor-pdf-"));
 		const file = join(dir, "x.pdf");
 		writeFileSync(file, "%PDF-1.4 fake");
@@ -227,7 +223,6 @@ describe("artifacts listener", () => {
 		servers.push(s);
 		const port = s.address.port;
 		const h = { headers: { host: "127.0.0.1:4001" } };
-		expect((await http(port, "GET", "/art/r/r1.pdf", { headers: { host: "127.0.0.1:4000" } })).status).toBe(403);
 		const busy = await http(port, "GET", "/art/r/r1.pdf", h);
 		expect(busy.status).toBe(503);
 		expect(busy.headers["retry-after"]).toBe("3");

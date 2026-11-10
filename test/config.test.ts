@@ -48,8 +48,6 @@ listen: 0.0.0.0:7879
 artifacts_listen: 0.0.0.0:7880
 public_url: http://host:7879
 artifacts_url: http://host:7880
-allowed_hosts: [host, host:7879, host:7880]
-allowed_origins: [http://host:7879]
 notify: { ntfy: { url: https://ntfy.sh, topic: tobor-x }, on: [approval, error, settled] }
 defaults:
   model: anthropic/claude-opus-5-5
@@ -80,7 +78,6 @@ artifacts: { theme: retro-log }
 		expect(config.roots).toEqual([HOME]);
 		expect(config.listen).toEqual({ host: "127.0.0.1", port: 7879 });
 		expect(config.artifacts_listen.port).toBe(7880);
-		expect(config.allowed_origins).toEqual(["http://127.0.0.1:7879"]);
 		expect(config.defaults).toMatchObject({ approval_mode: "auto", mode: "director", max_workers: 8 });
 	});
 

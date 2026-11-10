@@ -22,7 +22,7 @@ export type Millis = number;
 export type ApiError = {
 	/** Human-readable message. */
 	error: string;
-	/** Machine code, e.g. `not_found`, `conflict`, `invalid`, `forbidden_origin`. */
+	/** Machine code, e.g. `not_found`, `conflict`, `invalid`, `unsupported_media_type`. */
 	code?: string;
 	/** Validation problems (config, frontmatter, mcp.json). */
 	errors?: ConfigError[];
@@ -328,7 +328,7 @@ export type ModelsResponse = {
 	models: ModelInfo[];
 	providers: AuthStatusResponse;
 	/** Node defaults, for pickers. */
-	defaults: { model: string; thinking: ThinkingLevel };
+	defaults: { model: string; thinking: ThinkingLevel; approval_mode: ApprovalMode; mode: SessionMode };
 };
 
 /** Response to `POST /api/auth/:provider/login/start`: the URL the operator opens on any device. */

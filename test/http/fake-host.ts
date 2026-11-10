@@ -52,8 +52,6 @@ export function fakeHost(results: Record<string, unknown> = {}) {
 	const host = {
 		home: "/srv/tobor",
 		config: {
-			allowed_hosts: ["127.0.0.1", "localhost:4000"],
-			allowed_origins: ["http://localhost:4000"],
 			listen: { host: "127.0.0.1", port: 0 },
 			artifacts_listen: { host: "127.0.0.1", port: 0 },
 			artifacts_url: "http://127.0.0.1:4001",

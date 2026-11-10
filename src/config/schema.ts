@@ -46,10 +46,6 @@ export type Config = {
 	public_url: string;
 	/** Base URL of the artifacts origin. */
 	artifacts_url: string;
-	/** Accepted `Host` header values on both listeners. */
-	allowed_hosts: string[];
-	/** Accepted `Origin` values for mutating requests and WS upgrades. */
-	allowed_origins: string[];
 	/** Notification settings. */
 	notify: {
 		/** ntfy target; absent disables ntfy. */

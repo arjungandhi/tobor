@@ -53,15 +53,10 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /** Typed HTTP client for one node's API. */
 export class ApiClient {
-	/** Origin sent on every request and WS upgrade (the node's default `allowed_origins` is its own origin). */
-	readonly origin: string;
-
-	constructor(readonly base: string) {
-		this.origin = new URL(base).origin;
-	}
+	constructor(readonly base: string) {}
 
 	private async request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-		const headers: Record<string, string> = { accept: "application/json", origin: this.origin };
+		const headers: Record<string, string> = { accept: "application/json" };
 		const payload = body === undefined ? (method === "GET" ? undefined : "{}") : JSON.stringify(body);
 		if (payload !== undefined) headers["content-type"] = "application/json";
 		const res = await fetch(`${this.base}${path}`, {
@@ -253,7 +248,6 @@ export type SocketState = "connecting" | "open" | "waiting" | "closed";
 export type ReconnectingSocketOptions<In> = {
 	/** Evaluated on every (re)connect, so a watch can resume from its replica's window. */
 	url: () => string;
-	origin: string;
 	onFrame: (frame: In) => void;
 	/** Called after each successful connect; `reconnect` is false the first time. */
 	onOpen?: (reconnect: boolean) => void;
@@ -300,7 +294,7 @@ export class ReconnectingSocket<In> {
 	private connect(): void {
 		if (this.stopped) return;
 		this.options.onState?.("connecting");
-		const ws = new WebSocket(this.options.url(), { origin: this.options.origin, handshakeTimeout: 10_000 });
+		const ws = new WebSocket(this.options.url(), { handshakeTimeout: 10_000 });
 		this.ws = ws;
 		ws.on("open", () => {
 			const reconnect = this.opened;

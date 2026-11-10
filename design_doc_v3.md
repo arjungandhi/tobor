@@ -352,8 +352,6 @@ listen: 0.0.0.0:7879
 artifacts_listen: 0.0.0.0:7880   # default: listen port + 1
 public_url: http://host:7879
 artifacts_url: http://host:7880
-allowed_hosts: [host, host:7879, host:7880]
-allowed_origins: [http://host:7879]
 notify: { ntfy: { url: https://ntfy.sh, topic: tobor-<random> }, on: [approval, error, settled] }
 defaults:
   model: anthropic/claude-fable-5
@@ -378,13 +376,13 @@ The agent may edit its own `.tobor/` files with the normal `read`/`edit`/`write`
 - **Commits.** The node watches `.tobor/` (debounced fs watch) and commits agent-made changes as `agent: <summary>`, so history is uniform with client edits.
 - **Validation.** The same checks run on every change: `config.yml` schema, SKILL/agent frontmatter, `mcp.json` shape. A failing change is reverted to the last commit and reported as a tool error result.
 - **Hot reload, per file.** Prompt sections re-render on the next request; `mcp.json` reconnects servers and re-registers tools; `agents/` applies to the next `task`.
-- **Guardrail.** Changes by the agent to `config.yml: defaults.approval_mode`, `mcp.approval`, `roots`, `allowed_origins`, `allowed_hosts` or `listen` are rejected regardless of mode. Those keys are operator-only, via the API.
+- **Guardrail.** Changes by the agent to `config.yml: defaults.approval_mode`, `mcp.approval`, `roots` or `listen` are rejected regardless of mode. Those keys are operator-only, via the API.
 - **`tobor-self` skill.** `tobor init` ships a `tobor-self` skill under `skills/` that describes the layout and these rules.
 - **`tobor init` skeleton.** `AGENTS.md`, `RULES.md`, `config.yml`, an empty `mcp.json`, `agents/{worker,fast,scout,reviewer}.md`, `skills/{artifacts,tobor-self}/SKILL.md`, and an empty `design-systems/` (retro-log is built in).
 
 ## API
 
-All JSON; mutating requests require `Content-Type: application/json`. Every request's `Host` must be in `allowed_hosts`; every mutating request and every WS upgrade must carry an `Origin` in `allowed_origins`.
+All JSON; mutating requests require `Content-Type: application/json`. The API accepts any `Host` and `Origin`.
 
 ### REST
 
@@ -481,9 +479,9 @@ sequenceDiagram
 ## Security
 
 - No auth in the node. Network reachability is the access control, so binding to the tailnet IP is recommended.
-- Request hygiene against DNS rebinding and CSRF: `Host` allowlist on both listeners; `Origin` required and checked on every WS upgrade and every mutating request; JSON content type required for mutations.
+- Request hygiene: JSON content type required for mutations. No `Host` or `Origin` checks; any traffic reaching the port is accepted.
 - Artifacts are served from a separate origin (`artifacts_listen`) with the header CSP above, a `sandbox` directive, `connect-src 'none'`, no escape-sandbox popups and path containment, so artifact JS cannot reach the API.
-- The agent runs as the operator, with full filesystem and shell access (no sandbox). `ask` mode is the opt-in safeguard (the built-in default is `auto`). `roots` gates only the starting cwd. `read` refuses tobor's secret/state files under `$TOBOR_HOME` (auth.json, agent.env, node.json, database). `schedule_create` needs approval in `ask` and cannot create `auto` schedules. Agent self-edits of `.tobor/` cannot change approval mode, `mcp.approval`, `roots`, `allowed_origins`, `allowed_hosts` or `listen` (see Self-editing).
+- The agent runs as the operator, with full filesystem and shell access (no sandbox). `ask` mode is the opt-in safeguard (the built-in default is `auto`). `roots` gates only the starting cwd. `read` refuses tobor's secret/state files under `$TOBOR_HOME` (auth.json, agent.env, node.json, database). `schedule_create` needs approval in `ask` and cannot create `auto` schedules. Agent self-edits of `.tobor/` cannot change approval mode, `mcp.approval`, `roots` or `listen` (see Self-editing).
 - Secrets live in `env_file` and `auth.json` (mode 0600), never in the `.tobor` repo, and never in notifications. Payloads carry ids and titles only.
 - OAuth login (`tobor login anthropic`, or the web Host view; see Login on a headless host) writes `auth.json`. The API exposes auth status, never tokens. [INFERENCE] Whether Anthropic's terms allow Pro/Max OAuth in a third-party harness is undocumented, and the operator's call.
 

@@ -232,7 +232,6 @@ export class App {
 		this.client = client;
 		this.events = new ReconnectingSocket<EventsFrame>({
 			url: () => client.eventsUrl(),
-			origin: client.origin,
 			onFrame: (frame) => {
 				if (frame.t === "event") this.onEvent(frame.event);
 			},

@@ -172,7 +172,6 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	const url = new URL(req.url ?? "/", base);
 	const path = url.pathname;
 	const method = req.method ?? "GET";
-	if (method !== "GET" && req.headers.origin !== base) return send(res, 403, { error: `bad origin ${req.headers.origin}`, code: "forbidden_origin" });
 	const m = (re: RegExp): RegExpMatchArray | null => path.match(re);
 	let match: RegExpMatchArray | null;
 
@@ -258,7 +257,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		return send(res, 200, {
 			models: [model("anthropic/claude-haiku-5-5", "Claude Haiku 5.5", true), model("anthropic/claude-sonnet-5", "Claude Sonnet 5", true), model("openai/gpt-6", "GPT-6", false)],
 			providers: { anthropic: { source: "oauth" }, openai: { source: "none" } },
-			defaults: { model: "anthropic/claude-haiku-5-5", thinking: "off" },
+			defaults: { model: "anthropic/claude-haiku-5-5", thinking: "off", approval_mode: "auto", mode: "director" },
 		});
 	}
 	if (path === "/api/auth") return send(res, 200, { anthropic: { source: "env", oauth: true }, openai: { source: "none" } });
@@ -326,10 +325,6 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
 	const url = new URL(req.url ?? "/", base);
-	if (req.headers.origin !== base) {
-		socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
-		return;
-	}
 	wss.handleUpgrade(req, socket, head, (ws) => {
 		ws.on("message", (data) => {
 			if (JSON.parse(data.toString()).t === "ping") ws.send(JSON.stringify({ t: "pong" }));

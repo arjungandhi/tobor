@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import type { ListenAddress } from "../../config/schema.js";
 import type { Host } from "../../host.js";
-import { checkRequest, hostAllowed } from "./guards.js";
+import { checkRequest } from "./guards.js";
 import { sendError, sendJson } from "./json.js";
 import { Router } from "./router.js";
 import { agentsRoutes } from "./routes/agents.js";
@@ -55,7 +55,7 @@ export function apiRouter(): Router {
 /** The API request handler: guards, then routing. */
 export function apiHandler(host: Host, router = apiRouter()): (req: IncomingMessage, res: ServerResponse) => void {
 	return (req, res) => {
-		const failure = checkRequest(req, host.config);
+		const failure = checkRequest(req);
 		if (failure) return sendJson(res, failure.status, { error: failure.error, code: failure.code });
 		void router.handle(host, req, res);
 	};
@@ -78,9 +78,6 @@ export async function startArtifactsListener(
 	const server = createServer((req, res) => {
 		void (async () => {
 			try {
-				if (!hostAllowed(req.headers.host, [new URL(host.config.artifacts_url).host])) {
-					return sendJson(res, 403, { error: "host not allowed", code: "forbidden_host" });
-				}
 				if ((await servePdf(host, req, res)) || (await handler(req, res))) return;
 				if (!res.headersSent) sendJson(res, 404, { error: "not found", code: "not_found" });
 			} catch (error) {

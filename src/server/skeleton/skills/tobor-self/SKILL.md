@@ -45,7 +45,7 @@ Instructions the worker gets as its system prompt.
 - Changes apply without restart: prompt sections on the next request, `agents/` on the next `task`, `mcp.json`
   reconnects its servers.
 - Operator-only keys are rejected whatever the mode: `config.yml` `defaults.approval_mode`, `mcp.approval`,
-  `roots`, `allowed_origins`, `allowed_hosts`, `listen`. Ask the operator to change those.
+  `roots`, `listen`. Ask the operator to change those.
 - A project `config.yml` may only set `defaults.model`, `defaults.thinking`, `defaults.mode`, `artifacts.theme`
   and `mcp.servers`; anything else is ignored.
 - Never put secrets in `.tobor/`; credentials live in the node's env file and auth store.
