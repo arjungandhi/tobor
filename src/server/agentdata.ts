@@ -71,7 +71,7 @@ export class AgentData implements AgentDataService {
 		if (!st) return undefined;
 		if (st.isDirectory()) {
 			const entries = (await readdir(abs, { withFileTypes: true }))
-				.filter((e) => e.name !== ".git")
+				.filter((e) => e.name !== ".git" && !(rel === "" && e.name.toLowerCase() === "state"))
 				.map((e) => ({ name: e.name, type: e.isDirectory() ? ("dir" as const) : ("file" as const) }))
 				.sort((a, b) => a.name.localeCompare(b.name));
 			return { type: "dir", path: rel, entries };
@@ -150,6 +150,7 @@ export class AgentData implements AgentDataService {
 		this.watcher = fsWatch(this.dir, { recursive: true }, (_event, filename) => {
 			const name = filename?.toString();
 			if (name === ".git" || name?.startsWith(`.git${sep}`)) return;
+			if (name === "state" || name?.startsWith(`state${sep}`)) return;
 			this.schedule();
 		});
 		this.watcher.on("error", (error) => console.error("tobor: .tobor watcher failed:", error));
@@ -269,14 +270,14 @@ export class AgentData implements AgentDataService {
 
 	/**
 	 * Normalize a client path (relative to `.tobor/`, `/`-separated) and prove it stays inside `.tobor/`, symlinks
-	 * included. `.git` is never addressable. The empty path is the root.
+	 * included. `.git` and the top-level `state/` (node state) are never addressable. The empty path is the root.
 	 */
 	private async resolve(path: string): Promise<{ rel: string; abs: string }> {
 		const parts = path.split("/").filter((p) => p !== "" && p !== ".");
 		if (path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
 			throw new HostError(400, "invalid_path", "path must be relative to .tobor/");
 		}
-		if (parts.some((p) => p === ".." || p.toLowerCase() === ".git")) {
+		if (parts.some((p) => p === ".." || p.toLowerCase() === ".git") || parts[0]?.toLowerCase() === "state") {
 			throw new HostError(403, "forbidden_path", "path escapes .tobor/");
 		}
 		const rel = parts.join("/");
