@@ -31,7 +31,7 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	const client = app.api();
 	const sessions = archived ? (await client.sessions(true)).filter((s) => s.archived) : await client.sessions();
 	if (!archived) app.sessions = sessions;
-	const now = app.whoami?.now ?? Date.now();
+	const now = app.now();
 	const items = sessions.map((s: SessionSummary) => ({
 		value: s,
 		label: `${STATE[s.state](`[${s.state}]`.padEnd(9))} #${s.id} ${s.title}`,

@@ -65,6 +65,10 @@ export class SessionScreen {
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
 	private loadingEarlier = false;
 	private answering = false;
+	/** Stale guards for `refreshWorkers`: the latest fetch wins, and events newer than a fetch's start win over its result. */
+	private workersFetch = 0;
+	private eventSeq = 0;
+	private workerStamp = new Map<string, number>();
 
 	constructor(private readonly app: App) {
 		this.composer = new Composer(app.tui, {
@@ -85,6 +89,15 @@ export class SessionScreen {
 
 	/** Watch a conversation: snapshot then ops; reconnects resume from the replica's window. */
 	open(target: SessionTarget): void {
+		const cur = this.target;
+		if (cur && this.replica && cur.id === target.id && cur.worker?.name === target.worker?.name) {
+			// Re-opening what is already open: keep the transcript, scroll and expanded state; just refresh.
+			void this.refreshDetail();
+			void this.refreshWorkers();
+			this.rebuild();
+			this.app.changed();
+			return;
+		}
 		this.close();
 		const client = this.app.api();
 		const id = target.id;
@@ -120,6 +133,8 @@ export class SessionScreen {
 		this.detail = undefined;
 		this.replica = undefined;
 		this.workers = [];
+		this.workersFetch++;
+		this.workerStamp.clear();
 		this.strip.update([], undefined);
 		this.watchState = "closed";
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
@@ -227,13 +242,20 @@ export class SessionScreen {
 	async refreshWorkers(): Promise<void> {
 		const target = this.target;
 		if (!target || target.worker) return;
+		const fetchId = ++this.workersFetch;
+		const start = this.eventSeq;
 		try {
-			const workers = await this.app.api().workers(target.id);
-			if (target !== this.target) return;
-			this.workers = workers;
+			const fetched = await this.app.api().workers(target.id);
+			if (target !== this.target || fetchId !== this.workersFetch) return;
+			// Workers touched by a `worker.state` event since this fetch began keep their event-driven state.
+			const newer = (id: string) => (this.workerStamp.get(id) ?? 0) > start;
+			const kept = new Map(this.workers.filter((w) => newer(w.id)).map((w) => [w.id, w]));
+			const merged = fetched.map((w) => kept.get(w.id) ?? w);
+			for (const w of kept.values()) if (!merged.some((m) => m.id === w.id)) merged.push(w);
+			this.workers = merged;
 			this.rebuild();
-		} catch {
-			this.workers = [];
+		} catch (err) {
+			if (target === this.target) this.app.flash(`workers: ${(err as Error).message}`);
 		}
 		this.app.changed();
 	}
@@ -241,6 +263,7 @@ export class SessionScreen {
 	/** Apply a `worker.state` event. */
 	upsertWorker(sessionId: SessionId, worker: WorkerSummary): void {
 		if (this.target?.id !== sessionId || this.target.worker) return;
+		this.workerStamp.set(worker.id, ++this.eventSeq);
 		const at = this.workers.findIndex((w) => w.id === worker.id);
 		this.workers = at === -1 ? [...this.workers, worker] : this.workers.map((w, i) => (i === at ? worker : w));
 		this.strip.update(this.workers, this.todo());
@@ -256,7 +279,7 @@ export class SessionScreen {
 			return;
 		}
 		if (text.startsWith("/")) {
-			this.app.guard(() => this.app.command(text));
+			this.keepOnFail(text, () => this.app.command(text));
 			return;
 		}
 		const question = this.questions.current();
@@ -266,14 +289,26 @@ export class SessionScreen {
 		}
 		if (!this.target) {
 			const images = [...staged];
-			this.app.guard(async () => {
+			this.keepOnFail(text, async () => {
 				const started = await startSession(this.app, text, { attachments: images.map((i) => i.attachment) });
 				if (started) this.composer.unstage(images);
 			});
 			return;
 		}
 		const running = this.state() === "running" || this.state() === "waiting";
-		this.app.guard(() => this.send(text, running ? "steer" : "prompt"));
+		this.keepOnFail(text, () => this.send(text, running ? "steer" : "prompt"));
+	}
+
+	/** Run a flow for submitted text; if it fails (the error is flashed), put the text back unless the user has typed something new. */
+	private keepOnFail(text: string, flow: () => Promise<unknown>): void {
+		this.app.guard(async () => {
+			try {
+				await flow();
+			} catch (err) {
+				if (this.composer.getExpandedText().trim() === "") this.composer.setText(text);
+				throw err;
+			}
+		});
 	}
 
 	/** Answer an inline question (highlighted option or typed text), then refresh so the panel moves on or collapses. */
@@ -335,19 +370,22 @@ export class SessionScreen {
 			this.app.flash("type the follow-up first, then Ctrl+Q");
 			return;
 		}
-		this.composer.setText("");
-		if (text !== "") this.composer.addToHistory(text);
 		const running = this.state() === "running" || this.state() === "waiting";
 		await this.send(text, running ? "follow_up" : "prompt");
+		// Sent: clear the composer (unless the user has already edited it meanwhile).
+		if (this.composer.getExpandedText().trim() === text) this.composer.setText("");
+		if (text !== "") this.composer.addToHistory(text);
 	}
 
 	/** Ctrl+P: switch the open session to the next model of the node's list (wrapping around). */
 	async cycleModel(): Promise<void> {
 		if (!this.target || this.target.worker) throw new Error("open a session first");
 		const { models, defaults } = await this.app.api().models();
-		if (models.length === 0) return;
+		// Skip models whose provider has no credential (the current one stays as the cycle's anchor).
+		const usable = models.filter((m) => m.available || m.ref === (this.detail?.model ?? defaults.model));
+		if (usable.length === 0) return;
 		const current = this.detail?.model ?? defaults.model;
-		const next = models[(models.findIndex((m) => m.ref === current) + 1) % models.length];
+		const next = usable[(usable.findIndex((m) => m.ref === current) + 1) % usable.length];
 		if (!next || next.ref === current) return;
 		await this.patch({ model: next.ref });
 		this.app.flash(`model → ${next.ref}`);
@@ -366,8 +404,9 @@ export class SessionScreen {
 	async patch(req: PatchSessionRequest): Promise<void> {
 		const target = this.target;
 		if (!target || target.worker) throw new Error("no session open");
-		this.detail = await this.app.api().patchSession(target.id, req);
-		target.title = this.detail.title;
+		const detail = await this.app.api().patchSession(target.id, req);
+		target.title = detail.title;
+		if (target === this.target) this.detail = detail;
 		await this.app.refreshSessions();
 	}
 
