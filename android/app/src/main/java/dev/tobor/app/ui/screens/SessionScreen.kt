@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,6 +85,7 @@ import dev.tobor.app.ui.theme.StripeBand
 import dev.tobor.app.ui.theme.Tag
 import dev.tobor.app.ui.theme.ToborColors
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -216,85 +219,23 @@ fun SessionScreen(
         }
     }
 
-    // ── approvals ──
-    var approvals by remember(sessionId) { mutableStateOf<List<PendingApproval>>(emptyList()) }
-    suspend fun refetchApprovals() {
-        try {
-            approvals = api.approvals().filter { it.sessionId == sessionId }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-        }
-    }
-    var questions by remember(sessionId) { mutableStateOf<List<PendingQuestion>>(emptyList()) }
-    var questionErrors by remember(sessionId) { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var busyQuestions by remember(sessionId) { mutableStateOf<Set<String>>(emptySet()) }
-    suspend fun refetchQuestions() {
-        try {
-            questions = api.questions().filter { it.sessionId == sessionId }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-        }
-    }
-    LaunchedEffect(api, sessionId, isWorker, status) {
-        if (isWorker != false) return@LaunchedEffect
-        while (true) {
-            refetchApprovals()
-            refetchQuestions()
-            delay(3000)
-        }
-    }
+    // ── approvals + questions (polled while this is a live session) ──
+    val pending = rememberPending(api, sessionId, isWorker, status)
 
-    // ── composer ──
-    var draft by remember(sessionId) { mutableStateOf("") }
-    var sending by remember(sessionId) { mutableStateOf(false) }
-    var composeError by remember(sessionId) { mutableStateOf<String?>(null) }
-    var steerMode by remember(sessionId) { mutableStateOf("steer") }
-
-    var showMenu by remember(sessionId) { mutableStateOf(false) }
     var confirmDelete by remember(sessionId) { mutableStateOf(false) }
 
     val title = if (isWorker == true) "worker · $sessionId"
     else (detail?.title?.takeIf { it.isNotBlank() } ?: "session").lowercase()
 
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            containerColor = ToborColors.raised,
-            title = {
-                Text("delete session", fontFamily = Righteous, fontSize = 18.sp, color = ToborColors.gold)
-            },
-            text = {
-                Text(
-                    "Delete session %03d “%s”? This cannot be undone.".format(sessionId, title),
-                    fontFamily = CourierPrime,
-                    fontSize = 13.sp,
-                    color = ToborColors.fg,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDelete = false
-                        scope.launch {
-                            try {
-                                api.deleteSession(sessionId)
-                                onBack()
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                error = e.brief()
-                            }
-                        }
-                    },
-                ) { Text("delete", fontFamily = Righteous, color = ToborColors.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) {
-                    Text("cancel", fontFamily = Righteous, color = ToborColors.muted)
-                }
-            },
+        DeleteSessionDialog(
+            api = api,
+            sessionId = sessionId,
+            title = title,
+            scope = scope,
+            onDismiss = { confirmDelete = false },
+            onBack = onBack,
+            onError = { error = it },
         )
     }
 
@@ -307,101 +248,20 @@ fun SessionScreen(
     ) {
         StripeBand()
 
-        // header
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "back", tint = ToborColors.fg)
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    color = ToborColors.gold,
-                    fontFamily = Righteous,
-                    fontSize = 18.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "no. %03d".format(sessionId),
-                    color = ToborColors.muted,
-                    fontFamily = SpecialElite,
-                    fontSize = 11.sp,
-                )
-            }
-            when {
-                failed -> Tag("failed", ToborColors.error)
-                running -> Tag("running", ToborColors.gold)
-                workers.any { it.state.lowercase() in setOf("starting", "running") } -> Tag("working", ToborColors.teal)
-                else -> Tag("idle", ToborColors.subtle)
-            }
-            if (running) {
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            try {
-                                api.abort(sessionId)
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                error = e.brief()
-                            }
-                        }
-                    },
-                    border = BorderStroke(1.5.dp, ToborColors.orange),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ToborColors.orange),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                ) {
-                    Text("abort", fontFamily = SpecialElite, fontSize = 12.sp)
-                }
-            }
-            if (isWorker == false) {
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "more", tint = ToborColors.muted)
-                    }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (detail?.archived == true) "unarchive" else "archive",
-                                    fontFamily = SpecialElite,
-                                    fontSize = 13.sp,
-                                    color = ToborColors.fg,
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                val archive = detail?.archived != true
-                                scope.launch {
-                                    try {
-                                        api.patchSession(sessionId, PatchSessionRequest(archived = archive))
-                                        onBack()
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        error = e.brief()
-                                    }
-                                }
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text("delete", fontFamily = SpecialElite, fontSize = 13.sp, color = ToborColors.error)
-                            },
-                            onClick = {
-                                showMenu = false
-                                confirmDelete = true
-                            },
-                        )
-                    }
-                }
-            }
-            Box(Modifier.padding(end = 4.dp))
-        }
+        SessionHeader(
+            api = api,
+            sessionId = sessionId,
+            scope = scope,
+            title = title,
+            failed = failed,
+            running = running,
+            working = workers.any { it.state.lowercase() in setOf("starting", "running") },
+            isWorker = isWorker,
+            archived = detail?.archived == true,
+            onBack = onBack,
+            onRequestDelete = { confirmDelete = true },
+            onError = { error = it },
+        )
 
         // banners + transcript
         val endedReason = (status as? WatchStatus.Ended)?.reason
@@ -418,178 +278,458 @@ fun SessionScreen(
                 fontSize = 11.sp,
             )
         }
-        LazyColumn(
-            state = listState,
+        TranscriptList(
+            listState = listState,
+            rows = rows,
+            hasEarlier = hasEarlier,
+            loadingEarlier = loadingEarlier,
+            onLoadEarlier = { loadEarlier() },
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            if (hasEarlier) {
-                item(key = "load-earlier") {
-                    TextButton(onClick = { loadEarlier() }, enabled = !loadingEarlier) {
-                        Text(
-                            if (loadingEarlier) "loading…" else "load earlier",
-                            color = ToborColors.gold,
-                            fontFamily = SpecialElite,
-                            fontSize = 12.sp,
-                        )
-                    }
-                }
-            }
-            items(rows, key = { it.key }) { TranscriptItem(it) }
-        }
+        )
 
-        // approvals
-        approvals.forEachIndexed { idx, a ->
-            ApprovalCard(
-                a,
-                primary = idx == 0,
-                onDecide = { decision ->
-                    scope.launch {
-                        try {
-                            api.decide(a.callId, decision, if (a.worker != null) a.conversationId else null)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: ToborApiException) {
-                            if (e.status != 409) error = e.brief()
-                        } catch (e: Exception) {
-                            error = e.brief()
-                        }
-                        refetchApprovals()
-                    }
-                },
-            )
-        }
-
-        // questions (ask_user)
-        questions.forEach { q ->
-            QuestionCard(
-                q,
-                busy = q.callId in busyQuestions,
-                error = questionErrors[q.callId],
-                showSession = false,
-                onAnswer = { text ->
-                    busyQuestions = busyQuestions + q.callId
-                    questionErrors = questionErrors - q.callId
-                    scope.launch {
-                        try {
-                            api.answerQuestion(q.callId, text, q.conversationId)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            // 409/404 are non-fatal: show on the card; the refetch drops it if it is gone
-                            questionErrors = questionErrors + (q.callId to e.brief())
-                        }
-                        refetchQuestions()
-                        busyQuestions = busyQuestions - q.callId
-                    }
-                },
-            )
-        }
+        ApprovalCards(api, scope, pending, onError = { error = it })
+        QuestionCards(api, scope, pending)
 
         if (isWorker == false) {
-            // workers strip
-            if (workers.isNotEmpty()) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    workers.forEach { w ->
-                        val color = when (w.state.lowercase()) {
-                            "running" -> ToborColors.gold
-                            "done" -> ToborColors.success
-                            "failed", "aborted" -> ToborColors.error
-                            else -> ToborColors.subtle
-                        }
-                        Box(Modifier.clickable { w.conversationId?.let(onOpenConversation) }) {
-                            Tag("${w.name} · ${w.state}", color)
+            WorkersStrip(workers, onOpenConversation)
+            Composer(
+                api = api,
+                sessionId = sessionId,
+                scope = scope,
+                running = running,
+                // the one filled button on screen is approve when an approval is pending
+                sendFilled = pending.approvals.isEmpty() && pending.questions.isEmpty(),
+            )
+        }
+    }
+}
+
+// ── pending approvals / questions state ──
+
+@Stable
+private class PendingState(private val api: ToborApi, private val sessionId: Long) {
+    var approvals by mutableStateOf<List<PendingApproval>>(emptyList())
+    var questions by mutableStateOf<List<PendingQuestion>>(emptyList())
+    var questionErrors by mutableStateOf<Map<String, String>>(emptyMap())
+    var busyQuestions by mutableStateOf<Set<String>>(emptySet())
+
+    suspend fun refetchApprovals() {
+        try {
+            approvals = api.approvals().filter { it.sessionId == sessionId }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    suspend fun refetchQuestions() {
+        try {
+            questions = api.questions().filter { it.sessionId == sessionId }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+}
+
+@Composable
+private fun rememberPending(api: ToborApi, sessionId: Long, isWorker: Boolean?, status: WatchStatus): PendingState {
+    val pending = remember(api, sessionId) { PendingState(api, sessionId) }
+    LaunchedEffect(api, sessionId, isWorker, status) {
+        if (isWorker != false) return@LaunchedEffect
+        while (true) {
+            pending.refetchApprovals()
+            pending.refetchQuestions()
+            delay(3000)
+        }
+    }
+    return pending
+}
+
+@Composable
+private fun ApprovalCards(
+    api: ToborApi,
+    scope: CoroutineScope,
+    pending: PendingState,
+    onError: (String) -> Unit,
+) {
+    pending.approvals.forEachIndexed { idx, a ->
+        ApprovalCard(
+            a,
+            primary = idx == 0,
+            onDecide = { decision ->
+                scope.launch {
+                    try {
+                        api.decide(a.callId, decision, if (a.worker != null) a.conversationId else null)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: ToborApiException) {
+                        if (e.status != 409) onError(e.brief())
+                    } catch (e: Exception) {
+                        onError(e.brief())
+                    }
+                    pending.refetchApprovals()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun QuestionCards(api: ToborApi, scope: CoroutineScope, pending: PendingState) {
+    // questions (ask_user)
+    pending.questions.forEach { q ->
+        QuestionCard(
+            q,
+            busy = q.callId in pending.busyQuestions,
+            error = pending.questionErrors[q.callId],
+            showSession = false,
+            onAnswer = { text ->
+                pending.busyQuestions = pending.busyQuestions + q.callId
+                pending.questionErrors = pending.questionErrors - q.callId
+                scope.launch {
+                    try {
+                        api.answerQuestion(q.callId, text, q.conversationId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // 409/404 are non-fatal: show on the card; the refetch drops it if it is gone
+                        pending.questionErrors = pending.questionErrors + (q.callId to e.brief())
+                    }
+                    pending.refetchQuestions()
+                    pending.busyQuestions = pending.busyQuestions - q.callId
+                }
+            },
+        )
+    }
+}
+
+// ── delete dialog ──
+
+@Composable
+private fun DeleteSessionDialog(
+    api: ToborApi,
+    sessionId: Long,
+    title: String,
+    scope: CoroutineScope,
+    onDismiss: () -> Unit,
+    onBack: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ToborColors.raised,
+        title = {
+            Text("delete session", fontFamily = Righteous, fontSize = 18.sp, color = ToborColors.gold)
+        },
+        text = {
+            Text(
+                "Delete session %03d “%s”? This cannot be undone.".format(sessionId, title),
+                fontFamily = CourierPrime,
+                fontSize = 13.sp,
+                color = ToborColors.fg,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    scope.launch {
+                        try {
+                            api.deleteSession(sessionId)
+                            onBack()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            onError(e.brief())
                         }
                     }
+                },
+            ) { Text("delete", fontFamily = Righteous, color = ToborColors.error) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("cancel", fontFamily = Righteous, color = ToborColors.muted)
+            }
+        },
+    )
+}
+
+// ── header ──
+
+@Composable
+private fun SessionHeader(
+    api: ToborApi,
+    sessionId: Long,
+    scope: CoroutineScope,
+    title: String,
+    failed: Boolean,
+    running: Boolean,
+    working: Boolean,
+    isWorker: Boolean?,
+    archived: Boolean,
+    onBack: () -> Unit,
+    onRequestDelete: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "back", tint = ToborColors.fg)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                color = ToborColors.gold,
+                fontFamily = Righteous,
+                fontSize = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "no. %03d".format(sessionId),
+                color = ToborColors.muted,
+                fontFamily = SpecialElite,
+                fontSize = 11.sp,
+            )
+        }
+        when {
+            failed -> Tag("failed", ToborColors.error)
+            running -> Tag("running", ToborColors.gold)
+            working -> Tag("working", ToborColors.teal)
+            else -> Tag("idle", ToborColors.subtle)
+        }
+        if (running) {
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        try {
+                            api.abort(sessionId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            onError(e.brief())
+                        }
+                    }
+                },
+                border = BorderStroke(1.5.dp, ToborColors.orange),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = ToborColors.orange),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            ) {
+                Text("abort", fontFamily = SpecialElite, fontSize = 12.sp)
+            }
+        }
+        if (isWorker == false) {
+            SessionMenu(api, sessionId, scope, archived, onBack, onRequestDelete, onError)
+        }
+        Box(Modifier.padding(end = 4.dp))
+    }
+}
+
+@Composable
+private fun SessionMenu(
+    api: ToborApi,
+    sessionId: Long,
+    scope: CoroutineScope,
+    archived: Boolean,
+    onBack: () -> Unit,
+    onRequestDelete: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    var showMenu by remember(sessionId) { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { showMenu = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "more", tint = ToborColors.muted)
+        }
+        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (archived) "unarchive" else "archive",
+                        fontFamily = SpecialElite,
+                        fontSize = 13.sp,
+                        color = ToborColors.fg,
+                    )
+                },
+                onClick = {
+                    showMenu = false
+                    val archive = !archived
+                    scope.launch {
+                        try {
+                            api.patchSession(sessionId, PatchSessionRequest(archived = archive))
+                            onBack()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            onError(e.brief())
+                        }
+                    }
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Text("delete", fontFamily = SpecialElite, fontSize = 13.sp, color = ToborColors.error)
+                },
+                onClick = {
+                    showMenu = false
+                    onRequestDelete()
+                },
+            )
+        }
+    }
+}
+
+// ── transcript ──
+
+@Composable
+private fun TranscriptList(
+    listState: LazyListState,
+    rows: List<Item>,
+    hasEarlier: Boolean,
+    loadingEarlier: Boolean,
+    onLoadEarlier: () -> Unit,
+    modifier: Modifier,
+) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        if (hasEarlier) {
+            item(key = "load-earlier") {
+                TextButton(onClick = onLoadEarlier, enabled = !loadingEarlier) {
+                    Text(
+                        if (loadingEarlier) "loading…" else "load earlier",
+                        color = ToborColors.gold,
+                        fontFamily = SpecialElite,
+                        fontSize = 12.sp,
+                    )
                 }
             }
+        }
+        items(rows, key = { it.key }) { TranscriptItem(it) }
+    }
+}
 
-            // composer
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(ToborColors.sunken)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+// ── workers strip ──
+
+@Composable
+private fun WorkersStrip(workers: List<WorkerSummary>, onOpenConversation: (Long) -> Unit) {
+    if (workers.isEmpty()) return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        workers.forEach { w ->
+            val color = when (w.state.lowercase()) {
+                "running" -> ToborColors.gold
+                "done" -> ToborColors.success
+                "failed", "aborted" -> ToborColors.error
+                else -> ToborColors.subtle
+            }
+            Box(Modifier.clickable { w.conversationId?.let(onOpenConversation) }) {
+                Tag("${w.name} · ${w.state}", color)
+            }
+        }
+    }
+}
+
+// ── composer ──
+
+@Composable
+private fun Composer(
+    api: ToborApi,
+    sessionId: Long,
+    scope: CoroutineScope,
+    running: Boolean,
+    sendFilled: Boolean,
+) {
+    var draft by remember(sessionId) { mutableStateOf("") }
+    var sending by remember(sessionId) { mutableStateOf(false) }
+    var composeError by remember(sessionId) { mutableStateOf<String?>(null) }
+    var steerMode by remember(sessionId) { mutableStateOf("steer") }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(ToborColors.sunken)
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        if (running) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 6.dp)) {
+                ModeChip("steer", steerMode == "steer") { steerMode = "steer" }
+                ModeChip("follow-up", steerMode == "follow_up") { steerMode = "follow_up" }
+            }
+        }
+        if (composeError != null) {
+            Text(
+                composeError!!,
+                color = ToborColors.error,
+                fontFamily = CourierPrime,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier.weight(1f),
+                textStyle = TextStyle(fontFamily = CourierPrime, fontSize = 14.sp, color = ToborColors.fg),
+                placeholder = {
+                    Text("log an instruction…", color = ToborColors.subtle, fontFamily = CourierPrime, fontSize = 14.sp)
+                },
+                minLines = 1,
+                maxLines = 6,
+                keyboardOptions = KeyboardOptions.Default,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = ToborColors.fg,
+                    unfocusedTextColor = ToborColors.fg,
+                    focusedBorderColor = ToborColors.gold,
+                    unfocusedBorderColor = ToborColors.border,
+                    cursorColor = ToborColors.gold,
+                ),
+            )
+            val canSend = draft.isNotBlank() && !sending
+            FilledIconButton(
+                onClick = {
+                    val text = draft.trim()
+                    val mode = if (running) steerMode else "prompt"
+                    sending = true
+                    composeError = null
+                    scope.launch {
+                        try {
+                            api.input(sessionId, text, mode, java.util.UUID.randomUUID().toString())
+                            draft = ""
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            composeError = e.brief()
+                        } finally {
+                            sending = false
+                        }
+                    }
+                },
+                enabled = canSend,
+                shape = CircleShape,
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = if (sendFilled) ToborColors.gold else Color.Transparent,
+                    contentColor = if (sendFilled) ToborColors.bg else ToborColors.gold,
+                    disabledContainerColor = if (sendFilled) ToborColors.gold.copy(alpha = 0.35f) else Color.Transparent,
+                    disabledContentColor = if (sendFilled) ToborColors.bg else ToborColors.subtle,
+                ),
+                modifier = Modifier
+                    .padding(bottom = 4.dp)
+                    .let { if (sendFilled) it else it.border(1.5.dp, if (canSend) ToborColors.gold else ToborColors.subtle, CircleShape) },
             ) {
-                if (running) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 6.dp)) {
-                        ModeChip("steer", steerMode == "steer") { steerMode = "steer" }
-                        ModeChip("follow-up", steerMode == "follow_up") { steerMode = "follow_up" }
-                    }
-                }
-                if (composeError != null) {
-                    Text(
-                        composeError!!,
-                        color = ToborColors.error,
-                        fontFamily = CourierPrime,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        modifier = Modifier.weight(1f),
-                        textStyle = TextStyle(fontFamily = CourierPrime, fontSize = 14.sp, color = ToborColors.fg),
-                        placeholder = {
-                            Text("log an instruction…", color = ToborColors.subtle, fontFamily = CourierPrime, fontSize = 14.sp)
-                        },
-                        minLines = 1,
-                        maxLines = 6,
-                        keyboardOptions = KeyboardOptions.Default,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = ToborColors.fg,
-                            unfocusedTextColor = ToborColors.fg,
-                            focusedBorderColor = ToborColors.gold,
-                            unfocusedBorderColor = ToborColors.border,
-                            cursorColor = ToborColors.gold,
-                        ),
-                    )
-                    // the one filled button on screen is approve when an approval is pending
-                    val sendFilled = approvals.isEmpty() && questions.isEmpty()
-                    val canSend = draft.isNotBlank() && !sending
-                    FilledIconButton(
-                        onClick = {
-                            val text = draft.trim()
-                            val mode = if (running) steerMode else "prompt"
-                            sending = true
-                            composeError = null
-                            scope.launch {
-                                try {
-                                    api.input(sessionId, text, mode, java.util.UUID.randomUUID().toString())
-                                    draft = ""
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    composeError = e.brief()
-                                } finally {
-                                    sending = false
-                                }
-                            }
-                        },
-                        enabled = canSend,
-                        shape = CircleShape,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = if (sendFilled) ToborColors.gold else Color.Transparent,
-                            contentColor = if (sendFilled) ToborColors.bg else ToborColors.gold,
-                            disabledContainerColor = if (sendFilled) ToborColors.gold.copy(alpha = 0.35f) else Color.Transparent,
-                            disabledContentColor = if (sendFilled) ToborColors.bg else ToborColors.subtle,
-                        ),
-                        modifier = Modifier
-                            .padding(bottom = 4.dp)
-                            .let { if (sendFilled) it else it.border(1.5.dp, if (canSend) ToborColors.gold else ToborColors.subtle, CircleShape) },
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "send")
-                    }
-                }
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "send")
             }
         }
     }
