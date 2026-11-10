@@ -28,3 +28,5 @@ defaults:
 retention: { context: 30d, documents: 90d }
 # mcp: { approval: { github: { allow: [list_issues], ask: [create_issue] } } }   # (operator)
 artifacts: { theme: retro-log }
+# search: { provider: auto, max_results: 10 }   # auto | brave | tavily | searxng (+ url) | exa | duckduckgo | none; keys in agent.env
+# fetch: { allow_private: false, max_chars: 20000, timeout_ms: 20000, remote_reader: true }

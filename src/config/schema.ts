@@ -85,7 +85,35 @@ export type Config = {
 	};
 	/** Artifact settings. */
 	artifacts: { theme: string };
+	/**
+	 * `web_search` backends. `auto` tries Brave/Tavily when their keys are set and SearXNG when `url` is set, then
+	 * the keyless Exa MCP endpoint and DuckDuckGo; a named provider is used alone; `none` disables search.
+	 */
+	search: {
+		provider: SearchProvider;
+		/** SearXNG base URL (required for `searxng`); for another named provider, overrides its API endpoint. */
+		url?: string;
+		/** Env-file variable holding the named provider's key; default `BRAVE_API_KEY`/`TAVILY_API_KEY`/`EXA_API_KEY`/`SEARXNG_TOKEN`. */
+		api_key_env?: string;
+		/** Results returned when the call gives no `limit` (max 20). */
+		max_results: number;
+	};
+	/** `fetch_url` settings. */
+	fetch: {
+		/** Allow loopback/private/link-local targets (SSRF guard off). */
+		allow_private: boolean;
+		/** Default output cap in characters. */
+		max_chars: number;
+		/** Request timeout in ms (also bounds each `web_search` provider call). */
+		timeout_ms: number;
+		/** Fall back to the Jina reader (r.jina.ai) for JavaScript-gated or empty pages. */
+		remote_reader: boolean;
+	};
 };
+
+/** `search.provider` values. */
+export type SearchProvider = "auto" | "none" | "brave" | "tavily" | "searxng" | "exa" | "duckduckgo";
+export const SEARCH_PROVIDERS: readonly SearchProvider[] = ["auto", "none", "brave", "tavily", "searxng", "exa", "duckduckgo"];
 
 /** The project-level `<git root>/.tobor/config.yml` whitelist. */
 export type ProjectConfig = {

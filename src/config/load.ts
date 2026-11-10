@@ -21,6 +21,8 @@ import {
 	type NotifyEvent,
 	parseModelRef,
 	type ProjectConfig,
+	SEARCH_PROVIDERS,
+	type SearchProvider,
 	SESSION_MODES,
 	type SessionMode,
 	THINKING_LEVELS,
@@ -142,6 +144,13 @@ class Reader {
 		const v = this.obj[key];
 		if (v === undefined || v === null) return undefined;
 		if (typeof v !== "number" || !Number.isInteger(v) || v < 1) return this.fail(key, "expected a positive integer");
+		return v;
+	}
+
+	boolean(key: string): boolean | undefined {
+		const v = this.obj[key];
+		if (v === undefined || v === null) return undefined;
+		if (typeof v !== "boolean") return this.fail(key, "expected true or false");
 		return v;
 	}
 
@@ -268,6 +277,8 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		"retention",
 		"mcp",
 		"artifacts",
+		"search",
+		"fetch",
 	]);
 
 	const roots: string[] = [];
@@ -358,6 +369,28 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	art.only(["theme"]);
 	const theme = art.string("theme") ?? DEFAULT_THEME;
 
+	const s = root.child("search");
+	s.only(["provider", "url", "api_key_env", "max_results"]);
+	const provider = s.oneOf<SearchProvider>("provider", SEARCH_PROVIDERS) ?? "auto";
+	const searchUrl = s.url("url");
+	if (provider === "searxng" && searchUrl === undefined) s.fail("url", "required for provider searxng");
+	const apiKeyEnv = s.string("api_key_env");
+	const search: Config["search"] = {
+		provider,
+		...(searchUrl !== undefined ? { url: searchUrl } : {}),
+		...(apiKeyEnv !== undefined ? { api_key_env: apiKeyEnv } : {}),
+		max_results: Math.min(s.positiveInt("max_results") ?? 10, 20),
+	};
+
+	const f = root.child("fetch");
+	f.only(["allow_private", "max_chars", "timeout_ms", "remote_reader"]);
+	const fetch: Config["fetch"] = {
+		allow_private: f.boolean("allow_private") ?? false,
+		max_chars: f.positiveInt("max_chars") ?? 20_000,
+		timeout_ms: f.positiveInt("timeout_ms") ?? 20_000,
+		remote_reader: f.boolean("remote_reader") ?? true,
+	};
+
 	return {
 		config: {
 			roots,
@@ -374,6 +407,8 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 			mcp: { approval },
 			agents: { model_overrides: modelOverrides },
 			artifacts: { theme },
+			search,
+			fetch,
 		},
 		errors,
 	};
