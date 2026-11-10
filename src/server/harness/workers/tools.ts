@@ -47,8 +47,9 @@ export async function taskSpawnsAutoWorker(
 }
 
 /** `task`, `wait`, `agent_output` and the `tobor.worker` task. `host` is read lazily (the Harness opens later). */
-export function workersModule(host: () => WorkerHost): ToolModule {
+export function workersModule(host: () => WorkerHost, options: { pollMs?: number } = {}): ToolModule {
 	const holder = createWorkerHolder({
+		...options,
 		onChange: (directorId, workerId) => {
 			void emitWorker(host(), directorId, workerId);
 		},

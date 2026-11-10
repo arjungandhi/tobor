@@ -48,7 +48,7 @@ type HolderState =
 	| { phase: "report"; conversationId: number; submissionId: number };
 
 /** Callbacks a holder makes after its commits (not durable; for events). */
-export type WorkerHolderDeps = { onChange?(directorId: number, workerId: string): void };
+export type WorkerHolderDeps = { onChange?(directorId: number, workerId: string): void; /** Default `WORKER_POLL_MS`. */ pollMs?: number };
 
 /** Concatenated text blocks of an assistant entry's model message. */
 export function assistantText(entry: Pick<EntryRecord, "model"> | undefined): string {
@@ -146,7 +146,7 @@ export function createWorkerHolder(deps: WorkerHolderDeps = {}): WorkerHolderTas
 				await runtime.commit(async (tx) => {
 					const record = await tx.submission(checkpoint.submissionId as SubmissionId);
 					if (record && (record.status === "queued" || record.status === "placed")) {
-						return { status: "sleeping", until: runtime.now() + WORKER_POLL_MS, checkpoint };
+						return { status: "sleeping", until: runtime.now() + (deps.pollMs ?? WORKER_POLL_MS), checkpoint };
 					}
 					return { status: "running", checkpoint: { ...checkpoint, phase: "report" } };
 				}, context);

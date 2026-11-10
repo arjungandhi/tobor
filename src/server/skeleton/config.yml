@@ -1,0 +1,27 @@
+# tobor node settings. Keys marked (operator) can only be changed by the operator, not by the agent.
+# Durations: 30m, 12h, 90d.
+
+roots: ["~"]                    # (operator) directories sessions may start in
+# env_file: agent.env           # relative to $TOBOR_HOME, never inside .tobor/
+# listen: 127.0.0.1:7879        # (operator)
+# artifacts_listen: 127.0.0.1:7880
+# public_url: http://localhost:7879
+# allowed_hosts: []             # (operator)
+# allowed_origins: []           # (operator)
+# notify:
+#   ntfy: { url: https://ntfy.sh, topic: tobor-change-me }
+#   on: [approval, error, settled]
+
+defaults:
+  model: anthropic/claude-opus-5-5
+  thinking: high
+  approval_mode: ask            # (operator) ask | auto
+  max_turns: 100
+  mode: director                # director | solo
+  max_workers: 8
+  idle: 30m
+  approval_timeout: 12h
+
+retention: { context: 30d, documents: 90d }
+# mcp: { approval: { github: { allow: [list_issues], ask: [create_issue] } } }   # (operator)
+artifacts: { theme: retro-log }
