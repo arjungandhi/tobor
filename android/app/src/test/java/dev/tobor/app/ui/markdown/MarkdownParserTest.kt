@@ -64,7 +64,8 @@ class MarkdownParserTest {
     @Test fun unsafeOrMalformedLinksStayLiteral() {
         assertEquals(listOf(t("[x](javascript:alert(1))")), parseInline("[x](javascript:alert(1))"))
         assertEquals(listOf(t("[x](")), parseInline("[x]("))
-        assertEquals(listOf(t("[x] (http://a.b)")), parseInline("[x] (http://a.b)"))
+        // not a markdown link, but the bare URL inside is still autolinked
+        assertEquals(listOf(t("[x] ("), bare("http://a.b"), t(")")), parseInline("[x] (http://a.b)"))
         assertEquals(listOf(t("[x](not a url)")), parseInline("[x](not a url)"))
     }
 
@@ -73,7 +74,8 @@ class MarkdownParserTest {
         assertEquals(listOf(t("a *it")), parseInline("a *it"))
         assertEquals(listOf(t("a `code")), parseInline("a `code"))
         assertEquals(listOf(t("a [lin")), parseInline("a [lin"))
-        assertEquals(listOf(t("a [link](https://exa")), parseInline("a [link](https://exa"))
+        // partial explicit link: the URL tail is autolinked until the construct closes
+        assertEquals(listOf(t("a [link]("), bare("https://exa")), parseInline("a [link](https://exa"))
         assertEquals(listOf(t("__x")), parseInline("__x"))
     }
 
@@ -193,6 +195,80 @@ class MarkdownParserTest {
     @Test fun emptyAndWhitespaceInput() {
         assertEquals(emptyList<MdBlock>(), parseMarkdown(""))
         assertEquals(emptyList<MdBlock>(), parseMarkdown("  \n\n "))
+    }
+
+    // ---- bare URL autolinking ----
+
+    private fun bare(url: String) = Link(listOf(t(url)), url)
+
+    @Test fun bareUrlAlone() {
+        assertEquals(listOf(bare("https://example.com")), parseInline("https://example.com"))
+    }
+
+    @Test fun bareUrlMidSentence() {
+        assertEquals(
+            listOf(t("open "), bare("http://a.b/x"), t(" now")),
+            parseInline("open http://a.b/x now"),
+        )
+    }
+
+    @Test fun bareUrlWithPortAndArtifactPath() {
+        val u = "http://host:7880/art/proj_abc/slug"
+        assertEquals(listOf(t("Published: "), bare(u)), parseInline("Published: $u"))
+    }
+
+    @Test fun bareUrlTrimsTrailingPunctuation() {
+        assertEquals(listOf(t("see "), bare("https://a.b/x"), t(".")), parseInline("see https://a.b/x."))
+        assertEquals(listOf(t("("), bare("https://a.b"), t("),")), parseInline("(https://a.b),"))
+        assertEquals(listOf(bare("https://a.b/q"), t("?!")), parseInline("https://a.b/q?!"))
+    }
+
+    @Test fun bareUrlSchemeOnlyStaysText() {
+        assertEquals(listOf(t("go to http:// later")), parseInline("go to http:// later"))
+        assertEquals(listOf(t("https://.")), parseInline("https://."))
+    }
+
+    @Test fun bareUrlNeedsWordBoundary() {
+        assertEquals(listOf(t("xhttp://a.b")), parseInline("xhttp://a.b"))
+    }
+
+    @Test fun bareUrlInsideInlineCodeStaysCode() {
+        assertEquals(listOf(Code("http://a.b/x")), parseInline("`http://a.b/x`"))
+    }
+
+    @Test fun bareUrlInsideFencedBlockUntouched() {
+        assertEquals(
+            listOf(MdBlock.CodeBlock("curl http://a.b/x", "", true)),
+            parseMarkdown("```\ncurl http://a.b/x\n```"),
+        )
+    }
+
+    @Test fun explicitLinkIsNotDoubleLinked() {
+        assertEquals(
+            listOf(Link(listOf(t("http://a.b")), "http://a.b")),
+            parseInline("[http://a.b](http://a.b)"),
+        )
+        assertEquals(
+            listOf(Link(listOf(t("docs")), "https://a.b/d"), t(" and "), bare("https://c.d")),
+            parseInline("[docs](https://a.b/d) and https://c.d"),
+        )
+    }
+
+    @Test fun bareUrlInsideBoldAndList() {
+        assertEquals(
+            listOf(Bold(listOf(t("at "), bare("http://a.b")))),
+            parseInline("**at http://a.b**"),
+        )
+        assertEquals(
+            listOf(MdBlock.ListItem(false, 0, 0, listOf(bare("http://a.b/x")))),
+            parseMarkdown("- http://a.b/x"),
+        )
+    }
+
+    @Test fun bareUrlPrefixesNeverThrow() {
+        val doc = "See http://host:7880/art/proj_abc/slug, `http://x.y` and [l](https://a.b) or (https://c.d/e).\n" +
+            "```\nhttps://in.code\n```\n**bold https://b.c**"
+        for (n in 0..doc.length) parseMarkdown(doc.substring(0, n))
     }
 
     @Test fun neverThrowsAndNeverDropsContentOnEveryPrefix() {

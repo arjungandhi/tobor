@@ -2,7 +2,7 @@ package dev.tobor.app.ui.markdown
 
 // Tiny, pure, total markdown parser for assistant chat messages.
 //
-// Supported: bold (double star/underscore), italic (single), `code`, [text](url) links;
+// Supported: bold (double star/underscore), italic (single), `code`, [text](url) links and bare http(s) URLs;
 // # ## ### headings, dash/star and "1." lists (one nesting level), fenced code blocks, paragraphs.
 // Anything else - and any unclosed marker while a message is still streaming - stays literal text.
 // Never throws and never drops content.
@@ -135,6 +135,7 @@ private fun parseInlineRec(s: String, depth: Int, allowLinks: Boolean): List<Inl
         val parsed: Parsed? = when (c) {
             '`' -> tryCode(s, i)
             '[' -> if (allowLinks) tryLink(s, i, depth) else null
+            'h', 'H' -> if (allowLinks) tryBareUrl(s, i) else null
             '*', '_' -> if (s.startsWith("$c$c", i)) tryBold(s, i, depth, allowLinks) else tryItalic(s, i, depth, allowLinks)
             else -> null
         }
@@ -259,6 +260,32 @@ private fun tryLink(s: String, i: Int, depth: Int): Parsed? {
     val url = s.substring(j + 2, k).trim()
     if (label.isBlank() || !isSafeUrl(url)) return null
     return Parsed(Inline.Link(parseInlineRec(label, depth + 1, false), url), k + 1)
+}
+
+/** Characters trimmed from the end of a bare URL (sentence punctuation, closing paren, quotes). */
+private const val URL_TRAILING = ").,;:!?'\""
+
+/**
+ * Trims trailing punctuation from a candidate bare URL. Returns null when no usable URL
+ * (scheme plus at least one more character) remains.
+ */
+internal fun trimBareUrl(candidate: String): String? {
+    val url = candidate.trimEnd { it in URL_TRAILING }
+    val schemeEnd = url.indexOf("://")
+    if (schemeEnd < 0 || url.length <= schemeEnd + 3) return null
+    return url
+}
+
+/** Bare http(s) URL at [i]: needs a non-alphanumeric char (or text start) before it; runs to whitespace. */
+private fun tryBareUrl(s: String, i: Int): Parsed? {
+    if (i > 0 && s[i - 1].isLetterOrDigit()) return null
+    if (!s.regionMatches(i, "http://", 0, 7, ignoreCase = true) &&
+        !s.regionMatches(i, "https://", 0, 8, ignoreCase = true)
+    ) return null
+    var end = i
+    while (end < s.length && !s[end].isWhitespace()) end++
+    val url = trimBareUrl(s.substring(i, end)) ?: return null
+    return Parsed(Inline.Link(listOf(Inline.Text(url)), url), i + url.length)
 }
 
 private fun isSafeUrl(url: String): Boolean {

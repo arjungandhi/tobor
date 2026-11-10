@@ -10,7 +10,6 @@ import androidx.compose.ui.text.withLink
 import dev.tobor.app.ui.theme.ToborColors
 
 private val bareUrl = Regex("""https?://\S+""")
-private const val TRAILING = ").,;:!?'\""
 
 private val linkifyStyles = TextLinkStyles(SpanStyle(color = ToborColors.teal, textDecoration = TextDecoration.Underline))
 
@@ -18,8 +17,7 @@ private val linkifyStyles = TextLinkStyles(SpanStyle(color = ToborColors.teal, t
 fun linkifyUrls(text: String): AnnotatedString = buildAnnotatedString {
     var last = 0
     for (m in bareUrl.findAll(text)) {
-        val url = m.value.trimEnd { it in TRAILING }
-        if (!url.contains("://") || url.endsWith("://")) continue
+        val url = trimBareUrl(m.value) ?: continue
         append(text.substring(last, m.range.first))
         withLink(LinkAnnotation.Url(url, linkifyStyles)) { append(url) }
         last = m.range.first + url.length
