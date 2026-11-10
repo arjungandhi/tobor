@@ -70,7 +70,10 @@ import dev.tobor.app.api.ToborApiException
 import dev.tobor.app.api.WatchClient
 import dev.tobor.app.api.WatchStatus
 import dev.tobor.app.api.WorkerSummary
+import dev.tobor.app.ui.screens.session.AttachImageButton
 import dev.tobor.app.ui.screens.session.Item
+import dev.tobor.app.ui.screens.session.PendingImages
+import dev.tobor.app.ui.screens.session.PendingImagesRow
 import dev.tobor.app.ui.screens.session.RawEntry
 import dev.tobor.app.ui.screens.session.TranscriptItem
 import dev.tobor.app.ui.screens.session.liveItems
@@ -655,6 +658,7 @@ private fun Composer(
     var sending by remember(sessionId) { mutableStateOf(false) }
     var composeError by remember(sessionId) { mutableStateOf<String?>(null) }
     var steerMode by remember(sessionId) { mutableStateOf("steer") }
+    val pendingImages = remember(sessionId) { PendingImages() }
 
     Column(
         Modifier
@@ -678,7 +682,9 @@ private fun Composer(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
+        PendingImagesRow(pendingImages, Modifier.padding(bottom = 6.dp))
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AttachImageButton(pendingImages, onProblem = { composeError = it }, modifier = Modifier.padding(bottom = 2.dp))
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
@@ -698,17 +704,19 @@ private fun Composer(
                     cursorColor = ToborColors.gold,
                 ),
             )
-            val canSend = draft.isNotBlank() && !sending
+            val canSend = (draft.isNotBlank() || pendingImages.items.isNotEmpty()) && !sending && !pendingImages.loading
             FilledIconButton(
                 onClick = {
                     val text = draft.trim()
                     val mode = if (running) steerMode else "prompt"
+                    val attachments = pendingImages.attachments
                     sending = true
                     composeError = null
                     scope.launch {
                         try {
-                            api.input(sessionId, text, mode, java.util.UUID.randomUUID().toString())
+                            api.input(sessionId, text, mode, java.util.UUID.randomUUID().toString(), attachments)
                             draft = ""
+                            pendingImages.clear()
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {

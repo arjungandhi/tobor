@@ -67,19 +67,26 @@ internal sealed interface Block {
     data class Thinking(val text: String) : Block
     data class Call(val name: String, val args: String) : Block
     data class Other(val label: String) : Block
+    data class Image(val part: ImagePart) : Block
 }
 
 internal sealed interface Item {
     val key: String
 
-    data class User(override val key: String, val text: String) : Item
+    data class User(override val key: String, val text: String, val images: List<ImagePart> = emptyList()) : Item
     data class Assistant(
         override val key: String,
         val model: String,
         val blocks: List<Block>,
         val live: Boolean = false,
     ) : Item
-    data class ToolResult(override val key: String, val name: String, val isError: Boolean, val text: String) : Item
+    data class ToolResult(
+        override val key: String,
+        val name: String,
+        val isError: Boolean,
+        val text: String,
+        val images: List<ImagePart> = emptyList(),
+    ) : Item
     data class System(override val key: String, val text: String) : Item
     data class Divider(override val key: String, val label: String) : Item
     data class LiveTool(override val key: String, val name: String, val status: String, val output: String) : Item
@@ -106,6 +113,7 @@ private fun parseBlocks(content: JsonElement?): List<Block> = when (content) {
                     o["name"].str() ?: "tool",
                     (o["arguments"] ?: JsonNull).toString().replace('\n', ' '),
                 )
+                "image" -> imagePart(o)?.let { Block.Image(it) } ?: Block.Other("[image]")
                 else -> Block.Other("[${type ?: "block"}]")
             }
         }.getOrElse { Block.Other("[unreadable block]") }
@@ -113,17 +121,29 @@ private fun parseBlocks(content: JsonElement?): List<Block> = when (content) {
     is JsonObject -> parseBlocks(JsonArray(listOf(content)))
 }
 
-private fun plainText(content: JsonElement?): String = when (content) {
+private fun imagePart(o: JsonObject): ImagePart? {
+    val data = o["data"].str()?.takeIf { it.isNotEmpty() } ?: return null
+    return ImagePart(data, o["mimeType"].str() ?: "image")
+}
+
+/** Image parts of a message `content` array, in order. */
+private fun imageParts(content: JsonElement?): List<ImagePart> =
+    (content as? JsonArray)?.mapNotNull { el ->
+        (el as? JsonObject)?.takeIf { it["type"].str() == "image" }?.let(::imagePart)
+    }.orEmpty()
+
+/** Flattens `content` to text. Image parts become "[image]" unless [imagePlaceholder] is false (callers that render them). */
+private fun plainText(content: JsonElement?, imagePlaceholder: Boolean = true): String = when (content) {
     null, is JsonNull -> ""
     is JsonPrimitive -> content.contentOrNull ?: ""
-    is JsonArray -> content.joinToString("\n") { el ->
+    is JsonArray -> content.mapNotNull { el ->
         val o = el as? JsonObject
         when (o?.get("type").str()) {
             "text" -> o?.get("text").str() ?: ""
-            "image" -> "[image]"
+            "image" -> if (imagePlaceholder || imagePart(o!!) == null) "[image]" else null
             else -> "[${o?.get("type").str() ?: "block"}]"
         }
-    }
+    }.joinToString("\n")
     is JsonObject -> content.toString()
 }
 
@@ -137,13 +157,14 @@ internal fun RawEntry.toItem(): Item {
     return runCatching<Item> {
         val m = model0
         when (kind) {
-            "pi.user" -> Item.User(key, plainText(m?.get("content")))
+            "pi.user" -> Item.User(key, plainText(m?.get("content"), imagePlaceholder = false), imageParts(m?.get("content")))
             "pi.assistant" -> Item.Assistant(key, shortModel(m?.get("model").str()), parseBlocks(m?.get("content")))
             "pi.tool-result" -> Item.ToolResult(
                 key,
                 m?.get("toolName").str() ?: "tool",
                 (m?.get("isError") as? JsonPrimitive)?.booleanOrNull ?: false,
-                plainText(m?.get("content")),
+                plainText(m?.get("content"), imagePlaceholder = false),
+                imageParts(m?.get("content")),
             )
             "pi.system" -> Item.System(key, plainText(m?.get("content")))
             "pi.reset" -> Item.Divider(key, "— reset —")
@@ -282,13 +303,16 @@ private fun UserCard(item: Item.User) {
             .padding(10.dp),
     ) {
         Text("operator", color = ToborColors.gold, fontFamily = SpecialElite, fontSize = 10.sp)
-        Text(
-            clip(item.text, 8000),
-            color = ToborColors.fg,
-            fontFamily = CourierPrime,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(top = 2.dp),
-        )
+        if (item.text.isNotEmpty() || item.images.isEmpty()) {
+            Text(
+                clip(item.text, 8000),
+                color = ToborColors.fg,
+                fontFamily = CourierPrime,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        item.images.forEach { TranscriptImage(it, Modifier.padding(top = 4.dp)) }
     }
 }
 
@@ -321,6 +345,7 @@ private fun AssistantBlock(item: Item.Assistant) {
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                is Block.Image -> TranscriptImage(b.part)
                 is Block.Other -> Text(b.label, color = ToborColors.subtle, fontFamily = SpecialElite, fontSize = 11.sp)
             }
         }
@@ -378,29 +403,32 @@ private fun CardShell(
 @Composable
 private fun ToolResultCard(item: Item.ToolResult) {
     var open by remember { mutableStateOf(false) }
-    CardShell(
-        borderColor = if (item.isError) ToborColors.error else ToborColors.border,
-        borderWidth = 1.dp,
-        header = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    item.name,
-                    modifier = Modifier.weight(1f),
-                    color = ToborColors.fg,
-                    fontFamily = SpecialElite,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (item.isError) Tag("err", ToborColors.error) else Tag("ok", ToborColors.success)
-                Text(if (open) "▾" else "▸", color = ToborColors.muted, fontSize = 12.sp)
-            }
-        },
-        body = clip(item.text.ifEmpty { "(empty)" }, 4000),
-        onToggle = { open = !open },
-        expanded = open,
-        linkify = true,
-    )
+    Column {
+        CardShell(
+            borderColor = if (item.isError) ToborColors.error else ToborColors.border,
+            borderWidth = 1.dp,
+            header = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        item.name,
+                        modifier = Modifier.weight(1f),
+                        color = ToborColors.fg,
+                        fontFamily = SpecialElite,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (item.isError) Tag("err", ToborColors.error) else Tag("ok", ToborColors.success)
+                    Text(if (open) "▾" else "▸", color = ToborColors.muted, fontSize = 12.sp)
+                }
+            },
+            body = clip(item.text.ifEmpty { if (item.images.isEmpty()) "(empty)" else "(image)" }, 4000),
+            onToggle = { open = !open },
+            expanded = open,
+            linkify = true,
+        )
+        item.images.forEach { TranscriptImage(it, Modifier.padding(vertical = 4.dp)) }
+    }
 }
 
 @Composable
