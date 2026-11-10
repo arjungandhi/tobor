@@ -41,7 +41,7 @@ import { showSchedules } from "./screens/schedules.js";
 import { pickModel, SessionScreen } from "./screens/session.js";
 import { showSessions } from "./screens/sessions.js";
 import { openWorkerTranscript, showWorkers } from "./screens/workers.js";
-import { c, selectListTheme, TERMINAL_COLORS } from "./theme.js";
+import { c, selectListTheme } from "./theme.js";
 
 /** A bordered modal: title, body lines, an optional interactive child, and a key-hint footer. */
 export class Panel implements Component, Focusable {
@@ -90,17 +90,17 @@ export class Panel implements Component, Focusable {
 
 	render(width: number): string[] {
 		const inner = Math.max(1, width - 4);
-		const side = c.gold("│");
+		const side = c.accent("│");
 		const row = (line: string): string => `${side} ${truncateToWidth(line, inner, "…", true)} ${side}`;
 		const title = truncateToWidth(` ${this.title} `, Math.max(1, width - 6));
-		const out = [`${c.gold("╭─")}${c.bold(c.gold(title))}${c.gold(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(title)))}╮`)}`];
+		const out = [`${c.accent("╭─")}${c.bold(c.accent(title))}${c.accent(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(title)))}╮`)}`];
 		for (const line of this.lines) for (const wrapped of line === "" ? [""] : wrapTextWithAnsi(line, inner)) out.push(row(wrapped));
 		if (this.child) {
 			if (this.lines.length > 0) out.push(row(""));
 			for (const line of this.child.render(inner)) out.push(row(line));
 		}
 		const hint = this.hint ? truncateToWidth(` ${this.hint} `, Math.max(1, width - 6)) : "";
-		out.push(`${c.gold("╰─")}${c.dim(hint)}${c.gold(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(hint)))}╯`)}`);
+		out.push(`${c.accent("╰─")}${c.dim(hint)}${c.accent(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(hint)))}╯`)}`);
 		return out;
 	}
 }
@@ -154,8 +154,6 @@ export class App {
 	run(): Promise<number> {
 		const { promise, resolve } = Promise.withResolvers<number>();
 		this.exit = resolve;
-		process.on("exit", restoreTerminalColors);
-		this.terminal.write(TERMINAL_COLORS.set);
 		this.tui.addInputListener((data) => this.onInput(data));
 		this.tui.setFocus(this.session.composer);
 		this.tui.start();
@@ -171,8 +169,6 @@ export class App {
 		this.session.close();
 		this.tui.setLayoutRoot(new VStack([]));
 		this.tui.stop();
-		restoreTerminalColors();
-		process.off("exit", restoreTerminalColors);
 		this.exit?.(0);
 	}
 
@@ -370,17 +366,17 @@ export class App {
 				: `#${s.target.id} ${s.target.title}`
 			: "no session";
 		const cwd = s.detail?.cwd ?? "";
-		this.band.setHeader(`${c.bold(c.gold("tobor"))} ${c.dim("▸")} ${c.cream(host)} ${c.dim("▸")} ${c.cream(where)}`, c.dim(cwd));
+		this.band.setHeader(`${c.bold(c.accent("tobor"))} ${c.dim("▸")} ${host} ${c.dim("▸")} ${where}`, c.dim(cwd));
 
 		const conn = this.eventsState === "open" && (s.target === undefined || s.watchState === "open");
 		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.eventsState === "open" ? s.watchState : this.eventsState}`)];
 		if (s.target) {
 			const state = s.state();
-			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : c.muted;
+			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : c.dim;
 			segments.push(paint(state));
-			if (s.detail) segments.push(c.cream(s.detail.model.split("/").pop() ?? s.detail.model), c.muted(s.detail.approval_mode));
+			if (s.detail) segments.push(s.detail.model.split("/").pop() ?? s.detail.model, c.dim(s.detail.approval_mode));
 			const usage = s.usage();
-			segments.push(c.muted(`$${usage.cost.toFixed(4)} · ${formatTokens(usage.tokens)} tok`));
+			segments.push(c.dim(`$${usage.cost.toFixed(4)} · ${formatTokens(usage.tokens)} tok`));
 		}
 		const pending = this.approvals.length;
 		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Ctrl+A`));
@@ -501,9 +497,9 @@ export class App {
 	private async help(): Promise<void> {
 		const width = Math.max(...HELP.map(([key]) => key.length));
 		const lines = [
-			...HELP.map(([key, what]) => `${c.gold(key.padEnd(width))}  ${c.cream(what)}`),
+			...HELP.map(([key, what]) => `${c.accent(key.padEnd(width))}  ${what}`),
 			"",
-			`${c.gold("commands")}  ${c.muted(COMMANDS.map((cmd) => `/${cmd.name}${cmd.argumentHint ? ` ${cmd.argumentHint}` : ""}`).join("  "))}`,
+			`${c.accent("commands")}  ${c.dim(COMMANDS.map((cmd) => `/${cmd.name}${cmd.argumentHint ? ` ${cmd.argumentHint}` : ""}`).join("  "))}`,
 		];
 		await this.info("help", lines);
 	}
@@ -631,19 +627,13 @@ export class App {
 	/** Suspend the UI around a foreground child process such as `$EDITOR`. */
 	async suspend<T>(fn: () => T | Promise<T>): Promise<T> {
 		this.tui.stop();
-		restoreTerminalColors();
 		try {
 			return await fn();
 		} finally {
-			this.terminal.write(TERMINAL_COLORS.set);
 			this.tui.start();
 			this.tui.requestRender(true);
 		}
 	}
-}
-
-function restoreTerminalColors(): void {
-	process.stdout.write(TERMINAL_COLORS.reset);
 }
 
 function openExternal(url: string): void {

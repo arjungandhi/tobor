@@ -7,8 +7,8 @@ import { c } from "../theme.js";
 function whoamiLines(w: WhoamiResponse | undefined, host: string): string[] {
 	if (!w) return [c.warning(`${host}: not reachable`)];
 	return [
-		`${c.gold(w.host)} ${c.muted(`tobor ${w.version} · pi-durable ${w.pi_durable} · node ${w.node}`)}`,
-		c.muted(`api ${w.public_url} · artifacts ${w.artifacts_url}${w.ntfy_topic ? ` · ntfy ${w.ntfy_topic}` : ""}`),
+		`${c.accent(w.host)} ${c.dim(`tobor ${w.version} · pi-durable ${w.pi_durable} · node ${w.node}`)}`,
+		c.dim(`api ${w.public_url} · artifacts ${w.artifacts_url}${w.ntfy_topic ? ` · ntfy ${w.ntfy_topic}` : ""}`),
 		w.chrome.found ? c.success(`chrome ${w.chrome.version ?? "found"} (PDF export)`) : c.warning("chrome not found: PDF export unavailable"),
 	];
 }
@@ -19,11 +19,11 @@ export async function showHosts(app: App): Promise<void> {
 	const active = app.context;
 	const items = config.contexts.map((ctx) => ({
 		value: ctx.name,
-		label: `${ctx.name === config.active ? c.gold("● ") : "  "}${ctx.name}`,
+		label: `${ctx.name === config.active ? c.accent("● ") : "  "}${ctx.name}`,
 		description: ctx.host,
 	}));
 	const picked = await app.pick("hosts", items, {
-		lines: active ? whoamiLines(app.whoami, active.host) : [c.muted("no host selected")],
+		lines: active ? whoamiLines(app.whoami, active.host) : [c.dim("no host selected")],
 		hint: "Enter switch · a add · d remove · Esc close",
 		keys: ["a", "d"],
 		selected: Math.max(0, config.contexts.findIndex((x) => x.name === config.active)),
@@ -46,7 +46,7 @@ export async function showHosts(app: App): Promise<void> {
 }
 
 async function addHost(app: App): Promise<void> {
-	const host = await app.ask("add host", { placeholder: "host:port (default port 7879)", lines: [c.muted("the node's API address, e.g. a tailnet name")] });
+	const host = await app.ask("add host", { placeholder: "host:port (default port 7879)", lines: [c.dim("the node's API address, e.g. a tailnet name")] });
 	if (!host?.trim()) return showHosts(app);
 	const next = addOrSelect(app.config, host);
 	const name = next.active ?? host;

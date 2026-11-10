@@ -19,10 +19,10 @@ export function approvalCard(app: App, a: PendingApproval): string[] {
 	const args = JSON.stringify(a.args, null, 2) ?? "";
 	const argLines = args.split("\n");
 	return [
-		`${c.bold(c.gold(a.tool))}  ${c.muted(origin(app, a))}`,
+		`${c.bold(c.accent(a.tool))}  ${c.dim(origin(app, a))}`,
 		c.dim(`requested ${age(now - a.createdAt)} ago · auto-denied in ${age(a.expiresAt - now)} · call ${a.callId}`),
 		"",
-		...argLines.slice(0, 20).map((line) => c.cream(line)),
+		...argLines.slice(0, 20),
 		...(argLines.length > 20 ? [c.dim(`… ${argLines.length - 20} more lines`)] : []),
 	];
 }

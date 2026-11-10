@@ -4,7 +4,7 @@ import { c } from "../theme.js";
 import { newSession } from "./new-session.js";
 
 const STATE: Record<SessionState, (text: string) => string> = {
-	idle: c.muted,
+	idle: c.dim,
 	running: c.accent,
 	waiting: c.warning,
 	failed: c.error,

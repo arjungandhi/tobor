@@ -30,7 +30,7 @@ export async function newSession(app: App, prompt?: string): Promise<void> {
 		"new session · model",
 		ordered.map((m) => ({
 			value: m.ref,
-			label: `${m.ref === models.defaults.model ? c.gold("● ") : "  "}${m.ref}`,
+			label: `${m.ref === models.defaults.model ? c.accent("● ") : "  "}${m.ref}`,
 			description: `${m.name}${m.available ? "" : " · no credential"}`,
 		})),
 	);
@@ -49,7 +49,7 @@ export async function newSession(app: App, prompt?: string): Promise<void> {
 	]);
 	if (!modePick?.value) return;
 
-	const text = prompt ?? (await app.ask("new session · first prompt", { lines: [c.muted(`${cwd} · ${modelPick.value} · ${approvalPick.value} · ${modePick.value}`)] }));
+	const text = prompt ?? (await app.ask("new session · first prompt", { lines: [c.dim(`${cwd} · ${modelPick.value} · ${approvalPick.value} · ${modePick.value}`)] }));
 	if (!text?.trim()) return;
 	const { id } = await client.createSession({
 		cwd,

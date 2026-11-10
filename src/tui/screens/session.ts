@@ -331,7 +331,7 @@ export async function pickModel(app: App): Promise<void> {
 	const current = s.detail?.model ?? defaults.model;
 	const items = models.map((m) => ({
 		value: m.ref,
-		label: `${m.ref === current ? c.gold("● ") : "  "}${m.ref}`,
+		label: `${m.ref === current ? c.accent("● ") : "  "}${m.ref}`,
 		description: `${m.name}${m.available ? "" : " · no credential"}${m.cost ? ` · $${m.cost.input}/$${m.cost.output} per Mtok` : ""}`,
 	}));
 	const picked = await app.pick("model", items, { selected: Math.max(0, models.findIndex((m) => m.ref === current)) });

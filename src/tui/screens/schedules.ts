@@ -43,13 +43,13 @@ export async function showSchedules(app: App): Promise<void> {
 		return showSchedules(app);
 	}
 	await app.info(s.name, [
-		c.muted(describe(s)),
-		c.muted(`model ${s.model ?? "default"} · approval ${s.approval_mode ?? "ask"} · misfire grace ${s.misfire_grace ?? "2h"}`),
+		c.dim(describe(s)),
+		c.dim(`model ${s.model ?? "default"} · approval ${s.approval_mode ?? "ask"} · misfire grace ${s.misfire_grace ?? "2h"}`),
 		"",
-		c.gold("prompt"),
-		...s.prompt.split("\n").map((line) => c.cream(line)),
+		c.accent("prompt"),
+		...s.prompt.split("\n"),
 		"",
-		c.gold("runs"),
+		c.accent("runs"),
 		...(s.runs.length === 0
 			? [c.dim("none yet")]
 			: s.runs
@@ -64,7 +64,7 @@ async function createSchedule(app: App): Promise<void> {
 	const name = await app.ask("new schedule · name");
 	if (!name?.trim()) return;
 	const timing = await app.ask("new schedule · when", {
-		lines: [c.muted("a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)")],
+		lines: [c.dim("a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)")],
 	});
 	if (!timing?.trim()) return;
 	const when = parseTiming(timing);

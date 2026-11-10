@@ -13,7 +13,7 @@ export async function showFiles(app: App, dir = ""): Promise<void> {
 	const entries = [...listing.entries].sort((a, b) => Number(b.type === "dir") - Number(a.type === "dir") || a.name.localeCompare(b.name));
 	const items = [
 		...(dir ? [{ value: "..", label: "..", description: "up" }] : []),
-		...entries.map((e) => ({ value: e.name, label: e.type === "dir" ? c.gold(`${e.name}/`) : e.name, description: e.type })),
+		...entries.map((e) => ({ value: e.name, label: e.type === "dir" ? c.accent(`${e.name}/`) : e.name, description: e.type })),
 	];
 	const picked = await app.pick(`.tobor/${dir}`, items, { hint: "Enter open · Esc close" });
 	if (!picked?.value) return;
@@ -48,7 +48,7 @@ async function editFile(app: App, path: string): Promise<void> {
 				return;
 			} catch (err) {
 				if (!(err instanceof ApiRequestError) || (err.status !== 422 && err.status !== 409)) throw err;
-				const problems = err.body?.errors?.map((e) => `${c.gold(e.path)} ${e.message}`) ?? [err.body?.error ?? err.message];
+				const problems = err.body?.errors?.map((e) => `${c.accent(e.path)} ${e.message}`) ?? [err.body?.error ?? err.message];
 				const again = await app.confirm(err.status === 409 ? `${path} changed on the node` : `${path} rejected`, [
 					...problems,
 					"",

@@ -40,12 +40,12 @@ export class WorkersStrip implements Component {
 		const lines: string[] = [];
 		if (this.workers.length > 0 || this.todo) {
 			const active = this.workers.filter((w) => w.state === "running" || w.state === "starting").length;
-			const todo = this.todo ? c.muted(` · todo ${this.todo.done}/${this.todo.total}`) : "";
+			const todo = this.todo ? c.dim(` · todo ${this.todo.done}/${this.todo.total}`) : "";
 			const head = this.workers.length > 0 ? `workers ${active}/${this.workers.length} running` : "";
-			lines.push(truncateToWidth(` ${c.gold(head)}${todo}${c.dim(" · Ctrl+W list · Ctrl+O open")}`, width));
+			lines.push(truncateToWidth(` ${c.accent(head)}${todo}${c.dim(" · Ctrl+W list · Ctrl+O open")}`, width));
 			const rows = [...this.workers].sort((a, b) => Number(b.state === "running") - Number(a.state === "running") || b.createdAt - a.createdAt);
 			for (const w of rows.slice(0, MAX_ROWS)) {
-				const row = ` ${STATE[w.state]("◆")} ${c.cream(w.name)} ${c.dim(w.agent)} ${STATE[w.state](w.state)} ${c.muted(`$${w.usage.cost.toFixed(3)}`)} ${c.dim(lastLine(w.lastText))}`;
+				const row = ` ${STATE[w.state]("◆")} ${w.name} ${c.dim(w.agent)} ${STATE[w.state](w.state)} ${c.dim(`$${w.usage.cost.toFixed(3)}`)} ${c.dim(lastLine(w.lastText))}`;
 				lines.push(truncateToWidth(row, width));
 			}
 			if (rows.length > MAX_ROWS) lines.push(c.dim(` … ${rows.length - MAX_ROWS} more`));

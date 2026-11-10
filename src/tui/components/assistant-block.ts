@@ -1,5 +1,5 @@
 import { type Component, Markdown } from "@earendil-works/pi-tui";
-import { c, markdownTheme, proseStyle, thinkingStyle } from "../theme.js";
+import { c, markdownTheme, thinkingStyle } from "../theme.js";
 
 /** Assistant prose or thinking rendered as Markdown; `update` calls `setText` only when the text changed. */
 export class AssistantBlock implements Component {
@@ -12,7 +12,7 @@ export class AssistantBlock implements Component {
 		private readonly thinking: boolean,
 	) {
 		this.text = text;
-		this.markdown = new Markdown(text, thinking ? 2 : 0, 0, markdownTheme, thinking ? thinkingStyle : proseStyle);
+		this.markdown = new Markdown(text, thinking ? 2 : 0, 0, markdownTheme, thinking ? thinkingStyle : undefined);
 	}
 
 	/** Set the block's text (a streaming partial grows by appends). */
@@ -30,7 +30,7 @@ export class AssistantBlock implements Component {
 	render(width: number): string[] {
 		const source = this.markdown.render(width);
 		if (this.cache?.source === source) return this.cache.lines;
-		const lines = this.thinking ? ["", c.dim(c.italic("  thinking")), ...source] : ["", ...source];
+		const lines = this.thinking ? ["", c.thinking(c.italic("  thinking")), ...source] : ["", ...source];
 		this.cache = { source, lines };
 		return lines;
 	}

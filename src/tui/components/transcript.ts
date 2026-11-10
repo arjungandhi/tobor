@@ -31,9 +31,9 @@ class NoticeLine implements Component {
 
 	render(width: number): string[] {
 		if (this.cache?.width === width) return this.cache.lines;
-		const paint = { info: c.muted, warning: c.warning, error: c.error, marker: c.dim }[this.level];
+		const paint = { info: c.dim, warning: c.warning, error: c.error, marker: c.dim }[this.level];
 		const glyph = { info: "·", warning: "!", error: "✗", marker: "↑" }[this.level];
-		const edge = this.selected ? c.gold("▎") : " ";
+		const edge = this.selected ? c.accent("▎") : " ";
 		const body = wrapTextWithAnsi(paint(`${glyph} ${this.text}`), Math.max(1, width - 1)).map((line) => truncateToWidth(edge + line, width));
 		const lines = ["", ...body];
 		this.cache = { width, lines };

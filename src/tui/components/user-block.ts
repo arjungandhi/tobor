@@ -23,8 +23,8 @@ export class UserBlock implements Component {
 
 	render(width: number): string[] {
 		if (this.cache?.width === width) return this.cache.lines;
-		const bar = c.accent("▌ ");
-		const body = wrapTextWithAnsi(this.text.replace(/\t/g, "    "), Math.max(1, width - 2)).map((line) => bar + c.bold(c.cream(line)));
+		const bar = c.user("▌ ");
+		const body = wrapTextWithAnsi(this.text.replace(/\t/g, "    "), Math.max(1, width - 2)).map((line) => bar + c.bold(line));
 		const lines = ["", ...(body.length > 0 ? body : [bar])];
 		this.cache = { width, lines };
 		return lines;

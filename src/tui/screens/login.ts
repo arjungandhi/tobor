@@ -19,7 +19,7 @@ export async function showLogin(app: App): Promise<void> {
 			label: `${status.source === "none" ? c.dim("○") : c.success("●")} ${name}`,
 			description: authLine(status),
 		})),
-		{ lines: [c.muted(`credentials are stored on ${app.context?.name ?? "the node"}, never in this terminal`)] },
+		{ lines: [c.dim(`credentials are stored on ${app.context?.name ?? "the node"}, never in this terminal`)] },
 	);
 	if (!picked?.value) return;
 	const provider = picked.value;
@@ -27,12 +27,12 @@ export async function showLogin(app: App): Promise<void> {
 	const { url, instructions } = await client.loginStart(provider);
 	const code = await app.ask(`login · ${provider}`, {
 		lines: [
-			c.cream("Open this URL on any device and approve:"),
+			"Open this URL on any device and approve:",
 			"",
-			c.gold(url),
+			c.accent(url),
 			"",
-			...(instructions ? [c.muted(instructions), ""] : []),
-			c.cream("Then paste the code it shows:"),
+			...(instructions ? [c.dim(instructions), ""] : []),
+			"Then paste the code it shows:",
 		],
 		placeholder: "code",
 		hint: "Enter submit · Esc cancel · select the URL with the mouse to copy",

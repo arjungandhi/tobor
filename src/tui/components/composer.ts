@@ -49,6 +49,6 @@ export class Composer extends Editor {
 	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
 		if (hiddenLineCount > 0 || this.label === "") return super.renderTopBorder(width, hiddenLineCount);
 		const label = truncateToWidth(` ${this.label} `, Math.max(0, width - 4));
-		return `${this.borderColor("──")}${c.muted(label)}${this.borderColor("─".repeat(Math.max(0, width - 2 - visibleWidth(label))))}`;
+		return `${this.borderColor("──")}${c.dim(label)}${this.borderColor("─".repeat(Math.max(0, width - 2 - visibleWidth(label))))}`;
 	}
 }

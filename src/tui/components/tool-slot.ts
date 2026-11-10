@@ -69,10 +69,10 @@ export class ToolSlotView implements Component {
 		if (this.cache?.width === width) return this.cache.lines;
 		const { name, args, status, output, droppedLines } = this.block;
 		const inner = Math.max(1, width - 2);
-		const edge = this.selected ? c.gold("▎") : " ";
-		const row = (text: string): string => c.panelBg(edge + truncateToWidth(text, width - 1, "…", true));
+		const edge = this.selected ? c.accent("▎") : " ";
+		const row = (text: string): string => edge + truncateToWidth(text, width - 1, "…", true);
 		const label = status === "approval" ? c.warning(" awaiting approval · Ctrl+A") : status === "streaming" ? c.dim(" preparing") : "";
-		const lines = ["", row(`${STATUS[status]} ${c.bold(c.gold(name))} ${c.muted(clean(argsSummary(name, args)))}${label}`)];
+		const lines = ["", row(`${STATUS[status]} ${c.bold(c.tool(name))} ${c.dim(clean(argsSummary(name, args)))}${label}`)];
 		if (this.expanded && args !== undefined && !(typeof args === "object" && args !== null && "command" in args && Object.keys(args).length === 1)) {
 			for (const line of clean(JSON.stringify(args, null, 2)).split("\n")) {
 				for (const wrapped of wrapTextWithAnsi(c.dim(line), inner)) lines.push(row(` ${wrapped}`));
@@ -84,9 +84,8 @@ export class ToolSlotView implements Component {
 			const shown = this.expanded ? all : all.slice(-TAIL_LINES);
 			const hidden = all.length - shown.length + (droppedLines ?? 0);
 			if (hidden > 0) lines.push(row(c.dim(`  ⋮ ${hidden} earlier line${hidden === 1 ? "" : "s"}${this.expanded ? "" : " · Enter expands"}`)));
-			const paint = status === "error" ? c.error : c.cream;
-			for (const line of shown) {
-				for (const wrapped of this.expanded ? wrapTextWithAnsi(line, inner) : [line]) lines.push(row(` ${paint(wrapped)}`));
+						for (const line of shown) {
+				for (const wrapped of this.expanded ? wrapTextWithAnsi(line, inner) : [line]) lines.push(row(` ${status === "error" ? c.error(wrapped) : wrapped}`));
 			}
 		}
 		this.cache = { width, lines };

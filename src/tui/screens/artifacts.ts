@@ -39,17 +39,17 @@ export async function showArtifacts(app: App): Promise<void> {
 		);
 		if (!rev?.value) return;
 		if (rev.key === "p") await downloadPdf(app, rev.value);
-		else await app.info(`${artifact.title} r${rev.value.revision}`, [c.gold("viewer"), rev.value.url, "", c.gold("pdf"), rev.value.pdfUrl]);
+		else await app.info(`${artifact.title} r${rev.value.revision}`, [c.accent("viewer"), rev.value.url, "", c.accent("pdf"), rev.value.pdfUrl]);
 		return;
 	}
 	await app.info(artifact.title, [
-		c.gold("latest"),
+		c.accent("latest"),
 		artifact.url,
 		"",
-		c.gold(`this revision (r${artifact.latest.revision})`),
+		c.accent(`this revision (r${artifact.latest.revision})`),
 		artifact.latest.url,
 		"",
-		c.gold("pdf"),
+		c.accent("pdf"),
 		artifact.latest.pdfUrl,
 		"",
 		c.dim("select with the mouse to copy · p in the list saves the PDF"),
