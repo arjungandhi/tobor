@@ -81,7 +81,12 @@ artifacts: { theme: retro-log }
 		expect(config.listen).toEqual({ host: "127.0.0.1", port: 7879 });
 		expect(config.artifacts_listen.port).toBe(7880);
 		expect(config.allowed_origins).toEqual(["http://127.0.0.1:7879"]);
-		expect(config.defaults).toMatchObject({ approval_mode: "ask", mode: "director", max_workers: 8 });
+		expect(config.defaults).toMatchObject({ approval_mode: "auto", mode: "director", max_workers: 8 });
+	});
+
+	it("lets an explicit defaults.approval_mode win over the built-in auto", () => {
+		expect(parseConfigText("defaults: { approval_mode: ask }", HOME).config.defaults.approval_mode).toBe("ask");
+		expect(parseConfigText("defaults: { mode: solo }", HOME).config.defaults.approval_mode).toBe("auto");
 	});
 
 	it("reports every problem with its key path", () => {

@@ -151,7 +151,7 @@ Context files are read at render time (no commit-keyed cache); pi-durable re-sen
 | `wait`, `agent_output` | tobor; read worker results | no |
 | `mcp__<server>__<tool>` | registered from `mcp.json` (see MCP) | per `mcp.approval`, default yes |
 
-**Approval.** `approval_mode: ask | auto` is set per conversation; the default comes from node `config.yml`. `tobor.approvals` is declared with `fork: "initial"`, so a fork starts without the parent's session grants. In `ask`, a `beforeTool` hook on `ToolTask` gates `bash`, `write`, `edit`, `artifact_export`, `schedule_create`, MCP tools per `mcp.approval`, and `task` calls that spawn an `auto` worker:
+**Approval.** `approval_mode: ask | auto` is set per conversation; the default comes from node `config.yml` (built-in default `auto`). `tobor.approvals` is declared with `fork: "initial"`, so a fork starts without the parent's session grants. In `ask`, a `beforeTool` hook on `ToolTask` gates `bash`, `write`, `edit`, `artifact_export`, `schedule_create`, MCP tools per `mcp.approval`, and `task` calls that spawn an `auto` worker:
 1. Read `tobor.approvals`. A decision for `call.id`, or `session[toolName] === true`, proceeds (`undefined`); a stored deny returns `{block}`.
 2. Otherwise commit a pending record `{callId, tool, args, createdAt}` keyed `(conversationId, callId)` to `tobor.approvals` **before** awaiting. The in-memory registry holds only the resolver. Emit `approval.requested` on `/api/events`, send ntfy, and await the promise raced against `ctx` cancellation, so an abort unblocks the hook and it blocks.
 3. `POST /api/approvals/:callId {decision}` commits the decision (replacing the pending record), then resolves the resolver if present. The first decision wins; later posts return 409.
@@ -357,7 +357,7 @@ notify: { ntfy: { url: https://ntfy.sh, topic: tobor-<random> }, on: [approval, 
 defaults:
   model: anthropic/claude-fable-5
   thinking: high
-  approval_mode: ask
+  approval_mode: auto
   max_turns: 100
   mode: director             # director | solo
   max_workers: 8
@@ -482,7 +482,7 @@ sequenceDiagram
 - No auth in the node. Network reachability is the access control, so binding to the tailnet IP is recommended.
 - Request hygiene against DNS rebinding and CSRF: `Host` allowlist on both listeners; `Origin` required and checked on every WS upgrade and every mutating request; JSON content type required for mutations.
 - Artifacts are served from a separate origin (`artifacts_listen`) with the header CSP above, a `sandbox` directive, `connect-src 'none'`, no escape-sandbox popups and path containment, so artifact JS cannot reach the API.
-- The agent runs as the operator, with full filesystem and shell access (no sandbox). `ask` mode is the default safeguard. `roots` gates only the starting cwd. `read` refuses tobor's secret/state files under `$TOBOR_HOME` (auth.json, agent.env, node.json, database). `schedule_create` needs approval in `ask` and cannot create `auto` schedules. Agent self-edits of `.tobor/` cannot change approval mode, `mcp.approval`, `roots`, `allowed_origins`, `allowed_hosts` or `listen` (see Self-editing).
+- The agent runs as the operator, with full filesystem and shell access (no sandbox). `ask` mode is the opt-in safeguard (the built-in default is `auto`). `roots` gates only the starting cwd. `read` refuses tobor's secret/state files under `$TOBOR_HOME` (auth.json, agent.env, node.json, database). `schedule_create` needs approval in `ask` and cannot create `auto` schedules. Agent self-edits of `.tobor/` cannot change approval mode, `mcp.approval`, `roots`, `allowed_origins`, `allowed_hosts` or `listen` (see Self-editing).
 - Secrets live in `env_file` and `auth.json` (mode 0600), never in the `.tobor` repo, and never in notifications. Payloads carry ids and titles only.
 - OAuth login (`tobor login anthropic`, or the web Host view; see Login on a headless host) writes `auth.json`. The API exposes auth status, never tokens. [INFERENCE] Whether Anthropic's terms allow Pro/Max OAuth in a third-party harness is undocumented, and the operator's call.
 

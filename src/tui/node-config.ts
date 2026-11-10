@@ -45,7 +45,7 @@ export function sessionDefaults(doc: Document): SessionDefaults {
 	const model = getField(doc, ["defaults", "model"]);
 	return {
 		...(model ? { model } : {}),
-		approval_mode: getField(doc, ["defaults", "approval_mode"]) === "auto" ? "auto" : "ask",
+		approval_mode: getField(doc, ["defaults", "approval_mode"]) === "ask" ? "ask" : "auto",
 		mode: getField(doc, ["defaults", "mode"]) === "solo" ? "solo" : "director",
 	};
 }

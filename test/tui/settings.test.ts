@@ -74,9 +74,9 @@ describe("editConfig", () => {
 });
 
 describe("sessionDefaults", () => {
-	it("reads defaults, falling back to ask/director", () => {
+	it("reads defaults, falling back to auto/director", () => {
 		expect(sessionDefaults(parseNodeConfig(SAMPLE))).toEqual({ model: "anthropic/claude-opus-5-5", approval_mode: "ask", mode: "director" });
-		expect(sessionDefaults(parseNodeConfig("roots: []\n"))).toEqual({ approval_mode: "ask", mode: "director" });
+		expect(sessionDefaults(parseNodeConfig("roots: []\n"))).toEqual({ approval_mode: "auto", mode: "director" });
 	});
 
 	it("rejects malformed YAML", () => {

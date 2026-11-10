@@ -94,7 +94,7 @@ describe("SessionIndex", () => {
 			cwd: t.root,
 			model: "faux/m",
 			mode: "solo",
-			approval_mode: "ask",
+			approval_mode: "auto",
 			kind: "session",
 			state: "idle",
 			pending: 0,
@@ -161,7 +161,7 @@ describe("SessionIndex", () => {
 		]);
 		const requested = Promise.withResolvers<void>();
 		t.host.events.on("approval.requested", () => requested.resolve());
-		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "list files" });
+		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "list files", approvalMode: "ask" });
 		await requested.promise;
 		await t.reachedState(id, "waiting");
 		expect((await t.host.sessions.list())[0]).toMatchObject({ state: "waiting", pending: 1 });

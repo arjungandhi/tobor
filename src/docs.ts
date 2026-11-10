@@ -60,7 +60,7 @@ export type SessionDocValue = {
 
 export const SessionDoc = defineDoc<SessionDocValue>({
 	kind: "tobor.session",
-	initial: () => ({ title: "", approval_mode: "ask", mode: "director", cwd: "", createdAt: 0 }),
+	initial: () => ({ title: "", approval_mode: "auto", mode: "director", cwd: "", createdAt: 0 }),
 });
 
 // ─── tobor.approvals (per conversation, fork: initial) ──────────────────────────────────────────────────────────────

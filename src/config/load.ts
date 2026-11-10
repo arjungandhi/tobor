@@ -336,7 +336,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	const defaults: Config["defaults"] = {
 		model: d.model("model") ?? DEFAULT_MODEL,
 		thinking: d.oneOf<ThinkingLevel>("thinking", THINKING_LEVELS) ?? "high",
-		approval_mode: d.oneOf<ApprovalMode>("approval_mode", APPROVAL_MODES) ?? "ask",
+		approval_mode: d.oneOf<ApprovalMode>("approval_mode", APPROVAL_MODES) ?? "auto",
 		max_turns: d.positiveInt("max_turns") ?? 100,
 		mode: d.oneOf<SessionMode>("mode", SESSION_MODES) ?? "director",
 		max_workers: d.positiveInt("max_workers") ?? 8,
