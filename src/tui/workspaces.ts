@@ -77,8 +77,10 @@ export function parseAddress(input: string): Address {
 	}
 	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`unsupported scheme: ${url.protocol}`);
 	if (url.pathname !== "/" || url.search || url.hash || url.username) throw new Error(`invalid address: ${input}`);
-	if (url.protocol === "https:") return { host: `https://${url.hostname}`, port: url.port ? Number(url.port) : 443 };
-	return { host: url.hostname, port: url.port ? Number(url.port) : DEFAULT_PORT };
+	// WHATWG URL reports "" for a scheme-default port (":80" on http), so read an explicit port from the input.
+	const explicitPort = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:\[[^\]]*\]|[^:/[\]]+):(\d+)$/i.exec(raw)?.[1];
+	if (url.protocol === "https:") return { host: `https://${url.hostname}`, port: explicitPort ? Number(explicitPort) : url.port ? Number(url.port) : 443 };
+	return { host: url.hostname, port: explicitPort ? Number(explicitPort) : (url.port ? Number(url.port) : DEFAULT_PORT) };
 }
 
 /** `host:port` for display (an https origin keeps its scheme). */
@@ -305,18 +307,26 @@ function legacyName(raw: string, taken: Set<string>): string {
 }
 
 /** Convert tui.json text to config.yml text plus last sessions by workspace name. */
-export function convertLegacy(json: string): { yaml: string; lastSessions: Record<string, number> } {
+export function convertLegacy(json: string): { yaml: string; lastSessions: Record<string, number>; skipped: string[] } {
 	const data = JSON.parse(json) as { active?: unknown; contexts?: unknown; prefs?: unknown };
 	let config: ClientConfig = { text: "", workspaces: [], prefs: {} };
 	const lastSessions: Record<string, number> = {};
 	const renamed = new Map<string, string>();
 	const taken = new Set<string>();
+	const skipped: string[] = [];
 	for (const item of Array.isArray(data.contexts) ? data.contexts : []) {
 		const { name, host, lastSession: last } = (item ?? {}) as Record<string, unknown>;
 		if (typeof name !== "string" || typeof host !== "string") continue;
+		let address: Address;
+		try {
+			address = parseAddress(host);
+		} catch {
+			skipped.push(`${name} (${host})`);
+			continue;
+		}
 		const ws = legacyName(name, taken);
 		renamed.set(name, ws);
-		config = putWorkspace(config, ws, parseAddress(host));
+		config = putWorkspace(config, ws, address);
 		if (typeof last === "number") lastSessions[ws] = last;
 	}
 	const active = typeof data.active === "string" ? renamed.get(data.active) : undefined;
@@ -325,7 +335,7 @@ export function convertLegacy(json: string): { yaml: string; lastSessions: Recor
 	if (typeof prefs.confirm_auto === "boolean") config = setPref(config, "confirm_auto", prefs.confirm_auto);
 	if (typeof prefs.editor === "string" && prefs.editor) config = setPref(config, "editor", prefs.editor);
 	if (typeof prefs.pdf_dir === "string" && prefs.pdf_dir) config = setPref(config, "pdf_dir", prefs.pdf_dir);
-	return { yaml: config.text, lastSessions };
+	return { yaml: config.text, lastSessions, skipped };
 }
 
 /** One-time migration: tui.json → config.yml (+ last sessions → state.json), renaming tui.json to tui.json.migrated. Returns a notice when it ran. */
@@ -333,11 +343,11 @@ export function migrateLegacy(env: NodeJS.ProcessEnv = process.env): string | un
 	const legacy = legacyPath(env);
 	const target = configPath(env);
 	if (!existsSync(legacy) || existsSync(target)) return undefined;
-	const { yaml, lastSessions } = convertLegacy(readFileSync(legacy, "utf8"));
+	const { yaml, lastSessions, skipped } = convertLegacy(readFileSync(legacy, "utf8"));
 	writeAtomic(target, yaml);
 	for (const [name, id] of Object.entries(lastSessions)) setLastSession(statePath(env), name, id);
 	renameSync(legacy, `${legacy}.migrated`);
-	return `migrated ${legacy} → ${target}`;
+	return `migrated ${legacy} → ${target}${skipped.length ? `; skipped unparseable workspaces: ${skipped.join(", ")}` : ""}`;
 }
 
 /** `GET /api/whoami` with a timeout; undefined when unreachable. */
