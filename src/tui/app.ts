@@ -433,7 +433,7 @@ export class App {
 		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.eventsState === "open" ? s.watchState : this.eventsState}`)];
 		if (s.target) {
 			const state = s.state();
-			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : c.dim;
+			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : state === "working" ? c.tool : c.dim;
 			segments.push(paint(state));
 			if (s.detail) segments.push(s.detail.model.split("/").pop() ?? s.detail.model, c.dim(s.detail.approval_mode));
 			const usage = s.usage();

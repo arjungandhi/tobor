@@ -9,6 +9,7 @@ const STATE: Record<SessionState, (text: string) => string> = {
 	running: c.accent,
 	waiting: c.warning,
 	failed: c.error,
+	working: c.tool,
 };
 
 function when(ms: number, now: number): string {

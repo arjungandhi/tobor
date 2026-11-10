@@ -155,12 +155,13 @@ export class SessionScreen {
 		return { done, total: items.length };
 	}
 
-	/** Session state as derived from the replica and pending approvals. */
+	/** Session state as derived from the replica, pending approvals and live workers. */
 	state(): SessionState {
 		if (!this.target || !this.replica) return "idle";
 		if (this.app.approvals.some((a) => a.conversationId === this.target?.id)) return "waiting";
 		if (this.replica.running) return "running";
-		return liveOf(this.replica.view?.docs).runFailure ? "failed" : "idle";
+		if (liveOf(this.replica.view?.docs).runFailure) return "failed";
+		return this.workers.some((w) => w.state === "starting" || w.state === "running") ? "working" : "idle";
 	}
 
 	/** Usage of the watched conversation. */
