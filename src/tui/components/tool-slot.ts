@@ -8,6 +8,7 @@ const STATUS: Record<ToolStatus, string> = {
 	streaming: c.dim("…"),
 	pending: c.dim("○"),
 	approval: c.warning("⚠"),
+	question: c.warning("?"),
 	running: c.accent("◐"),
 	done: c.success("✓"),
 	error: c.error("✗"),
@@ -71,7 +72,14 @@ export class ToolSlotView implements Component {
 		const inner = Math.max(1, width - 2);
 		const edge = this.selected ? c.accent("▎") : " ";
 		const row = (text: string): string => edge + truncateToWidth(text, width - 1, "…", true);
-		const label = status === "approval" ? c.warning(" awaiting approval · Alt+Shift+A") : status === "streaming" ? c.dim(" preparing") : "";
+		const label =
+			status === "approval"
+				? c.warning(" awaiting approval · Alt+Shift+A")
+				: status === "question"
+					? c.warning(" awaiting answer · Alt+Shift+U")
+					: status === "streaming"
+						? c.dim(" preparing")
+						: "";
 		const lines = ["", row(`${STATUS[status]} ${c.bold(c.tool(name))} ${c.dim(clean(argsSummary(name, args)))}${label}`)];
 		if (this.expanded && args !== undefined && !(typeof args === "object" && args !== null && "command" in args && Object.keys(args).length === 1)) {
 			for (const line of clean(JSON.stringify(args, null, 2)).split("\n")) {

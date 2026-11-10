@@ -144,7 +144,7 @@ export class SessionScreen {
 	/** Re-derive transcript blocks (after ops, or when pending approvals change). */
 	rebuild(): void {
 		if (!this.replica || !this.target) return;
-		this.transcript.update(this.replica.blocks(this.app.pendingCalls(this.target.id)));
+		this.transcript.update(this.replica.blocks(this.app.pendingCalls(this.target.id), this.app.askingCalls(this.target.id)));
 		this.strip.update(this.workers, this.todo());
 	}
 

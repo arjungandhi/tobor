@@ -341,6 +341,11 @@ export class App {
 		return new Set(this.approvals.filter((a) => a.conversationId === conversationId).map((a) => a.callId));
 	}
 
+	/** Pending `ask_user` questions of one conversation, by call id. */
+	askingCalls(conversationId: SessionId): Set<string> {
+		return new Set(this.questions.filter((q) => q.conversationId === conversationId).map((q) => q.callId));
+	}
+
 	private onEvent(event: NodeEvent): void {
 		switch (event.type) {
 			case "approval.requested": {
@@ -366,10 +371,12 @@ export class App {
 				const where = question.worker ? `${question.worker} in #${question.sessionId}` : `#${question.sessionId}`;
 				this.notify(`question from ${where}: ${question.question}`);
 				this.flash(`? question from ${where} · Alt+Shift+U`);
+				this.session.rebuild();
 				break;
 			}
 			case "question.answered":
 				this.questions = this.questions.filter((q) => !(q.callId === event.callId && q.conversationId === event.conversationId));
+				this.session.rebuild();
 				break;
 			case "session.state":
 				this.sessions = this.sessions.map((s) =>
@@ -425,6 +432,7 @@ export class App {
 		const questions = await client.questions();
 		if (client !== this.client) return;
 		this.questions = questions;
+		this.session.rebuild();
 		this.changed();
 	}
 

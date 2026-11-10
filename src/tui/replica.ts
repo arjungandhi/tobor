@@ -11,7 +11,7 @@ import {
 import type { WatchValue, WatchWindow } from "../api/types.js";
 
 /** Lifecycle of a tool call as the transcript shows it. */
-export type ToolStatus = "streaming" | "pending" | "approval" | "running" | "done" | "error";
+export type ToolStatus = "streaming" | "pending" | "approval" | "question" | "running" | "done" | "error";
 
 /** One renderable transcript block; `key` is stable across updates of the same block. */
 export type Block =
@@ -81,12 +81,13 @@ export function usageOf(docs: WatchValue["docs"] | undefined): ViewUsage {
 /**
  * Derive transcript blocks from transcript items and the view's docs. Tool calls are keyed by call id so a call keeps
  * its block from the streaming partial through its live slot to its result entry. `pending` holds call ids awaiting
- * operator approval.
+ * operator approval and `asking` those of `ask_user` calls awaiting an answer.
  */
 export function deriveBlocks(
 	items: readonly TranscriptItem[],
 	docs: WatchValue["docs"] | undefined,
 	pending: ReadonlySet<string> = new Set(),
+	asking: ReadonlySet<string> = new Set(),
 ): Block[] {
 	const blocks: Block[] = [];
 	const tools = new Map<string, ToolBlock>();
@@ -172,6 +173,9 @@ export function deriveBlocks(
 	}
 	for (const block of tools.values()) {
 		if ((block.status === "pending" || block.status === "streaming") && pending.has(block.callId)) block.status = "approval";
+		else if ((block.status === "pending" || block.status === "streaming" || block.status === "running") && asking.has(block.callId)) {
+			block.status = "question";
+		}
 	}
 	if (live.generation?.retry) {
 		blocks.push({ kind: "notice", key: "live:retry", level: "warning", text: `retrying: ${live.generation.retry.error}` });
@@ -260,7 +264,7 @@ export class ConversationReplica {
 	}
 
 	/** Derived transcript blocks. */
-	blocks(pending?: ReadonlySet<string>): Block[] {
-		return deriveBlocks(this.items, this.value?.docs, pending);
+	blocks(pending?: ReadonlySet<string>, asking?: ReadonlySet<string>): Block[] {
+		return deriveBlocks(this.items, this.value?.docs, pending, asking);
 	}
 }
