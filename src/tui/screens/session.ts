@@ -269,16 +269,20 @@ export class SessionScreen {
 
 	/** Answer an inline question (highlighted option or typed text), then refresh so the panel moves on or collapses. */
 	async answerQuestion(question: PendingQuestion, answer: string): Promise<void> {
-		if (this.answering) return;
+		if (this.answering) {
+			this.app.flash("still answering\u2026");
+			return;
+		}
 		this.answering = true;
 		try {
 			await this.app.api().answer(question.callId, { answer, conversationId: question.conversationId });
 			this.app.flash(`answered: ${answer.length > 40 ? `${answer.slice(0, 39)}…` : answer}`);
-			await this.app.refreshQuestions();
-			this.scroll.scrollToEnd();
 		} finally {
 			this.answering = false;
+			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.
+			await this.app.refreshQuestions();
 		}
+		this.scroll.scrollToEnd();
 	}
 
 	/** `/attach <path>` stages a local image for the next message; `/attach clear` drops the staged ones. */
