@@ -7,35 +7,17 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { artifactsSkill } from "../../artifacts/tools.js";
 import type { CliArgs } from "../../cli.js";
 import { paths as homePaths } from "../../config/home.js";
 import { ensureSystemConversation, readNodeJson, writeNodeJson } from "../harness/boot.js";
+import { skeletonFiles } from "../skeleton/index.js";
 
 const run$ = promisify(execFile);
 
-/** Minimal built-in `.tobor/` skeleton (paths relative to `.tobor/`). */
-export function builtinSkeleton(): Record<string, string> {
-	return {
-		"AGENTS.md": "# Node context\n\nFacts about this host that every session should know (OS, toolchains, where repos live).\n",
-		"RULES.md": "# Rules\n\n- Ask before destructive operations outside the session's working directory.\n",
-		"config.yml": [
-			"# tobor node config; every key is optional. Edits apply to the next request.",
-			'roots: ["~"]',
-			"env_file: agent.env",
-			"listen: 127.0.0.1:7879",
-			"defaults:",
-			"  model: anthropic/claude-opus-5-5",
-			"  thinking: high",
-			"  approval_mode: ask",
-			"  max_turns: 100",
-			"  mode: director",
-			"  max_workers: 8",
-			"  idle: 30m",
-			"  approval_timeout: 12h",
-			"",
-		].join("\n"),
-		"mcp.json": '{\n  "servers": {}\n}\n',
-	};
+/** Everything `tobor init` writes into `.tobor/`: the shipped skeleton plus the artifacts skill. */
+export function nodeSkeleton(): Record<string, string> {
+	return { ...skeletonFiles(), "skills/artifacts/SKILL.md": artifactsSkill };
 }
 
 /** What `initHome` did. */
@@ -44,15 +26,16 @@ export type InitResult = { created: string[]; committed: boolean; systemConversa
 /** Create `$TOBOR_HOME`, the `.tobor/` git repo with the skeleton, `agent.env` and `node.json`. Idempotent. */
 export async function initHome(
 	home: string,
-	skeletonFiles: () => Record<string, string> = builtinSkeleton,
+	skeleton: () => Record<string, string> = nodeSkeleton,
 ): Promise<InitResult> {
 	const paths = homePaths(home);
 	await mkdir(home, { recursive: true, mode: 0o700 });
 	await mkdir(paths.toborDir, { recursive: true });
 	await mkdir(paths.artifacts, { recursive: true });
+	await mkdir(paths.designSystemsDir, { recursive: true });
 
 	const created: string[] = [];
-	for (const [rel, content] of Object.entries(skeletonFiles())) {
+	for (const [rel, content] of Object.entries(skeleton())) {
 		const target = join(paths.toborDir, rel);
 		if (await exists(target)) continue;
 		await mkdir(dirname(target), { recursive: true });
