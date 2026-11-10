@@ -175,8 +175,8 @@ export class SessionScreen {
 			: this.target.worker
 				? `worker ${this.target.worker.name} · read-only · Esc back`
 				: this.state() === "running" || this.state() === "waiting"
-					? "running · Enter queues a follow-up · Ctrl+S steers · Esc aborts"
-					: "prompt · Enter sends · Alt+Enter newline · / commands";
+					? "running · Enter steers · Ctrl+Q queues a follow-up · Esc aborts"
+					: "prompt · Enter sends · Shift+Enter newline · / commands";
 		this.composer.setLabel(label);
 	}
 
@@ -229,7 +229,7 @@ export class SessionScreen {
 			return;
 		}
 		const running = this.state() === "running" || this.state() === "waiting";
-		this.app.guard(() => this.send(text, running ? "follow_up" : "prompt"));
+		this.app.guard(() => this.send(text, running ? "steer" : "prompt"));
 	}
 
 	private async send(content: string, mode: InputMode): Promise<void> {
@@ -241,17 +241,30 @@ export class SessionScreen {
 		this.scroll.scrollToEnd();
 	}
 
-	/** Ctrl+S: send the composer text as a steer while running (a prompt when idle). */
-	async steer(): Promise<void> {
+	/** Ctrl+Q: send the composer text as a follow-up while running (a prompt when idle). */
+	async queueFollowUp(): Promise<void> {
 		const text = this.composer.getExpandedText().trim();
 		if (text === "") {
-			this.app.flash("type the steering message first, then Ctrl+S");
+			this.app.flash("type the follow-up first, then Ctrl+Q");
 			return;
 		}
 		this.composer.setText("");
 		this.composer.addToHistory(text);
 		const running = this.state() === "running" || this.state() === "waiting";
-		await this.send(text, running ? "steer" : "prompt");
+		await this.send(text, running ? "follow_up" : "prompt");
+	}
+
+	/** Ctrl+P: switch the open session to the next model of the node's list (wrapping around). */
+	async cycleModel(): Promise<void> {
+		if (!this.target || this.target.worker) throw new Error("open a session first");
+		const { models, defaults } = await this.app.api().models();
+		if (models.length === 0) return;
+		const current = this.detail?.model ?? defaults.model;
+		const next = models[(models.findIndex((m) => m.ref === current) + 1) % models.length];
+		if (!next || next.ref === current) return;
+		await this.patch({ model: next.ref });
+		this.app.flash(`model → ${next.ref}`);
+		this.app.changed();
 	}
 
 	/** Esc: abort the run. */
@@ -323,7 +336,7 @@ export class SessionScreen {
 	}
 }
 
-/** Ctrl+P: pick a model for the open session. */
+/** Alt+M: pick a model for the open session. */
 export async function pickModel(app: App): Promise<void> {
 	const s = app.session;
 	if (!s.target || s.target.worker) throw new Error("open a session first");

@@ -1,24 +1,31 @@
-import type { KeyId } from "@earendil-works/pi-tui";
+import { type KeyId, matchesKey } from "@earendil-works/pi-tui";
 
-/** Global key bindings of the Session view (intercepted before the composer sees them). */
+/** Global key bindings of the Session view (intercepted before the composer sees them); mirrors omp's defaults. */
 export const KEYS = {
-	steer: "ctrl+s",
+	followUp: ["ctrl+q", "ctrl+enter"],
 	abort: "escape",
-	approvals: "ctrl+a",
-	workers: "ctrl+w",
+	approvals: "alt+shift+a",
+	workers: ["alt+a", "ctrl+s"],
 	workerTranscript: "ctrl+o",
-	model: "ctrl+p",
+	model: "alt+m",
+	modelCycle: "ctrl+p",
 	newSession: "ctrl+n",
 	sessions: "ctrl+l",
 	workspaces: "ctrl+t",
 	settings: "ctrl+,",
 	quit: "ctrl+c",
+	exit: "ctrl+d",
 	help: "?",
 	navigate: "up",
-} as const satisfies Record<string, KeyId>;
+} as const satisfies Record<string, KeyId | readonly KeyId[]>;
+
+/** Whether `data` is the key (or any of the keys) of a binding. */
+export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]): boolean {
+	return typeof binding === "string" ? matchesKey(data, binding) : binding.some((key) => matchesKey(data, key));
+}
 
 /** Two `Ctrl+C` presses at most this far apart quit the TUI. */
-export const QUIT_WINDOW_MS = 2000;
+export const QUIT_WINDOW_MS = 500;
 
 /** Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`. */
 export class QuitGate {
@@ -33,14 +40,15 @@ export class QuitGate {
 
 /** Rows of the help overlay: key, then what it does. */
 export const HELP: readonly (readonly [string, string])[] = [
-	["Enter", "send prompt (queued as a follow-up while a run is going)"],
-	["Ctrl+S", "steer the running agent with the composer text"],
+	["Enter", "send prompt (while a run is going: steer the running agent)"],
+	["Ctrl+Q / Ctrl+Enter", "queue a follow-up for after the current turn"],
 	["Esc", "abort the run (in a worker view: back to the director)"],
-	["Alt+Enter", "new line in the composer"],
-	["Ctrl+A", "pending approvals: approve / approve for session / deny"],
-	["Ctrl+W", "workers of this session"],
+	["Shift+Enter / Alt+Enter", "new line in the composer"],
+	["Alt+Shift+A", "pending approvals: approve / approve for session / deny"],
+	["Alt+A", "workers of this session (Ctrl+S also works)"],
 	["Ctrl+O", "open a worker's transcript (again: back)"],
-	["Ctrl+P", "change the session's model"],
+	["Alt+M", "change the session's model"],
+	["Ctrl+P", "cycle to the next model"],
 	["Ctrl+N", "new session"],
 	["Ctrl+L", "sessions"],
 	["Ctrl+T", "switch workspace (saved nodes, with reachability)"],
@@ -48,7 +56,8 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],
 	["PgUp/PgDn, wheel", "scroll the transcript; Ctrl+Shift+F searches it"],
 	["?", "this help (empty composer)"],
-	["Ctrl+C", "clear the composer or close the dialog; twice within 2 s to quit"],
+	["Ctrl+C", "clear the composer or close the dialog; twice within 0.5 s to quit"],
+	["Ctrl+D", "quit (when the composer is empty)"],
 ];
 
 /** Slash commands typed into the composer. */

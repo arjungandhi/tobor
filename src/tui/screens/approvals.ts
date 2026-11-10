@@ -35,7 +35,7 @@ const DECISIONS: { value: ApprovalDecision; label: string; description: string }
 
 const SHORTCUTS: Record<string, ApprovalDecision> = { y: "approve", s: "approve_session", n: "deny" };
 
-/** Ctrl+A: pending approvals (open session first); pick one, then approve / approve for session / deny. */
+/** Alt+Shift+A: pending approvals (open session first); pick one, then approve / approve for session / deny. */
 export async function showApprovals(app: App): Promise<void> {
 	await app.refreshApprovals();
 	const current = app.session.target?.id;

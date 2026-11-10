@@ -42,7 +42,7 @@ export class WorkersStrip implements Component {
 			const active = this.workers.filter((w) => w.state === "running" || w.state === "starting").length;
 			const todo = this.todo ? c.dim(` · todo ${this.todo.done}/${this.todo.total}`) : "";
 			const head = this.workers.length > 0 ? `workers ${active}/${this.workers.length} running` : "";
-			lines.push(truncateToWidth(` ${c.accent(head)}${todo}${c.dim(" · Ctrl+W list · Ctrl+O open")}`, width));
+			lines.push(truncateToWidth(` ${c.accent(head)}${todo}${c.dim(" · Alt+A list · Ctrl+O open")}`, width));
 			const rows = [...this.workers].sort((a, b) => Number(b.state === "running") - Number(a.state === "running") || b.createdAt - a.createdAt);
 			for (const w of rows.slice(0, MAX_ROWS)) {
 				const row = ` ${STATE[w.state]("◆")} ${w.name} ${c.dim(w.agent)} ${STATE[w.state](w.state)} ${c.dim(`$${w.usage.cost.toFixed(3)}`)} ${c.dim(lastLine(w.lastText))}`;
@@ -63,7 +63,7 @@ function workerItems(workers: WorkerSummary[]): { value: WorkerSummary; label: s
 	}));
 }
 
-/** Ctrl+W: the workers of the open session; Enter opens a worker's transcript. */
+/** Alt+A: the workers of the open session; Enter opens a worker's transcript. */
 export async function showWorkers(app: App): Promise<void> {
 	const s = app.session;
 	const parent = s.target?.worker?.parent ?? s.target;

@@ -41,7 +41,7 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
+import { COMMANDS, HELP, KEYS, matchesBinding, QuitGate } from "./keys.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showArtifacts } from "./screens/artifacts.js";
 import { showFiles } from "./screens/files.js";
@@ -318,7 +318,7 @@ export class App {
 				}
 				const where = approval.worker ? `${approval.worker} in #${approval.sessionId}` : `#${approval.sessionId}`;
 				this.notify(`approval needed: ${approval.tool} (${where})`);
-				this.flash(`⚠ approval needed: ${approval.tool} (${where}) · Ctrl+A`);
+				this.flash(`⚠ approval needed: ${approval.tool} (${where}) · Alt+Shift+A`);
 				this.session.rebuild();
 				break;
 			}
@@ -418,7 +418,7 @@ export class App {
 			segments.push(c.dim(`$${usage.cost.toFixed(4)} · ${formatTokens(usage.tokens)} tok`));
 		}
 		const pending = this.approvals.length;
-		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Ctrl+A`));
+		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Alt+Shift+A`));
 		this.status.set(segments, "? help · / commands");
 		s.updateLabel();
 		this.tui.requestRender();
@@ -461,6 +461,10 @@ export class App {
 		const empty = composer.getText() === "";
 		if (matchesKey(data, KEYS.navigate) && empty) return s.moveSelection(0);
 		if (matchesKey(data, KEYS.help) && empty) return this.do(() => this.help());
+		if (matchesBinding(data, KEYS.exit) && empty) {
+			this.quit();
+			return true;
+		}
 		if (matchesKey(data, KEYS.abort)) {
 			if (s.target?.worker) {
 				this.openSession(s.target.worker.parent.id);
@@ -469,11 +473,12 @@ export class App {
 			if (s.state() === "running" || s.state() === "waiting") return this.do(() => s.abort());
 			return false;
 		}
-		if (matchesKey(data, KEYS.steer)) return this.do(() => s.steer());
-		if (matchesKey(data, KEYS.approvals)) return this.do(() => showApprovals(this));
-		if (matchesKey(data, KEYS.workers)) return this.do(() => showWorkers(this));
+		if (matchesBinding(data, KEYS.followUp)) return this.do(() => s.queueFollowUp());
+		if (matchesBinding(data, KEYS.approvals)) return this.do(() => showApprovals(this));
+		if (matchesBinding(data, KEYS.workers)) return this.do(() => showWorkers(this));
 		if (matchesKey(data, KEYS.workerTranscript)) return this.do(() => openWorkerTranscript(this));
-		if (matchesKey(data, KEYS.model)) return this.do(() => pickModel(this));
+		if (matchesBinding(data, KEYS.model)) return this.do(() => pickModel(this));
+		if (matchesBinding(data, KEYS.modelCycle)) return this.do(() => s.cycleModel());
 		if (matchesKey(data, KEYS.newSession)) return this.do(() => newSession(this));
 		if (matchesKey(data, KEYS.sessions)) return this.do(() => showSessions(this));
 		if (matchesKey(data, KEYS.workspaces)) return this.do(() => showWorkspaces(this));

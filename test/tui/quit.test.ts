@@ -12,13 +12,13 @@ describe("QuitGate", () => {
 		const gate = new QuitGate();
 		expect(gate.press(0)).toBe(false);
 		expect(gate.press(QUIT_WINDOW_MS)).toBe(false);
-		expect(gate.press(QUIT_WINDOW_MS + 1_999)).toBe(true);
+		expect(gate.press(QUIT_WINDOW_MS + 499)).toBe(true);
 	});
 
-	it("uses a two second window", () => {
-		expect(QUIT_WINDOW_MS).toBe(2000);
+	it("uses a half second window", () => {
+		expect(QUIT_WINDOW_MS).toBe(500);
 		const gate = new QuitGate();
 		gate.press(10_000);
-		expect(gate.press(10_000 + 1_999)).toBe(true);
+		expect(gate.press(10_000 + 499)).toBe(true);
 	});
 });
