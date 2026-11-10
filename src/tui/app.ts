@@ -354,7 +354,7 @@ export class App {
 				);
 				break;
 			case "session.updated":
-				void this.refreshSessions();
+				void this.refreshSessions().then(() => this.session.syncTitle(this.sessions));
 				break;
 			case "worker.state":
 				this.session.upsertWorker(event.sessionId, event.worker);
