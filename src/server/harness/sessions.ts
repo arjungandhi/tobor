@@ -36,7 +36,7 @@ import type {
 } from "../../api/types.js";
 import { applyProjectConfig, parseProjectConfig } from "../../config/load.js";
 import { type Config, parseModelRef, type SessionMode } from "../../config/schema.js";
-import { type SessionIndexEntry, SessionDoc, SessionsDoc, WorkersDoc } from "../../docs.js";
+import { type SessionIndexEntry, SessionDoc, SessionsDoc, type WorkerRecord, WorkersDoc } from "../../docs.js";
 import type { EventBus } from "../../events.js";
 import {
 	type CreateSessionOptions,
@@ -44,6 +44,7 @@ import {
 	type SessionIndex as SessionIndexContract,
 } from "../../host.js";
 import { findGitRoot, resolveCwd } from "./env.js";
+import { isLive } from "./workers/tools.js";
 
 /** Tools the model sees in `director` mode; `artifact_*` tools are added from the registry. */
 export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send", "fetch_url", "web_search"];
@@ -64,17 +65,26 @@ export type SessionIndexOptions = {
 	ctx: Context;
 };
 
-/** Client-facing state of a conversation from its `pi.live` doc and its pending approval count. */
+/**
+ * Client-facing state of a conversation from its `pi.live` doc, its pending approval count and its live worker count.
+ * Precedence: run (`waiting`/`running`) > failure > live workers (`working`) > `idle`.
+ */
 export function deriveState(
 	live: Readonly<LiveState> | undefined,
 	pending: number,
+	liveWorkers: number,
 ): { state: SessionState; failure?: SessionFailure } {
 	if (live?.run) return { state: pending > 0 ? "waiting" : "running" };
 	if (live?.runFailure) {
 		const { reason, detail } = live.runFailure;
 		return { state: "failed", failure: { reason, ...(detail ? { detail } : {}) } };
 	}
-	return { state: "idle" };
+	return { state: liveWorkers > 0 ? "working" : "idle" };
+}
+
+/** Live workers in a director's `tobor.workers` doc: state-based, as `isLive` (the `agent_*` tools) does. */
+function liveWorkerCount(doc: Readonly<{ workers: Readonly<Record<string, Pick<WorkerRecord, "state">>> }> | undefined): number {
+	return Object.values(doc?.workers ?? {}).filter(isLive).length;
 }
 
 /** Shown for a session created without a prompt until its first input names it. */
@@ -113,6 +123,7 @@ export class SessionIndex implements SessionIndexContract {
 		this.unsubscribe.push(
 			o.events.on("approval.requested", (e) => onApproval(e.approval.sessionId)),
 			o.events.on("approval.resolved", (e) => onApproval(e.conversationId)),
+			o.events.on("worker.state", (e) => void this.refresh(e.sessionId)),
 		);
 	}
 
@@ -203,9 +214,9 @@ export class SessionIndex implements SessionIndexContract {
 	async get(id: SessionId): Promise<SessionDetail | undefined> {
 		const index = await this.index();
 		const pending = (await this.pendingCounts()).get(id) ?? 0;
-		const found = await this.load(id, index.sessions[String(id)], pending);
-		if (!found) return undefined;
 		const workers = await this.o.harness.snapshot(WorkersDoc, id as ConversationId, this.o.ctx);
+		const found = await this.load(id, index.sessions[String(id)], pending, liveWorkerCount(workers));
+		if (!found) return undefined;
 		return {
 			...found.summary,
 			thinking: found.agent.thinkingLevel,
@@ -406,6 +417,7 @@ export class SessionIndex implements SessionIndexContract {
 		id: number,
 		entry: SessionIndexEntry | undefined,
 		pending: number,
+		liveWorkers?: number,
 	): Promise<{ summary: SessionSummary; agent: Agent } | undefined> {
 		const { harness, ctx } = this.o;
 		const cid = id as ConversationId;
@@ -413,16 +425,17 @@ export class SessionIndex implements SessionIndexContract {
 		if (!session) return undefined;
 		const conversation = await harness.conversation(cid, ctx);
 		if (!conversation) return undefined;
-		const [live, usage, agent, latest] = await Promise.all([
+		const [live, usage, agent, latest, workers] = await Promise.all([
 			harness.snapshot(LiveDoc, cid, ctx),
 			harness.snapshot(UsageDoc, cid, ctx),
 			conversation.agent(ctx),
 			conversation.entries({ order: "descending" }, 5, undefined, ctx),
+			liveWorkers === undefined ? harness.snapshot(WorkersDoc, cid, ctx) : undefined,
 		]);
 		const createdAt = entry?.createdAt ?? session.createdAt;
 		const stamped = latest.items.map((e) => e.model?.[0]?.timestamp);
 		const updatedAt = Math.max(createdAt, ...stamped.filter((t): t is number => typeof t === "number"));
-		const { state, failure } = deriveState(live, pending);
+		const { state, failure } = deriveState(live, pending, liveWorkers ?? liveWorkerCount(workers));
 		const summary: SessionSummary = {
 			id,
 			title: entry?.title || session.title || UNTITLED,
@@ -494,7 +507,8 @@ export class SessionIndex implements SessionIndexContract {
 				flag.dirty = false;
 				const live = await this.o.harness.snapshot(LiveDoc, id as ConversationId, this.o.ctx);
 				const pending = (await this.pendingCounts()).get(id) ?? 0;
-				const { state, failure } = deriveState(live, pending);
+				const workers = await this.o.harness.snapshot(WorkersDoc, id as ConversationId, this.o.ctx);
+				const { state, failure } = deriveState(live, pending, liveWorkerCount(workers));
 				const key = `${state}:${failure?.reason ?? ""}:${failure?.detail ?? ""}`;
 				if (this.lastState.get(id) !== key) {
 					this.lastState.set(id, key);
