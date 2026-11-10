@@ -184,6 +184,25 @@ data class PendingApproval(
     val expiresAt: Long = 0,
 )
 
+/** An `ask_user` question the agent is waiting on (`GET /api/questions`). [options] are suggestions; free text is always allowed. */
+@Serializable
+data class PendingQuestion(
+    val conversationId: Long = 0,
+    val sessionId: Long = 0,
+    val worker: String? = null,
+    val callId: String,
+    val question: String = "",
+    val options: List<String>? = null,
+    val createdAt: Long = 0,
+    val expiresAt: Long = 0,
+)
+
+@Serializable
+data class AnswerQuestionRequest(
+    val answer: String,
+    val conversationId: Long? = null,
+)
+
 @Serializable
 data class CwdsResponse(
     val roots: List<String> = emptyList(),

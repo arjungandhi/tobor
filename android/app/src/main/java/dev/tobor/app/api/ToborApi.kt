@@ -123,6 +123,15 @@ class ToborApi(baseUrl: String) {
         send("POST", "/api/approvals/${encodeSegment(callId)}", body)
     }
 
+    suspend fun questions(): List<PendingQuestion> =
+        get("/api/questions").decode(ListSerializer(PendingQuestion.serializer()))
+
+    /** Throws [ToborApiException]: 400 blank answer, 404 unknown question, 409 already answered. */
+    suspend fun answerQuestion(callId: String, answer: String, conversationId: Long? = null) {
+        val body = toborJson.encodeToString(AnswerQuestionRequest(answer, conversationId))
+        send("POST", "/api/questions/${encodeSegment(callId)}", body)
+    }
+
     /** Raw `{models, providers, defaults}`. */
     suspend fun models(): JsonObject = get("/api/models").decode<JsonElement>().jsonObject
 
