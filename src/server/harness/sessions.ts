@@ -44,6 +44,7 @@ import {
 	type SessionIndex as SessionIndexContract,
 } from "../../host.js";
 import { findGitRoot, resolveCwd } from "./env.js";
+import { generateTitle, resolveTitleModel } from "./titles.js";
 
 /** Tools the model sees in `director` mode; `artifact_*` tools are added from the registry. */
 export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send", "fetch_url", "web_search"];
@@ -107,6 +108,10 @@ export class SessionIndex implements SessionIndexContract {
 	private readonly lastState = new Map<number, string>();
 	private readonly refreshing = new Map<number, { dirty: boolean }>();
 	private readonly unsubscribe: (() => void)[] = [];
+	/** Sessions whose first exchange has been offered to the title model (once per process). */
+	private readonly titled = new Set<number>();
+	/** Aborts in-flight title calls on `stop`. */
+	private readonly titleAbort = new AbortController();
 
 	constructor(private readonly o: SessionIndexOptions) {
 		const onApproval = (conversationId: number) => void this.sessionOf(conversationId).then((id) => this.refresh(id));
@@ -128,6 +133,7 @@ export class SessionIndex implements SessionIndexContract {
 
 	/** Stop observers and event subscriptions (shutdown). */
 	stop(): void {
+		this.titleAbort.abort();
 		for (const t of this.tracked.values()) t.detach();
 		this.tracked.clear();
 		for (const u of this.unsubscribe.splice(0)) u();
@@ -170,6 +176,7 @@ export class SessionIndex implements SessionIndexContract {
 				init: async (tx, id) => {
 					const session = await tx.doc(SessionDoc, id);
 					session.title = title;
+					session.titleSource = "prompt";
 					session.approval_mode = options.approvalMode ?? config.defaults.approval_mode;
 					session.mode = mode;
 					session.cwd = cwd;
@@ -230,6 +237,7 @@ export class SessionIndex implements SessionIndexContract {
 			const entry = index.sessions[String(id)];
 			if (patch.title !== undefined) {
 				session.title = patch.title.trim();
+				session.titleSource = "user";
 				if (entry) entry.title = session.title;
 			}
 			if (patch.approval_mode !== undefined) session.approval_mode = patch.approval_mode;
@@ -295,11 +303,73 @@ export class SessionIndex implements SessionIndexContract {
 			const doc = await tx.doc(SessionDoc, cid);
 			if (doc.title !== "") return;
 			doc.title = title;
+			doc.titleSource = "prompt";
 			const index = await tx.doc(SessionsDoc, this.o.systemConversationId as ConversationId);
 			const entry = index.sessions[String(id)];
 			if (entry) entry.title = title;
 		}, this.o.ctx);
 		this.o.events.emit({ type: "session.updated", id });
+	}
+
+	/** Fire-and-forget `generateSessionTitle`; never rejects. */
+	private retitle(id: number): void {
+		if (this.titled.has(id)) return;
+		this.titled.add(id);
+		this.generateSessionTitle(id).then(
+			(done) => {
+				if (!done) this.titled.delete(id);
+			},
+			() => {},
+		);
+	}
+
+	/**
+	 * Name a session from its first exchange with the title model, once it first settles. Plain sessions only (not
+	 * workers or schedule runs), and only while the title is still the prompt-derived one. Resolves false when there was
+	 * nothing to title yet (so a later idle may retry); any model failure keeps the prompt title.
+	 */
+	private async generateSessionTitle(id: number): Promise<boolean> {
+		const { harness, ctx, models } = this.o;
+		const cid = id as ConversationId;
+		const entry = (await this.index()).sessions[String(id)];
+		const session = await harness.snapshot(SessionDoc, cid, ctx);
+		if (!entry || !session || session.worker || entry.kind !== "session" || entry.scheduleId) return true;
+		if ((session.titleSource ?? "prompt") !== "prompt") return true;
+		const conversation = await harness.conversation(cid, ctx);
+		if (!conversation) return true;
+		const page = await conversation.entries({ order: "ascending" }, 30, undefined, ctx);
+		const text = (kind: string): string => {
+			for (const e of page.items) {
+				const message = e.kind === kind ? e.model?.[0] : undefined;
+				if (!message) continue;
+				const content = message.content;
+				const out = typeof content === "string" ? content : content.map((c) => (c.type === "text" ? c.text : "")).join("");
+				if (out.trim()) return out.trim();
+			}
+			return "";
+		};
+		const prompt = text("pi.user");
+		const reply = text("pi.assistant");
+		if (!prompt || !reply) return false;
+		const agent = await conversation.agent(ctx);
+		const model = await resolveTitleModel(models, this.o.config().defaults.title_model, agent.model);
+		if (!model) return true;
+		const title = await generateTitle(models, model, { prompt, reply }, this.titleAbort.signal);
+		if (!title) return true;
+		let applied = false;
+		await harness.commit(async (tx) => {
+			const doc = await tx.doc(SessionDoc, cid);
+			if ((doc.titleSource ?? "prompt") !== "prompt") return;
+			const index = await tx.doc(SessionsDoc, this.o.systemConversationId as ConversationId);
+			const row = index.sessions[String(id)];
+			if (!row) return;
+			doc.title = title;
+			doc.titleSource = "model";
+			row.title = title;
+			applied = true;
+		}, ctx);
+		if (applied) this.o.events.emit({ type: "session.updated", id });
+		return true;
 	}
 
 	async abort(id: SessionId): Promise<void> {
@@ -502,6 +572,7 @@ export class SessionIndex implements SessionIndexContract {
 				}
 				const tracked = this.tracked.get(id);
 				if (tracked && (state === "running" || state === "waiting")) tracked.busy = true;
+				if (tracked?.busy && state === "idle") this.retitle(id);
 				if (tracked?.busy && (state === "idle" || state === "failed")) {
 					tracked.detach();
 					this.tracked.delete(id);

@@ -14,16 +14,25 @@ export async function tempHome(): Promise<{ home: string; root: string }> {
 	const root = join(base, "work");
 	await mkdir(join(home, ".tobor"), { recursive: true });
 	await mkdir(root, { recursive: true });
-	await writeFile(join(home, ".tobor", "config.yml"), `roots: [${JSON.stringify(root)}]\ndefaults:\n  model: faux/m\n  thinking: off\n  mode: solo\n`);
+	await writeFile(join(home, ".tobor", "config.yml"), `roots: [${JSON.stringify(root)}]\ndefaults:\n  model: faux/m\n  title_model: faux-title/t\n  thinking: off\n  mode: solo\n`);
 	return { home, root };
 }
 
-/** Models with one faux provider `faux` serving model `m`, scripted by `responses`. */
-export function fauxModels(): { models: MutableModels; script(responses: FauxResponseStep[]): void } {
+/**
+ * Models with a faux provider `faux` serving model `m` (scripted by `script`) and a second, `faux-title`/`t`, that
+ * `tempHome` configures as `defaults.title_model` (scripted by `scriptTitle`; unscripted it errors, so titling fails).
+ */
+export function fauxModels(): {
+	models: MutableModels;
+	script(responses: FauxResponseStep[]): void;
+	scriptTitle(responses: FauxResponseStep[]): void;
+} {
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "m" }] });
+	const title = fauxProvider({ provider: "faux-title", models: [{ id: "t" }] });
 	const models = createModels();
 	models.setProvider(faux.provider);
-	return { models, script: (responses) => faux.setResponses(responses) };
+	models.setProvider(title.provider);
+	return { models, script: (responses) => faux.setResponses(responses), scriptTitle: (responses) => title.setResponses(responses) };
 }
 
 /** A fake `bash` tool that records the commands it ran. */

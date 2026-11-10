@@ -9,11 +9,12 @@ import {
 	type SettledSubmissionRecord,
 	type SubmissionId,
 } from "@earendil-works/pi-durable";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "../../src/api/types.js";
 import { type BootedHost, boot } from "../../src/server/harness/boot.js";
 import { DIRECTOR_RULES, PREAMBLE } from "../../src/server/harness/sections.js";
 import { deriveState, summarizeUsage, titleFromPrompt } from "../../src/server/harness/sessions.js";
+import { SessionDoc } from "../../src/docs.js";
 import { entryText, fakeBash, fauxModels, tempHome } from "./helpers.js";
 
 const ctx = BACKGROUND_CONTEXT;
@@ -28,6 +29,7 @@ type Started = {
 	root: string;
 	host: BootedHost;
 	script(responses: FauxResponseStep[]): void;
+	scriptTitle(responses: FauxResponseStep[]): void;
 	states: { id: number; state: SessionState }[];
 	reachedState(id: number, state: SessionState): Promise<void>;
 	settle(submissionId: number): Promise<SettledSubmissionRecord>;
@@ -52,7 +54,7 @@ async function start(): Promise<Started> {
 	};
 	const settle = async (submissionId: number) =>
 		(await host.harness.submission(submissionId as SubmissionId, ctx))!.wait(ctx);
-	return { home, root, host, script: faux.script, states, reachedState, settle };
+	return { home, root, host, script: faux.script, scriptTitle: faux.scriptTitle, states, reachedState, settle };
 }
 
 describe("pure helpers", () => {
@@ -293,5 +295,113 @@ describe("system prompt sections", () => {
 		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual([]);
 		await t.host.sessions.patch(id, { mode: "solo" });
 		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["bash"]);
+	});
+
+	describe("generated titles", () => {
+		/** A title-model step that counts its calls and answers `reply` (after `gate`, when given). */
+		function titleStep(reply: string | { error: string }, gate?: Promise<void>) {
+			const seen: { prompt: string }[] = [];
+			const called = Promise.withResolvers<void>();
+			const step: FauxResponseStep = async (context) => {
+				const last = context.messages.at(-1);
+				seen.push({ prompt: typeof last?.content === "string" ? last.content : JSON.stringify(last?.content) });
+				called.resolve();
+				await gate;
+				return typeof reply === "string"
+					? fauxAssistantMessage(reply)
+					: fauxAssistantMessage("", { stopReason: "error", errorMessage: reply.error });
+			};
+			return { step, seen, called: called.promise };
+		}
+		const quiet = () => new Promise<void>((r) => setTimeout(r, 60));
+
+		it("replaces the prompt title with a cleaned model title after the first idle", async () => {
+			const t = await start();
+			const title = titleStep('  "Reply with pong."\n');
+			t.script([fauxAssistantMessage("pong")]);
+			t.scriptTitle([title.step]);
+			const updated: number[] = [];
+			t.host.events.on("session.updated", (e) => updated.push(e.id));
+			const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "please reply pong" });
+			await t.settle(submissionId);
+			await vi.waitFor(async () => expect((await t.host.sessions.get(id))?.title).toBe("Reply with pong"));
+			expect(title.seen[0]!.prompt).toContain("please reply pong");
+			expect(title.seen[0]!.prompt).toContain("pong");
+			expect((await t.host.sessions.list())[0]?.title).toBe("Reply with pong");
+			expect(updated.length).toBeGreaterThanOrEqual(2);
+			const doc = await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx);
+			expect(doc).toMatchObject({ title: "Reply with pong", titleSource: "model" });
+
+			// Later exchanges never retitle.
+			t.script([fauxAssistantMessage("again")]);
+			t.scriptTitle([titleStep("Something else").step]);
+			await t.settle((await t.host.sessions.input(id, { content: "more", mode: "follow_up", requestId: "r2" })).submissionId);
+			await quiet();
+			expect((await t.host.sessions.get(id))?.title).toBe("Reply with pong");
+		});
+
+		it("caps a long model title at 60 characters", async () => {
+			const t = await start();
+			t.script([fauxAssistantMessage("ok")]);
+			t.scriptTitle([titleStep("word ".repeat(30)).step]);
+			const { id } = await t.host.sessions.create({ cwd: t.root, prompt: "go" });
+			await vi.waitFor(async () => expect((await t.host.sessions.get(id))?.title.length).toBeGreaterThan(2));
+			expect((await t.host.sessions.get(id))?.title.length).toBeLessThanOrEqual(60);
+		});
+
+		it("never overwrites a rename made before the first idle", async () => {
+			const t = await start();
+			const title = titleStep("Model title");
+			t.script([fauxAssistantMessage("done")]);
+			t.scriptTitle([title.step]);
+			const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "work" });
+			await t.host.sessions.patch(id, { title: "mine" });
+			await t.settle(submissionId);
+			await t.reachedState(id, "idle");
+			await quiet();
+			expect(title.seen).toEqual([]);
+			expect((await t.host.sessions.get(id))?.title).toBe("mine");
+			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).toMatchObject({ titleSource: "user" });
+		});
+
+		it("lets a rename that lands while the title call is in flight win", async () => {
+			const t = await start();
+			const gate = Promise.withResolvers<void>();
+			const title = titleStep("Model title", gate.promise);
+			t.script([fauxAssistantMessage("done")]);
+			t.scriptTitle([title.step]);
+			const { id } = await t.host.sessions.create({ cwd: t.root, prompt: "work" });
+			await title.called;
+			await t.host.sessions.patch(id, { title: "mine" });
+			gate.resolve();
+			await quiet();
+			expect((await t.host.sessions.get(id))?.title).toBe("mine");
+			expect((await t.host.sessions.list())[0]?.title).toBe("mine");
+		});
+
+		it("keeps the prompt title when the title call fails", async () => {
+			const t = await start();
+			const title = titleStep({ error: "boom" });
+			t.script([fauxAssistantMessage("done")]);
+			t.scriptTitle([title.step]);
+			const { id } = await t.host.sessions.create({ cwd: t.root, prompt: "keep me" });
+			await title.called;
+			await quiet();
+			expect((await t.host.sessions.get(id))?.title).toBe("keep me");
+			expect(await t.host.harness.snapshot(SessionDoc, id as ConversationId, ctx)).toMatchObject({ titleSource: "prompt" });
+		});
+
+		it("leaves schedule-run sessions with their names", async () => {
+			const t = await start();
+			const title = titleStep("Model title");
+			t.script([fauxAssistantMessage("done")]);
+			t.scriptTitle([title.step]);
+			const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "nightly job", kind: "schedule", scheduleId: "s1" });
+			await t.settle(submissionId);
+			await t.reachedState(id, "idle");
+			await quiet();
+			expect(title.seen).toEqual([]);
+			expect((await t.host.sessions.get(id))?.title).toBe("nightly job");
+		});
 	});
 });
