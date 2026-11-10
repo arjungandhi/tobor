@@ -12,7 +12,7 @@ import { APPROVAL_MODES, type ConfigError, parseModelRef } from "../../../config
 import { type ScheduleRecord, SchedulesDoc } from "../../../docs.js";
 import { type Host, HostError, type ScheduleService, type SessionIndex } from "../../../host.js";
 import { cronError, hostZone, isValidZone, nextCronFire, parseAt } from "./cron.js";
-import { createScheduleTask, type ScheduleTask } from "./task.js";
+import { createScheduleTask, plain, type ScheduleTask } from "./task.js";
 
 /** What the schedule service reads from the node, at call time. */
 export type ScheduleHost = Pick<
@@ -83,7 +83,7 @@ export function displayNextFire(record: Readonly<ScheduleRecord>, now: number): 
 
 /** The API view of a stored schedule. */
 export function toSchedule(record: Readonly<ScheduleRecord>, now: number): Schedule {
-	const { taskId: _taskId, runs, ...definition } = structuredClone(record) as ScheduleRecord;
+	const { taskId: _taskId, runs, ...definition } = plain(record) as ScheduleRecord;
 	const next = displayNextFire(record, now);
 	return { ...definition, runs, ...(next !== undefined ? { nextFireAt: next } : {}) };
 }
@@ -149,7 +149,7 @@ export class Schedules implements ScheduleService {
 				next.taskId = record.taskId;
 			}
 			doc.schedules[id] = next;
-			return structuredClone(next);
+			return plain(next);
 		}, h.ctx);
 		if (retime && oldTask !== undefined) await h.harness.abortTask(oldTask as TaskId, h.ctx);
 		return toSchedule(updated, now);
@@ -246,7 +246,7 @@ export class Schedules implements ScheduleService {
 					if (!record || !stored) return undefined;
 					stored.status = status;
 					if (notice !== undefined) stored.notice = notice;
-					return { name: record.name, run: structuredClone(stored) };
+					return { name: record.name, run: plain(stored) };
 				}, h.ctx);
 				if (!updated) return;
 				h.events.emit({ type: "schedule.fired", scheduleId, name: updated.name, run: updated.run });

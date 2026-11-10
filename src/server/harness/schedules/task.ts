@@ -33,6 +33,11 @@ export type ScheduleTaskDeps = {
 /** The `tobor.schedule` task type. */
 export type ScheduleTask = Task<ScheduleTaskInput, ScheduleState, null, object>;
 
+/** A plain JSON copy of a doc value or draft (drafts are proxies `structuredClone` rejects). */
+export function plain<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
 /** Append `run`, keeping the newest `MAX_RUNS`. */
 export function pushRun(runs: ScheduleRun[], run: ScheduleRun): void {
 	runs.push(run);
@@ -102,7 +107,7 @@ export function createScheduleTask(deps: ScheduleTaskDeps): ScheduleTask {
 								: "previous run still running";
 						const run: ScheduleRun = { fireAt, status: decision, notice };
 						pushRun(def.runs, run);
-						skipped = { def: structuredClone(def), run };
+						skipped = { def: plain(def), run };
 						if (def.at !== undefined) return done;
 						return { status: "running", checkpoint: { phase: "wait", after: Math.max(now, fireAt) } };
 					}
@@ -151,7 +156,7 @@ export function createScheduleTask(deps: ScheduleTaskDeps): ScheduleTask {
 					});
 					const run: ScheduleRun = { fireAt, conversationId, submissionId, status: "running" };
 					pushRun(def.runs, run);
-					fired = { def: structuredClone(def), run };
+					fired = { def: plain(def), run };
 					return { status: "running", checkpoint: { phase: "next", fireAt } };
 				}, context);
 				if (fired) deps.onRun(fired.def, fired.run);
