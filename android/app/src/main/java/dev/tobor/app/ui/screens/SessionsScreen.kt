@@ -461,6 +461,7 @@ private fun stateColor(state: String): Color = when (state) {
     "running" -> ToborColors.gold
     "waiting" -> ToborColors.warning
     "failed" -> ToborColors.error
+    "working" -> ToborColors.teal
     else -> ToborColors.subtle
 }
 
