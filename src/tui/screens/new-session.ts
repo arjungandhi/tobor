@@ -1,24 +1,19 @@
 import { basename } from "node:path";
-import type { ApprovalMode, SessionMode } from "../../api/types.js";
 import type { App } from "../app.js";
-import { parseNodeConfig, sessionDefaults } from "../node-config.js";
 import { c } from "../theme.js";
 
 const OTHER = "\0other";
 
-const DEFAULT = c.accent("● ");
+/** Roots are absolute; a recent cwd only starts a session when it sits inside one (the node rejects anything else). */
+function inRoots(dir: string, roots: string[]): boolean {
+	return roots.some((root) => dir === root || dir.startsWith(`${root.replace(/\/+$/, "")}/`));
+}
 
-/** Ctrl+N: cwd (from /api/cwds), model, approval mode, mode, then the first prompt; opens the new session. Each picker starts on the node default from config.yml (marked ●), so Enter accepts it. */
-export async function newSession(app: App, prompt?: string): Promise<void> {
-	const client = app.api();
-	const [cwds, models, config] = await Promise.all([client.cwds(), client.models(), client.file("config.yml")]);
-	if (config.type !== "file") throw new Error("config.yml is a directory");
-	const defaults = sessionDefaults(parseNodeConfig(config.content));
-	const defaultModel = defaults.model ?? models.defaults.model;
-	const mark = (value: string, preset: string): string => (value === preset ? DEFAULT : "  ");
+/** The old cwd step, now an explicit override: recents + roots + "other…". Resolves undefined when cancelled. */
+async function pickCwd(app: App, cwds: { roots: string[]; recent: string[] }): Promise<string | undefined> {
 	const dirs = [...new Set([...cwds.recent, ...cwds.roots])];
 	const machine = app.whoami?.host ?? app.workspace?.name ?? "node";
-	const cwdPick = await app.pick(
+	const picked = await app.pick(
 		"new session · working directory",
 		[
 			...dirs.map((dir) => ({ value: dir, label: `${basename(dir) || dir} @ ${machine}`, description: `${dir} · ${cwds.roots.includes(dir) ? "root" : "recent"}` })),
@@ -26,58 +21,45 @@ export async function newSession(app: App, prompt?: string): Promise<void> {
 		],
 		{ lines: [c.dim(`roots limit where a session starts, not what the agent can touch · roots: ${cwds.roots.join(", ") || "none"}`)] },
 	);
-	if (!cwdPick?.value) return;
-	let cwd = cwdPick.value;
-	if (cwd === OTHER) {
-		const typed = await app.ask("working directory", { initial: cwds.roots[0] ? `${cwds.roots[0]}/` : "", placeholder: "/absolute/path" });
-		if (!typed?.trim()) return;
-		cwd = typed.trim();
+	if (!picked?.value) return undefined;
+	if (picked.value !== OTHER) return picked.value;
+	const typed = await app.ask("working directory", { initial: cwds.roots[0] ? `${cwds.roots[0]}/` : "", placeholder: "/absolute/path" });
+	return typed?.trim() || undefined;
+}
+
+/**
+ * Ctrl+N, /new, `n` in the sessions list, or a prompt typed with no session open: no wizard. Model, approval mode and
+ * mode are left out of the request so the node applies its own defaults (config.yml, plus the project overlay).
+ * The cwd is the most recent session's cwd that is still inside a root (`/api/cwds` `recent`), else the first root;
+ * only when the node knows neither does the cwd picker appear. Creates the session, opens it, and flashes what was assumed.
+ *
+ * Without a prompt the session is still created (idle, no turns); with one, the node submits it immediately.
+ * Resolves false only when the cwd picker was cancelled.
+ * `{ pickCwd: true }` (for a future `/new <dir>` or deliberate picker) shows the cwd picker first; it then asks for the
+ * first prompt too, as the chosen cwd could not be remembered otherwise.
+ */
+export async function startSession(app: App, prompt?: string, options: { pickCwd?: boolean } = {}): Promise<boolean> {
+	const cwds = await app.api().cwds();
+	let cwd = options.pickCwd ? undefined : (cwds.recent.find((dir) => inRoots(dir, cwds.roots)) ?? cwds.roots[0]);
+	let asked = false;
+	if (!cwd) {
+		cwd = await pickCwd(app, cwds);
+		if (!cwd) return false;
+		asked = true;
 	}
-
-	const ordered = [...models.models].sort((a, b) => Number(b.ref === defaultModel) - Number(a.ref === defaultModel) || Number(b.available) - Number(a.available));
-	const modelPick = await app.pick(
-		"new session · model",
-		ordered.map((m) => ({
-			value: m.ref,
-			label: `${mark(m.ref, defaultModel)}${m.ref}`,
-			description: `${m.name}${m.ref === defaultModel ? " · default" : ""}${m.available ? "" : " · no credential"}`,
-		})),
-		{ selected: Math.max(0, ordered.findIndex((m) => m.ref === defaultModel)) },
-	);
-	if (!modelPick?.value) return;
-
-	const approvals: { value: ApprovalMode; description: string }[] = [
-		{ value: "ask", description: "bash, write, edit and other gated tools wait for you" },
-		{ value: "auto", description: "tools run without asking" },
-	];
-	const approvalPick = await app.pick<ApprovalMode>(
-		"new session · approval mode",
-		approvals.map(({ value, description }) => ({ value, label: `${mark(value, defaults.approval_mode)}${value}`, description: `${description}${value === defaults.approval_mode ? " · default" : ""}` })),
-		{ selected: approvals.findIndex((a) => a.value === defaults.approval_mode) },
-	);
-	if (!approvalPick?.value) return;
-	if (approvalPick.value === "auto" && !(await app.confirmAuto("auto approval", "Tools will run without asking, with your full filesystem and shell access. Continue?"))) return;
-
-	const modes: { value: SessionMode; description: string }[] = [
-		{ value: "director", description: "plans and dispatches workers, then verifies" },
-		{ value: "solo", description: "one agent does the work itself" },
-	];
-	const modePick = await app.pick<SessionMode>(
-		"new session · mode",
-		modes.map(({ value, description }) => ({ value, label: `${mark(value, defaults.mode)}${value}`, description: `${description}${value === defaults.mode ? " · default" : ""}` })),
-		{ selected: modes.findIndex((m) => m.value === defaults.mode) },
-	);
-	if (!modePick?.value) return;
-
-	const text = prompt ?? (await app.ask("new session · first prompt", { lines: [c.dim(`${cwd} · ${modelPick.value} · ${approvalPick.value} · ${modePick.value}`)] }));
-	if (!text?.trim()) return;
-	const { id } = await client.createSession({
-		cwd,
-		model: modelPick.value,
-		approval_mode: approvalPick.value,
-		mode: modePick.value,
-		prompt: text.trim(),
-	});
+	let text = prompt?.trim();
+	if (!text && asked) {
+		text = (await app.ask("new session · first prompt", { lines: [c.dim(cwd)] }))?.trim();
+		if (!text) return false;
+	}
+	const { id } = await app.api().createSession({ cwd, ...(text ? { prompt: text } : {}) });
 	await app.refreshSessions();
 	app.openSession(id);
+	app.flash(`new session #${id} · ${cwd}${text ? " · node defaults" : ""}`);
+	return true;
+}
+
+/** `startSession` for callers that only need it to run (app.ts, session.ts). */
+export async function newSession(app: App, prompt?: string, options: { pickCwd?: boolean } = {}): Promise<void> {
+	await startSession(app, prompt, options);
 }

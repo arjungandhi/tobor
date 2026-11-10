@@ -1,7 +1,7 @@
 import type { SessionState, SessionSummary } from "../../api/types.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
-import { newSession } from "./new-session.js";
+import { startSession } from "./new-session.js";
 import { showWorkspaces } from "./workspaces.js";
 
 const STATE: Record<SessionState, (text: string) => string> = {
@@ -48,9 +48,9 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	const s = picked.value;
 	switch (picked.key) {
 		case "n": {
-			await newSession(app);
-			// Cancelled out of the wizard with nothing opened: stay on this level of the hierarchy.
-			if (nav === "up" && app.session.target?.id === current) return showSessions(app, archived, undefined, nav);
+			const started = await startSession(app);
+			// Cancelled the cwd fallback picker with nothing started: stay on this level of the hierarchy.
+			if (!started && nav === "up" && app.session.target?.id === current) return showSessions(app, archived, undefined, nav);
 			return;
 		}
 		case "h":
