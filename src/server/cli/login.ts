@@ -14,6 +14,9 @@ import { AuthService } from "../auth.js";
 import { FileCredentialStore } from "../harness/credentials.js";
 import { loadEnvFile, parseEnvText } from "../harness/env.js";
 import { createModels } from "../harness/models.js";
+import { staleNodeHint } from "../../tui/node-upgrade.js";
+
+export { staleNodeHint };
 
 /** `tobor login <provider>`: headless OAuth (open the URL anywhere, paste the code) into `.tobor/state/auth.json`. */
 export async function run(args: CliArgs): Promise<number> {
@@ -81,19 +84,4 @@ export async function nodeUnit(home: string, env: NodeJS.ProcessEnv = process.en
 		if (resolve(resolveHome({}, vars)) === resolve(home)) return name.slice(0, -".env".length);
 	}
 	return undefined;
-}
-
-/**
- * How to restart a node that runs another build than this CLI (a rebuilt binary is picked up only on restart), or
- * undefined when it runs the same build, none answers, or either side runs from source.
- */
-export function staleNodeHint(
-	cli: { version: string; build: string },
-	node: { version: string; build?: string } | undefined,
-	unit: string | undefined,
-): string | undefined {
-	if (!node || cli.build === "dev" || node.build === "dev") return undefined;
-	if (node.version === cli.version && node.build === cli.build) return undefined;
-	const restart = unit ? `systemctl --user restart tobor@${unit}` : "stop it and start `tobor node` again";
-	return `note: the running node is tobor ${node.version} (build ${node.build ?? "unknown"}), this CLI is ${cli.version} (build ${cli.build}); restart the node to pick up a rebuilt binary: ${restart}`;
 }
