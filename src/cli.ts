@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// `tobor <command>`: hand-rolled argument parsing; each command module is imported lazily so `tobor tui` never loads
-// the server and vice versa. Command modules export `run(args: CliArgs): Promise<number | void>`.
+// `tobor <command>`, bare `tobor [host:port]` being `tobor tui`: hand-rolled argument parsing; each command module is
+// imported lazily so `tobor tui` never loads the server and vice versa. Command modules export `run(args: CliArgs): Promise<number | void>`.
 import { resolveHome } from "./config/home.js";
 import { MIN_NODE, nodeSupported, PI_DURABLE_VERSION, VERSION } from "./version.js";
 
@@ -63,9 +63,13 @@ const COMMANDS: Record<string, Command> = {
 	},
 };
 
+/** Bare `tobor [host:port]` runs the TUI. */
+const BARE = { usage: "tobor [host:port]", summary: "terminal client for a node (same as `tobor tui`)" };
+
 function help(): string {
-	const width = Math.max(...Object.values(COMMANDS).map((c) => c.usage.length));
-	const lines = Object.values(COMMANDS).map((c) => `  ${c.usage.padEnd(width)}  ${c.summary}`);
+	const rows = [BARE, ...Object.values(COMMANDS)];
+	const width = Math.max(...rows.map((c) => c.usage.length));
+	const lines = rows.map((c) => `  ${c.usage.padEnd(width)}  ${c.summary}`);
 	return `tobor ${VERSION}: remote agent harness\n\nUsage:\n${lines.join("\n")}\n\nGlobal flags:\n  --home DIR   $TOBOR_HOME (default: TOBOR_HOME, then ~/.local/share/tobor)\n  -h, --help   show help\n`;
 }
 
@@ -115,15 +119,22 @@ function parseArgs(command: Command, argv: string[]): ParsedArgs {
 	return { positionals, flags, ...(home ? { home } : {}) };
 }
 
+/** `host:port` or a URL: a bare `tobor <target>` opens the TUI on it (anything else is an unknown command). */
+function looksLikeHost(arg: string): boolean {
+	return arg.includes(":") || arg.includes(".");
+}
+
 /** Entry point; returns the process exit code. */
 async function main(argv: string[]): Promise<number> {
 	const [name, ...rest] = argv;
-	if (name === undefined || name === "help" || name === "-h" || name === "--help") {
+	if (name === "help" || name === "-h" || name === "--help") {
 		process.stdout.write(help());
-		return name === undefined ? 2 : 0;
+		return 0;
 	}
 	if (name === "--version") return main(["version"]);
-	const command = COMMANDS[name];
+	// No subcommand (nothing, a flag such as --home, or host:port): the TUI.
+	if (name === undefined || (name.startsWith("-") && name !== "-") || (!Object.hasOwn(COMMANDS, name) && looksLikeHost(name))) return main(["tui", ...argv]);
+	const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
 	if (!command) {
 		process.stderr.write(`tobor: unknown command ${JSON.stringify(name)}\n\n${help()}`);
 		return 2;

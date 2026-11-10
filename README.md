@@ -18,7 +18,7 @@ tobor init                   # $TOBOR_HOME, the .tobor/ git repo (config.yml, ag
 $EDITOR $TOBOR_HOME/.tobor/config.yml     # roots: directories sessions may start in
 tobor login anthropic        # Claude Pro/Max OAuth; or put ANTHROPIC_API_KEY=… in $TOBOR_HOME/agent.env
 tobor node                   # API on 127.0.0.1:7879, artifacts on :7880
-tobor tui 127.0.0.1:7879     # terminal client
+tobor 127.0.0.1:7879         # terminal client (TUI); later just `tobor` (Ctrl+, settings)
 tobor backup <file>          # VACUUM INTO a copy of tobor.sqlite
 ```
 
