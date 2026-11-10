@@ -295,9 +295,9 @@ describe("system prompt sections", () => {
 		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "hi", mode: "director" });
 		await t.settle(submissionId);
 		const conversation = (await t.host.harness.conversation(id as ConversationId, ctx))!;
-		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual([]);
+		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["ask_user"]);
 		await t.host.sessions.patch(id, { mode: "solo" });
-		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["bash"]);
+		expect((await conversation.agent(ctx)).tools.map((x) => x.name)).toEqual(["ask_user", "bash"]);
 	});
 
 	describe("generated titles", () => {

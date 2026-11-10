@@ -2,7 +2,7 @@ import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context"
 import { type ConversationId, type Cursor, type Harness } from "@earendil-works/pi-durable";
 import type { PendingQuestion, SessionId } from "../../../api/types.js";
 import type { Config } from "../../../config/schema.js";
-import { type QuestionRecord, QuestionsDoc, type QuestionsDocValue, SessionDoc } from "../../../docs.js";
+import { type QuestionAnswer, type QuestionRecord, QuestionsDoc, type QuestionsDocValue, SessionDoc } from "../../../docs.js";
 import type { EventBus } from "../../../events.js";
 import { type AskResult, HostError, type Notifier, type QuestionService as QuestionServiceContract } from "../../../host.js";
 
@@ -54,8 +54,8 @@ export class QuestionService implements QuestionServiceContract {
 		const step = await harness.commit(async (tx) => {
 			const doc = await tx.doc(QuestionsDoc, id);
 			const existing = doc.questions[call.callId];
-			if (existing?.answer) return { kind: "answered" as const, record: { ...existing } };
-			if (existing) return { kind: "pending" as const, record: { ...existing }, created: false };
+			if (existing?.answer) return { kind: "answered" as const, record: plain(existing) };
+			if (existing) return { kind: "pending" as const, record: plain(existing), created: false };
 			const createdAt = this.now();
 			const record: QuestionRecord = {
 				callId: call.callId,
@@ -69,7 +69,7 @@ export class QuestionService implements QuestionServiceContract {
 			doc.questions[call.callId] = record;
 			return { kind: "pending" as const, record, created: true };
 		}, ctx);
-		if (step.kind === "answered") return toResult(step.record);
+		if (step.kind === "answered") return toResult(step.record.answer);
 
 		this.known?.add(conversationId);
 		const pending = toPending(step.record, session?.worker?.parentId);
@@ -79,20 +79,20 @@ export class QuestionService implements QuestionServiceContract {
 		}
 
 		const waited = await this.waitForAnswer(harness, id, call.callId, step.record.expiresAt, ctx);
-		if (waited.kind === "answered") return toResult(waited.record);
+		if (waited.kind === "answered") return toResult(waited.record.answer);
 		if (waited.kind === "timeout") {
-			const record = await harness.commit(async (tx) => {
+			const answer = await harness.commit(async (tx): Promise<QuestionAnswer> => {
 				const doc = await tx.doc(QuestionsDoc, id);
 				const existing = doc.questions[call.callId];
-				if (!existing) return { ...step.record, answer: { text: "", decidedAt: this.now(), reason: "timeout" as const } };
-				if (existing.answer) return { ...existing };
-				existing.answer = { text: "", decidedAt: this.now(), reason: "timeout" };
-				return { ...existing };
+				if (existing?.answer) return plain(existing.answer);
+				const timedOut: QuestionAnswer = { text: "", decidedAt: this.now(), reason: "timeout" };
+				if (existing) existing.answer = timedOut;
+				return timedOut;
 			}, BACKGROUND_CONTEXT);
-			if (record.answer?.reason === "timeout") {
+			if (answer.reason === "timeout") {
 				this.options.events.emit({ type: "question.answered", conversationId, callId: call.callId, outcome: "timeout" });
 			}
-			return toResult(record);
+			return toResult(answer);
 		}
 		await harness
 			.commit(async (tx) => {
@@ -174,7 +174,7 @@ export class QuestionService implements QuestionServiceContract {
 		const done = Promise.withResolvers<Waited>();
 		const check = (value: Readonly<QuestionsDocValue> | undefined) => {
 			const record = value?.questions[callId];
-			if (record?.answer) done.resolve({ kind: "answered", record: { ...record } });
+			if (record?.answer) done.resolve({ kind: "answered", record: plain(record) });
 		};
 		const signal = ctx.abortSignal;
 		const onAbort = () => done.resolve({ kind: "cancelled" });
@@ -222,8 +222,12 @@ export class QuestionService implements QuestionServiceContract {
 	}
 }
 
-function toResult(record: QuestionRecord): AskResult {
-	const answer = record.answer;
+/** A detached copy: values read inside a commit are overlays that settle when it ends. */
+function plain<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function toResult(answer: QuestionAnswer | undefined): AskResult {
 	if (answer?.reason === "operator") return { kind: "answered", text: answer.text };
 	return { kind: answer?.reason === "cancelled" ? "cancelled" : "timeout" };
 }

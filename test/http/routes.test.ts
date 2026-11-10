@@ -134,6 +134,30 @@ describe("routes", () => {
 		expect((await http(port, "POST", "/api/approvals/c1", { body: { decision: "maybe" } })).status).toBe(400);
 	});
 
+	it("questions list, answer via find, 404 unknown, 409 already answered", async () => {
+		const pending = { conversationId: 4, sessionId: 4, callId: "q1", question: "which?", createdAt: 1, expiresAt: 2 };
+		let answered = false;
+		const { port, calls } = await api({
+			"questions.pending": [pending],
+			"questions.find": (id: unknown) => (id === "q1" ? pending : undefined),
+			"questions.answer": () => {
+				if (answered) return Promise.reject(new HostError(409, "conflict", "already answered"));
+				answered = true;
+				return Promise.resolve();
+			},
+		});
+		expect((await http(port, "GET", "/api/questions")).body).toEqual([pending]);
+		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "sqlite" } })).body).toEqual({ ok: true });
+		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", "sqlite"] });
+		expect(await http(port, "POST", "/api/questions/q1", { body: { answer: "x", conversationId: 4 } })).toMatchObject({
+			status: 409,
+			body: { code: "conflict" },
+		});
+		expect((await http(port, "POST", "/api/questions/zz", { body: { answer: "x" } })).status).toBe(404);
+		expect((await http(port, "POST", "/api/questions/q1", { body: {} })).status).toBe(400);
+		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "x", conversationId: "4" } })).status).toBe(400);
+	});
+
 	it("auth, models, cwds, mcp, agents, workers", async () => {
 		const { port, calls } = await api({
 			"auth.status": { anthropic: { source: "oauth" } },
