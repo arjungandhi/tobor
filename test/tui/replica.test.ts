@@ -225,4 +225,20 @@ describe("replica over constructed ops", () => {
 		);
 		expect(blocks).toEqual([{ kind: "notice", key: "n:2", level: "info", text: "context reset" }]);
 	});
+
+	it("deriveBlocks shows queued inbox messages and hides internal writes", () => {
+		const inbox = {
+			items: [
+				{ id: "a", mode: "steer", content: "change course" },
+				{ id: "b", mode: "followUp", content: [{ type: "text", text: "then this" }] },
+				{ id: "c", mode: "write", content: "internal" },
+			],
+		};
+		const blocks = deriveBlocks([], { "pi.inbox": inbox } as never);
+		expect(blocks).toEqual([
+			{ kind: "queued", key: "q:a", text: "change course", mode: "steer" },
+			{ kind: "queued", key: "q:b", text: "then this", mode: "followUp" },
+		]);
+		expect(deriveBlocks([], {} as never)).toEqual([]);
+	});
 });

@@ -81,6 +81,13 @@ export class Transcript implements Component {
 				view.update(block.text);
 				return view;
 			}
+			case "queued": {
+				// Keyed `q:<id>`; once pi-durable places the message it becomes a `u:<entryId>` block and this view is dropped.
+				const label = block.mode === "followUp" ? "queued · after this run" : "queued · steering";
+				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text, label);
+				view.update(block.text, label);
+				return view;
+			}
 			case "assistant":
 			case "thinking": {
 				const view = prev instanceof AssistantBlock ? prev : new AssistantBlock(block.text, block.kind === "thinking");

@@ -25,6 +25,14 @@ describe("Transcript", () => {
 		{ kind: "assistant", key: "live:0", text: "stream", streaming: true },
 	];
 
+	it("renders a queued message dimmed with a marker, and swaps it for the placed user block", () => {
+		const t = new Transcript();
+		t.update([{ kind: "queued", key: "q:1", text: "later", mode: "followUp" }]);
+		expect(plain(t.render(60))).toEqual(["", "▌ later", "▌ queued · after this run"]);
+		t.update([{ kind: "user", key: "u:5", text: "later" }]);
+		expect(plain(t.render(60))).toEqual(["", "▌ later"]);
+	});
+
 	it("re-renders only the block whose text changed", () => {
 		const t = new Transcript();
 		t.update(base);
