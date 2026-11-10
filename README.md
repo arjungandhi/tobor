@@ -26,6 +26,24 @@ tobor backup <file>          # VACUUM INTO a copy of tobor.sqlite
 Worker models: a `task` item's `model` wins, then `agents.model_overrides.<agent>` in config.yml, then the agent
 file's `model`, then `defaults.worker_model`, else the director's model.
 
+Web access: agents get `web_search` and `fetch_url` (search providers and fetch handling adapted from
+[oh-my-pi](https://github.com/can1357/oh-my-pi)). Search works without keys (Exa's public MCP endpoint, then
+DuckDuckGo); keys in `agent.env` (`BRAVE_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`) put those providers first.
+In `.tobor/config.yml`:
+
+```yaml
+search:
+  provider: auto        # auto | brave | tavily | searxng | exa | duckduckgo | none
+  # url: https://searx.example.org   # required for searxng
+  # api_key_env: MY_BRAVE_KEY       # env var for a named provider's key
+  max_results: 10
+fetch:
+  allow_private: false  # refuse loopback/private/link-local hosts
+  max_chars: 20000
+  timeout_ms: 20000
+  remote_reader: true   # use r.jina.ai for JavaScript-only pages
+```
+
 ## Client (TUI) config
 
 The TUI and `tobor workspace` read `$XDG_CONFIG_HOME/tobor/config.yml` (default `~/.config/tobor/config.yml`); edits

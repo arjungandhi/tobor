@@ -46,7 +46,7 @@ import {
 import { findGitRoot, resolveCwd } from "./env.js";
 
 /** Tools the model sees in `director` mode; `artifact_*` tools are added from the registry. */
-export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output"];
+export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output", "fetch_url", "web_search"];
 
 /** What `SessionIndex` reads pending approvals from. */
 export type PendingSource = { pending(): Promise<{ sessionId: SessionId }[]> };

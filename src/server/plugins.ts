@@ -11,6 +11,7 @@ import type { Config, ListenAddress } from "../config/schema.js";
 import { EventBus } from "../events.js";
 import type { Host } from "../host.js";
 import { toolModules } from "../tools/index.js";
+import { webToolsModule } from "../tools/web/module.js";
 import { AgentData } from "./agentdata.js";
 import { type CoreServices, type NodePlugins, readNodeJson } from "./harness/boot.js";
 import { loadEnvFile } from "./harness/env.js";
@@ -58,14 +59,17 @@ export async function buildPlugins(home: string): Promise<BuiltPlugins> {
 			sessions: c.sessions,
 		};
 	});
-	const modules = toolModules({
-		home,
-		artifacts: { service: artifacts, nodeDesignsDir: paths.designSystemsDir, theme: (cwd) => projectTheme(config(), cwd) },
-		workers: () => ({ harness: opened().harness, config: config(), events, agentData }),
-		schedules,
-	});
-
 	let envVars: Record<string, string> = {};
+	const modules = [
+		...toolModules({
+			home,
+			artifacts: { service: artifacts, nodeDesignsDir: paths.designSystemsDir, theme: (cwd) => projectTheme(config(), cwd) },
+			workers: () => ({ harness: opened().harness, config: config(), events, agentData }),
+			schedules,
+		}),
+		webToolsModule({ config, env: () => envVars }),
+	];
+
 	let mcp: McpServiceImpl | undefined;
 	const reloadMcp = async (host: Host) => {
 		envVars = await loadEnvFile(host.config.env_file);

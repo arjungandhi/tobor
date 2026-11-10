@@ -162,7 +162,8 @@ describe("skeleton", () => {
 			const { agent, errors } = parseAgentFile(files[`agents/${name}.md`] as string, `/s/${name}.md`, "node");
 			expect(errors).toEqual([]);
 			expect(agent?.name).toBe(name);
-			if (name === "scout" || name === "reviewer") expect(agent?.tools).toEqual(["read", "bash"]);
+			if (name === "scout") expect(agent?.tools).toEqual(["read", "bash", "fetch_url", "web_search"]);
+			else if (name === "reviewer") expect(agent?.tools).toEqual(["read", "bash"]);
 			else expect(agent?.tools).toBeUndefined();
 		}
 	});
