@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
+import { join } from "node:path";
 import { BACKGROUND_CONTEXT, type Context, withCancel } from "@earendil-works/chord/context";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import {
@@ -21,6 +22,7 @@ import { type Host, HostError } from "../../host.js";
 import { composeExtension, type ToolModule } from "../../tools/registry.js";
 import { BUILD, bunSupported, MIN_BUN, PI_DURABLE_VERSION, RUNTIME, VERSION } from "../../version.js";
 import { AuthService } from "../auth.js";
+import { startUpdateChecker, updateChecker } from "../update.js";
 import { ApprovalService, type GatePredicate } from "./approvals.js";
 import { FileCredentialStore } from "./credentials.js";
 import { EnvCache, loadEnvFile } from "./env.js";
@@ -217,8 +219,10 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 			...(config.notify.ntfy ? { ntfy_topic: config.notify.ntfy.topic } : {}),
 			chrome: plugged.artifacts?.chrome() ?? { found: false },
 			now: Date.now(),
+			...(updateChecker()?.whoami() ?? {}),
 		}),
 		shutdown: async () => {
+			updateChecker()?.stop();
 			cancel(new Error("node shutting down"));
 			sessions.stop();
 			auth.cancelLogins();
@@ -238,6 +242,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 	// Resumed tasks (workers, schedules) read the plugged services, so start them only now.
 	harness.resume();
 	await sessions.startTracking();
+	await startUpdateChecker({ file: join(paths.stateDir, "update.json"), enabled: () => config.updates.check });
 	for (const hook of plugins.afterOpen ?? []) await hook(host);
 	return host;
 }

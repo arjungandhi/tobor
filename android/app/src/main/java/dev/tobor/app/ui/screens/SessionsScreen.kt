@@ -522,7 +522,7 @@ fun SessionsScreen(
             val w = whoami
             Text(
                 text = when {
-                    w != null -> "host · ${w.host} · v${w.version}".uppercase()
+                    w != null -> "host · ${w.host} · v${w.version}${if (w.updateAvailable == true) " · update available" else ""}".uppercase()
                     whoamiFailed -> "OFFLINE"
                     else -> "HOST · …"
                 },

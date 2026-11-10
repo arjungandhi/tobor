@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # all tags, for versioning and release notes
+
+      - name: Compute next version
+        id: version
+        run: |
+          version=$(.github/scripts/next-version.sh)
+          IFS=. read -r major minor patch <<<"$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "code=$((major * 1000000 + minor * 10000 + patch))" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
+      # Workspace only, never committed: gen:assets embeds package.json into the binary.
+      - name: Stamp package.json version
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          grep '"version"' package.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+
+      - name: Build binaries
+        run: |
+          bun run build
+          bun run build:arm64
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          TOBOR_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TOBOR_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TOBOR_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export TOBOR_KEYSTORE_FILE="$RUNNER_TEMP/tobor-release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$TOBOR_KEYSTORE_FILE"
+          ./gradlew --no-daemon assembleRelease \
+            -PversionName="${{ steps.version.outputs.version }}" \
+            -PversionCode="${{ steps.version.outputs.code }}"
+          rm -f "$TOBOR_KEYSTORE_FILE"
+
+      - name: Collect assets
+        run: |
+          mkdir -p release
+          cp dist/tobor dist/tobor-arm64 release/
+          apk=$(ls android/app/build/outputs/apk/release/*.apk | grep -v unsigned | head -n1)
+          cp "$apk" release/tobor.apk
+          cd release
+          ../.github/scripts/make-manifest.sh "${{ steps.version.outputs.version }}"
+          cat SHA256SUMS manifest.json
+
+      - name: Create tag and GitHub release
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --target "$GITHUB_SHA" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            release/tobor release/tobor-arm64 release/tobor.apk \
+            release/SHA256SUMS release/manifest.json

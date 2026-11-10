@@ -77,6 +77,8 @@ export const COMMANDS: readonly { name: string; description: string; argumentHin
 	{ name: "login", description: "log in to a model provider" },
 	{ name: "workspace", description: "switch workspace; node info" },
 	{ name: "settings", description: "node defaults, workspaces and TUI preferences" },
+	{ name: "upgrade", description: "upgrade the node to the latest release and restart it" },
+	{ name: "restart", description: "restart the node" },
 	{ name: "title", description: "rename this session", argumentHint: "<title>" },
 	{ name: "approval", description: "approval mode of this session", argumentHint: "ask|auto" },
 	{ name: "archive", description: "archive this session (archived sessions: h in the sessions list)" },

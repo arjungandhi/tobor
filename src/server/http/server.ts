@@ -16,6 +16,7 @@ import { questionsRoutes } from "./routes/questions.js";
 import { schedulesRoutes } from "./routes/schedules.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { toborRoutes } from "./routes/tobor.js";
+import { upgradeRoutes } from "./routes/upgrade.js";
 import { whoamiRoutes } from "./routes/whoami.js";
 import { workersRoutes } from "./routes/workers.js";
 import { ApiSockets } from "./ws.js";
@@ -36,6 +37,7 @@ export function apiRouter(): Router {
 	const r = new Router();
 	for (const register of [
 		whoamiRoutes,
+		upgradeRoutes,
 		sessionsRoutes,
 		workersRoutes,
 		approvalsRoutes,

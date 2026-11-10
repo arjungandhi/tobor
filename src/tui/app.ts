@@ -55,6 +55,7 @@ import { showSchedules } from "./screens/schedules.js";
 import { pickModel, SessionScreen } from "./screens/session.js";
 import { showSessions } from "./screens/sessions.js";
 import { showSettings } from "./screens/settings.js";
+import { restartNode, upgradeNode } from "./screens/upgrade.js";
 import { openWorkerTranscript, showWorkers } from "./screens/workers.js";
 import { c, selectListTheme } from "./theme.js";
 
@@ -159,6 +160,8 @@ export class App {
 	approvals: PendingApproval[] = [];
 	questions: PendingQuestion[] = [];
 	eventsState: SocketState = "closed";
+	/** True while a node restart triggered by /upgrade or /restart is awaited. */
+	restarting = false;
 	private events: ReconnectingSocket<EventsFrame> | undefined;
 	/** Open modals, bottom to top; `cancel` dismisses one as if Esc was pressed. */
 	private modals: { handle: OverlayHandle; cancel: () => void }[] = [];
@@ -484,6 +487,8 @@ export class App {
 		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Alt+Shift+A`));
 		const asked = this.questions.length;
 		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · Alt+Shift+U`));
+		if (this.restarting) segments.push(c.warning("⟳ node restarting…"));
+		else if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
 		this.status.set(segments, "? help · / commands");
 		s.updateLabel();
 		this.tui.requestRender();
@@ -599,6 +604,10 @@ export class App {
 				return showWorkspaces(this);
 			case "settings":
 				return showSettings(this);
+			case "upgrade":
+				return upgradeNode(this);
+			case "restart":
+				return restartNode(this);
 			case "help":
 				return this.help();
 			case "quit":

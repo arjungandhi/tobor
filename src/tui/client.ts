@@ -29,12 +29,14 @@ import type {
 	PatchSessionRequest,
 	PatchSessionResponse,
 	PutToborFileRequest,
+	RestartResponse,
 	ScheduleResponse,
 	SessionDetail,
 	SessionId,
 	ToborFileResponse,
 	ToborFileWriteResponse,
 	UpdateScheduleRequest,
+	UpgradeResponse,
 	WatchFrame,
 	WatchWindow,
 	WhoamiResponse,
@@ -57,7 +59,7 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export class ApiClient {
 	constructor(readonly base: string) {}
 
-	private async request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+	private async request<T>(method: Method, path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
 		const headers: Record<string, string> = { accept: "application/json" };
 		const payload = body === undefined ? (method === "GET" ? undefined : "{}") : JSON.stringify(body);
 		if (payload !== undefined) headers["content-type"] = "application/json";
@@ -65,7 +67,7 @@ export class ApiClient {
 			method,
 			headers,
 			body: payload,
-			signal: AbortSignal.timeout(30_000),
+			signal: AbortSignal.timeout(timeoutMs),
 		});
 		const text = await res.text();
 		let data: unknown;
@@ -86,6 +88,16 @@ export class ApiClient {
 	/** `GET /api/whoami`. */
 	whoami(): Promise<WhoamiResponse> {
 		return this.request("GET", "/api/whoami");
+	}
+
+	/** `POST /api/upgrade`: the node downloads the latest release before answering, so the timeout is generous. */
+	upgrade(): Promise<UpgradeResponse> {
+		return this.request("POST", "/api/upgrade", undefined, 300_000);
+	}
+
+	/** `POST /api/restart`. */
+	restart(): Promise<RestartResponse> {
+		return this.request("POST", "/api/restart");
 	}
 
 	/** `GET /api/sessions`. */

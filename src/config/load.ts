@@ -275,6 +275,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 		"retention",
 		"mcp",
 		"artifacts",
+		"updates",
 		"search",
 		"fetch",
 	]);
@@ -363,6 +364,10 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 	art.only(["theme"]);
 	const theme = art.string("theme") ?? DEFAULT_THEME;
 
+	const upd = root.child("updates");
+	upd.only(["check"]);
+	const updates: Config["updates"] = { check: upd.boolean("check") ?? true };
+
 	const s = root.child("search");
 	s.only(["provider", "url", "api_key_env", "max_results"]);
 	const provider = s.oneOf<SearchProvider>("provider", SEARCH_PROVIDERS) ?? "auto";
@@ -399,6 +404,7 @@ export function validateConfig(raw: unknown, home: string): ConfigResult {
 			mcp: { approval },
 			agents: { model_overrides: modelOverrides },
 			artifacts: { theme },
+			updates,
 			search,
 			fetch,
 		},

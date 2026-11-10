@@ -83,6 +83,11 @@ export type Config = {
 	};
 	/** Artifact settings. */
 	artifacts: { theme: string };
+	/** Self-update settings. */
+	updates: {
+		/** Check GitHub about daily for a newer release (whoami `latest_version`); explicit `POST /api/upgrade` works regardless. */
+		check: boolean;
+	};
 	/**
 	 * `web_search` backends. `auto` tries Brave/Tavily when their keys are set and SearXNG when `url` is set, then
 	 * the keyless Exa MCP endpoint and DuckDuckGo; a named provider is used alone; `none` disables search.

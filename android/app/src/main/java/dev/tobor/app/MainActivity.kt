@@ -12,8 +12,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -21,6 +24,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import dev.tobor.app.api.ToborApi
 import dev.tobor.app.data.SettingsStore
+import dev.tobor.app.ui.screens.ConfirmDialog
 import dev.tobor.app.ui.screens.NewSessionScreen
 import dev.tobor.app.ui.screens.artifacts.ArtifactsScreen
 import dev.tobor.app.ui.screens.ScheduleFormScreen
@@ -30,6 +34,8 @@ import dev.tobor.app.ui.screens.SessionsScreen
 import dev.tobor.app.ui.screens.SettingsScreen
 import dev.tobor.app.ui.theme.ToborColors
 import dev.tobor.app.ui.theme.ToborTheme
+import dev.tobor.app.update.AppUpdater
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,6 +55,25 @@ fun AppNav() {
     val store = remember { SettingsStore(context) }
     val api = remember { ToborApi(store.baseUrl) }
     val nav = rememberNavController()
+    val updater = remember { AppUpdater(context) }
+    val scope = rememberCoroutineScope()
+
+    // App self-update: check on start and every resume; AppUpdater throttles to once a day.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        scope.launch { updater.checkIfDue() }
+    }
+
+    updater.available?.let { info ->
+        ConfirmDialog(
+            title = "update available",
+            message = "tobor v${info.version} is available (you have v${updater.currentVersion}). " +
+                "Download and install it now?",
+            confirmLabel = "update",
+            dismissLabel = "later",
+            onConfirm = { scope.launch { updater.install(info) } },
+            onDismiss = { updater.dismiss() },
+        )
+    }
 
     val activeBaseUrl by store.activeIndexFlow.collectAsState()
 
@@ -128,6 +153,7 @@ fun AppNav() {
                 SettingsScreen(
                     api = api,
                     store = store,
+                    updater = updater,
                     onBack = { nav.popBackStack() },
                 )
             }

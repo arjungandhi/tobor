@@ -27,5 +27,6 @@ defaults:
 retention: { context: 30d, documents: 90d }
 # mcp: { approval: { github: { allow: [list_issues], ask: [create_issue] } } }   # (operator)
 artifacts: { theme: retro-log }
+# updates: { check: true }   # look for a newer GitHub release about daily (shown in whoami); false disables
 # search: { provider: auto, max_results: 10 }   # auto | brave | tavily | searxng (+ url) | exa | duckduckgo | none; keys in .tobor/state/agent.env
 # fetch: { allow_private: false, max_chars: 20000, timeout_ms: 20000, remote_reader: true }

@@ -2,6 +2,7 @@ import type { CliArgs } from "../../cli.js";
 import { formatListen } from "../../config/load.js";
 import { boot } from "../harness/boot.js";
 import { buildPlugins } from "../plugins.js";
+import { setShutdownHook } from "../update.js";
 
 /** `tobor node`: boot the node, start the listeners and serve until SIGTERM/SIGINT. */
 export async function run(args: CliArgs): Promise<number> {
@@ -19,11 +20,19 @@ export async function run(args: CliArgs): Promise<number> {
 	);
 	const exit = Promise.withResolvers<number>();
 	const keepAlive = setInterval(() => {}, 1 << 30);
-	const onSignal = async (signal: NodeJS.Signals) => {
-		process.stdout.write(`tobor node: ${signal}, shutting down\n`);
+	const stop = async () => {
 		await stopListeners().catch((err: unknown) => process.stderr.write(`tobor node: stopping listeners: ${String(err)}\n`));
 		await built.stop().catch((err: unknown) => process.stderr.write(`tobor node: stopping .tobor watcher: ${String(err)}\n`));
 		if ((await host.shutdown()) === "left_open") process.stdout.write("tobor node: approvals or questions pending; exiting without close\n");
+	};
+	// `POST /api/upgrade|restart` stop the node the same way before relaunching it.
+	setShutdownHook(async () => {
+		process.stdout.write("tobor node: restarting\n");
+		await stop();
+	});
+	const onSignal = async (signal: NodeJS.Signals) => {
+		process.stdout.write(`tobor node: ${signal}, shutting down\n`);
+		await stop();
 		exit.resolve(0);
 	};
 	process.once("SIGTERM", onSignal);

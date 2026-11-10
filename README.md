@@ -75,6 +75,41 @@ copy `contrib/tobor@.service` to `~/.config/systemd/user/` (it runs `~/.local/bi
 (plus `loginctl enable-linger $USER` to run without a login session). A replaced binary takes effect only after
 `systemctl --user restart tobor@<name>`; `tobor login` says so when the node answers with another build than the CLI.
 
+## Releases & upgrades
+
+Every push to `main` cuts a GitHub release: the patch version is bumped automatically and the release carries `tobor`
+(linux-x64), `tobor-arm64`, `tobor.apk` (Android), `SHA256SUMS` and `manifest.json` (versions and per-asset sha256, which
+upgrades verify). From source builds report version `0.0.0` / build `dev` and never upgrade.
+
+```
+tobor upgrade                # replace this binary with the latest release (sha256-verified, atomic), then say what changed
+tobor upgrade --check        # only report this binary's version and the latest release
+tobor upgrade <workspace>    # have that node download the release, replace itself and restart; waits (up to 60 s) for it to answer again
+tobor upgrade <workspace> --check   # the node's version and whether it knows of a newer release
+tobor restart <workspace>    # restart a node without upgrading, same wait
+```
+
+`<workspace>` is a saved workspace name or `host:port`, resolved from the client config above. Upgrading the local binary
+does not touch running nodes: they keep the old binary until restarted (`tobor upgrade <workspace>`, or
+`systemctl --user restart tobor@<name>`).
+
+In the TUI the status line shows `↑ <version> · /upgrade` when the connected node knows of a newer release. `/upgrade` and
+`/restart` ask for confirmation, call the node, show `⟳ node restarting…` while it is down and reconnect by themselves; if the
+node and the TUI then run different builds, a hint says which side to update.
+
+Nodes look up the latest release about once a day (and on `/upgrade`) and report it in `/api/whoami`; the Android app shows
+the same indicator. To stop the periodic lookup, set this in `.tobor/config.yml` (an explicit upgrade still works):
+
+```yaml
+updates:
+  check: false   # default true
+```
+
+A node restarts itself by exiting with status 75 under systemd, else by re-executing itself. Units installed before this
+feature should get `RestartForceExitStatus=75` in `[Service]` once, by hand (it is in `contrib/tobor@.service`): add it to
+`~/.config/systemd/user/tobor@.service`, then `systemctl --user daemon-reload`. It makes systemd relaunch on that exit code
+whatever the unit's `Restart=` policy says.
+
 ## Development
 
 ```

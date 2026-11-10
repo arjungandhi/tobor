@@ -77,7 +77,23 @@ export type WhoamiResponse = {
 	chrome: { found: boolean; version?: string };
 	/** Node clock, for client skew display. */
 	now: Millis;
+	/** Latest released tobor version (no `v`) from the last update check; absent when never checked, disabled or `dev`. */
+	latest_version?: string;
+	/** `latest_version` is newer than `version`; absent together with `latest_version`. */
+	update_available?: boolean;
 };
+
+/** `POST /api/upgrade`: `current` = nothing to do; `upgrading` = binary replaced, node restarts right after this reply. 400 `unsupported` for `dev` builds. */
+export type UpgradeResponse = {
+	status: "current" | "upgrading";
+	/** Running version. */
+	version: string;
+	/** Latest released version. */
+	latest: string;
+};
+
+/** `POST /api/restart`: the node restarts right after this reply (systemd relaunches on exit 75, else it re-execs itself). */
+export type RestartResponse = { status: "restarting" };
 
 // ─── Sessions ───────────────────────────────────────────────────────────────────────────────────────────────────────
 

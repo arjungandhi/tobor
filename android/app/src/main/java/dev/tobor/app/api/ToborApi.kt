@@ -62,6 +62,11 @@ class ToborApi(baseUrl: String) {
 
     suspend fun whoami(): Whoami = get("/api/whoami").decode()
 
+    /** Throws [ToborApiException] with code `unsupported` (400) when the node runs from source. */
+    suspend fun upgrade(): UpgradeResponse = send("POST", "/api/upgrade", "{}").decode()
+
+    suspend fun restart(): RestartResponse = send("POST", "/api/restart", "{}").decode()
+
     suspend fun sessions(archived: Boolean = false): List<SessionSummary> =
         get("/api/sessions", if (archived) mapOf("archived" to "1") else emptyMap())
             .decode(ListSerializer(SessionSummary.serializer()))
