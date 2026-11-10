@@ -36,3 +36,9 @@ go.work.sum
 # Nix
 result
 result-*
+
+# Node
+node_modules
+dist
+*.sqlite*
+spike/out
