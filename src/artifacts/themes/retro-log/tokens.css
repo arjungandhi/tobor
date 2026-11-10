@@ -1,0 +1,39 @@
+@font-face { font-family: 'Righteous'; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/Righteous-Regular.woff2") format("woff2"); }
+@font-face { font-family: 'Special Elite'; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/SpecialElite-Regular.woff2") format("woff2"); }
+@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/CourierPrime-Regular.woff2") format("woff2"); }
+@font-face { font-family: 'Courier Prime'; font-style: normal; font-weight: 700; font-display: swap; src: url("fonts/CourierPrime-Bold.woff2") format("woff2"); }
+@font-face { font-family: 'Courier Prime'; font-style: italic; font-weight: 400; font-display: swap; src: url("fonts/CourierPrime-Italic.woff2") format("woff2"); }
+
+:root {
+  color-scheme: dark;
+  --color-bg: #2A2420;
+  --color-surface: #332C27;
+  --color-sunken: #211C19;
+  --color-fg: #EADFC6;
+  --color-muted: #C2B59C;
+  --color-border: rgba(234,223,198,.4);
+  --color-border-strong: #EADFC6;
+  --color-primary: #E0A23B;
+  --color-primary-fg: #2A2420;
+  --color-accent: #E8865A;
+  --color-success: #A3BE8C;
+  --color-warning: #EBCB8B;
+  --color-error: #D8858B;
+  --font-display: 'Righteous', sans-serif;
+  --font-sans: 'Courier Prime', Courier, monospace;
+  --font-mono: 'Courier Prime', Courier, monospace;
+  --font-type: 'Special Elite', 'Courier Prime', monospace;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --shadow-sm: 0 3px 0 rgba(0,0,0,.2);
+  --shadow-card: none;
+}
+
+.band { height: 12px; display: flex; }
+.band i { flex: 1; display: block; }
+.band i:nth-child(1) { background: #8C4A2F; }
+.band i:nth-child(2) { background: #D0773F; }
+.band i:nth-child(3) { background: #DFA73B; }
+.band i:nth-child(4) { background: #5B8C8A; }
+.stamp { display: inline-block; border: 3px double var(--color-primary); color: var(--color-primary); font-family: var(--font-type); font-size: 13px; letter-spacing: .2em; text-transform: uppercase; padding: 3px 10px; transform: rotate(-9deg); opacity: .9; background: var(--color-bg); }
+.label { font-family: var(--font-type); font-size: 12px; letter-spacing: .08em; text-transform: lowercase; color: var(--color-muted); }

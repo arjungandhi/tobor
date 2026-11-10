@@ -36,3 +36,10 @@ go.work.sum
 # Nix
 result
 result-*
+
+# Bun
+node_modules
+dist
+build/assets.generated.ts
+*.sqlite*
+spike/out
