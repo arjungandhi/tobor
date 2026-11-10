@@ -15,12 +15,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EventsClient
+import dev.tobor.app.api.PatchSessionRequest
 import dev.tobor.app.api.PendingApproval
 import dev.tobor.app.api.SessionSummary
 import dev.tobor.app.api.ToborApi
@@ -91,10 +97,16 @@ fun SessionsScreen(
     var whoami by remember { mutableStateOf<Whoami?>(null) }
     var whoamiFailed by remember { mutableStateOf(false) }
     var busyCalls by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showArchived by remember { mutableStateOf(false) }
+    var menuFor by remember { mutableStateOf<SessionSummary?>(null) }
+    var confirmDelete by remember { mutableStateOf<SessionSummary?>(null) }
+    var actionError by remember { mutableStateOf<String?>(null) }
 
     suspend fun load() {
         try {
-            val s = api.sessions()
+            val wantArchived = showArchived
+            val s = api.sessions(archived = wantArchived)
+            if (wantArchived != showArchived) return // view toggled mid-flight; stale result
             sessions = s
             error = null
             try {
@@ -122,7 +134,10 @@ fun SessionsScreen(
         onDispose { eventsClient.stop() }
     }
 
-    LaunchedEffect(api) { load() }
+    LaunchedEffect(api, showArchived) {
+        sessions = null
+        load()
+    }
     LaunchedEffect(api) {
         while (true) {
             delay(5000)
@@ -172,6 +187,51 @@ fun SessionsScreen(
         }
     }
 
+    fun mutate(action: suspend () -> Unit) {
+        scope.launch {
+            try {
+                action()
+                actionError = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionError = e.message ?: e.toString()
+            }
+            load()
+        }
+    }
+
+    confirmDelete?.let { s ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            containerColor = ToborColors.raised,
+            title = {
+                Text("delete session", fontFamily = FontFamilies.Righteous, fontSize = 18.sp, color = ToborColors.gold)
+            },
+            text = {
+                Text(
+                    "Delete session ${String.format(Locale.US, "%03d", s.id)} “${s.title.ifBlank { "untitled" }}”? This cannot be undone.",
+                    fontFamily = FontFamilies.CourierPrime,
+                    fontSize = 13.sp,
+                    color = ToborColors.fg,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = null
+                        mutate { api.deleteSession(s.id) }
+                    },
+                ) { Text("delete", fontFamily = FontFamilies.Righteous, color = ToborColors.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = null }) {
+                    Text("cancel", fontFamily = FontFamilies.Righteous, color = ToborColors.muted)
+                }
+            },
+        )
+    }
+
     Surface(color = ToborColors.bg, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().fillMaxSize()) {
             StripeBand(Modifier.fillMaxWidth())
@@ -188,7 +248,7 @@ fun SessionsScreen(
                         color = ToborColors.gold,
                     )
                     Text(
-                        "FIELD LOG",
+                        if (showArchived) "ARCHIVE" else "FIELD LOG",
                         fontFamily = FontFamilies.Righteous,
                         fontSize = 9.sp,
                         letterSpacing = 2.sp,
@@ -264,6 +324,13 @@ fun SessionsScreen(
                         }
                     }
                 }
+                IconButton(onClick = { showArchived = !showArchived }) {
+                    Icon(
+                        Icons.Default.Archive,
+                        contentDescription = if (showArchived) "show active sessions" else "show archived sessions",
+                        tint = if (showArchived) ToborColors.gold else ToborColors.muted,
+                    )
+                }
                 IconButton(onClick = onSchedules) {
                     Icon(Icons.Default.Schedule, contentDescription = "schedules", tint = ToborColors.muted)
                 }
@@ -283,6 +350,18 @@ fun SessionsScreen(
             }
             HorizontalDivider(thickness = 1.dp, color = ToborColors.border)
 
+            if (actionError != null) {
+                Text(
+                    actionError!!,
+                    color = ToborColors.error,
+                    fontFamily = FontFamilies.CourierPrime,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { actionError = null }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val list = sessions
                 when {
@@ -318,7 +397,7 @@ fun SessionsScreen(
                     }
                     else -> {
                         LazyColumn(Modifier.fillMaxSize()) {
-                            items(approvals, key = { "a-" + it.callId }) { p ->
+                            items(if (showArchived) emptyList<PendingApproval>() else approvals, key = { "a-" + it.callId }) { p ->
                                 ApprovalCard(
                                     p,
                                     busy = p.callId in busyCalls,
@@ -334,13 +413,13 @@ fun SessionsScreen(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                     ) {
                                         Text(
-                                            "no entries yet",
+                                            if (showArchived) "nothing archived" else "no entries yet",
                                             fontFamily = FontFamilies.SpecialElite,
                                             fontSize = 16.sp,
                                             color = ToborColors.muted,
                                         )
                                         Text(
-                                            "form 14-b",
+                                            if (showArchived) "archive is empty" else "form 14-b",
                                             fontFamily = FontFamilies.SpecialElite,
                                             fontSize = 12.sp,
                                             color = ToborColors.subtle,
@@ -349,7 +428,43 @@ fun SessionsScreen(
                                 }
                             } else {
                                 items(list, key = { "s-" + it.id }) { s ->
-                                    SessionRow(s, onClick = { onOpen(s.id) })
+                                    Box {
+                                        SessionRow(s, onClick = { onOpen(s.id) }, onLongClick = { menuFor = s })
+                                        DropdownMenu(
+                                            expanded = menuFor?.id == s.id,
+                                            onDismissRequest = { menuFor = null },
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        if (showArchived) "unarchive" else "archive",
+                                                        fontFamily = FontFamilies.SpecialElite,
+                                                        fontSize = 13.sp,
+                                                        color = ToborColors.fg,
+                                                    )
+                                                },
+                                                onClick = {
+                                                    menuFor = null
+                                                    val archive = !showArchived
+                                                    mutate { api.patchSession(s.id, PatchSessionRequest(archived = archive)) }
+                                                },
+                                            )
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        "delete",
+                                                        fontFamily = FontFamilies.SpecialElite,
+                                                        fontSize = 13.sp,
+                                                        color = ToborColors.error,
+                                                    )
+                                                },
+                                                onClick = {
+                                                    menuFor = null
+                                                    confirmDelete = s
+                                                },
+                                            )
+                                        }
+                                    }
                                     HorizontalDivider(thickness = 1.dp, color = ToborColors.border)
                                 }
                             }
@@ -470,12 +585,13 @@ private fun stateColor(state: String): Color = when (state) {
     else -> ToborColors.subtle
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SessionRow(s: SessionSummary, onClick: () -> Unit) {
+private fun SessionRow(s: SessionSummary, onClick: () -> Unit, onLongClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
