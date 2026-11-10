@@ -587,17 +587,12 @@ export class App {
 
 	/**
 	 * Show a modal and focus it; `cancel` dismisses it as Esc would (used by `Ctrl+C`). Returns a function that closes it.
-	 * Two tiers: by default a full-screen menu (a 100% × 100% overlay at the top-left; a Panel stretches to the terminal
-	 * height, so every viewport cell is painted and no transcript shows through); `dialog` is a small centered prompt.
+	 * Every modal is full-screen: a 100% × 100% overlay at the top-left; a Panel stretches to the terminal height, so
+	 * every viewport cell is painted and no transcript shows through.
 	 */
-	openModal(component: Component, cancel: () => void, options: { dialog?: boolean } = {}): () => void {
-		if (!options.dialog && component instanceof Panel) component.stretch(() => this.terminal.rows);
-		const handle = this.tui.showOverlay(
-			component,
-			options.dialog
-				? { width: "80%", minWidth: 40, maxHeight: "85%", anchor: "center" }
-				: { width: "100%", maxHeight: "100%", anchor: "top-left" },
-		);
+	openModal(component: Component, cancel: () => void): () => void {
+		if (component instanceof Panel) component.stretch(() => this.terminal.rows);
+		const handle = this.tui.showOverlay(component, { width: "100%", maxHeight: "100%", anchor: "top-left" });
 		this.modals.push({ handle, cancel });
 		this.tui.requestRender();
 		return () => {
@@ -617,7 +612,7 @@ export class App {
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
-		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number; dialog?: boolean } = {},
+		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number } = {},
 	): Promise<Picked<T> | undefined> {
 		const { promise, resolve } = Promise.withResolvers<Picked<T> | undefined>();
 		const entries: SelectItem[] = items.map((item, i) => ({
@@ -710,7 +705,7 @@ export class App {
 				return true;
 			},
 		});
-		close = this.openModal(panel, () => finish(undefined), { dialog: options.dialog === true });
+		close = this.openModal(panel, () => finish(undefined));
 		return promise;
 	}
 
@@ -731,7 +726,7 @@ export class App {
 			child: input,
 			hint: options.hint ?? "Enter confirm · Esc cancel",
 		});
-		close = this.openModal(panel, () => finish(undefined), { dialog: true });
+		close = this.openModal(panel, () => finish(undefined));
 		return promise;
 	}
 
@@ -743,7 +738,7 @@ export class App {
 				{ value: false, label: "no" },
 				{ value: true, label: "yes" },
 			],
-			{ lines, dialog: true },
+			{ lines },
 		);
 		return picked?.value === true;
 	}
