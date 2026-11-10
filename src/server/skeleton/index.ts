@@ -15,7 +15,11 @@ const FILES = [
 
 /** Files `tobor init` writes into `$TOBOR_HOME/.tobor/`, keyed by path relative to it. */
 export function skeletonFiles(): Record<string, string> {
-	const files: Record<string, string> = { "mcp.json": `${JSON.stringify({ servers: {} }, null, "\t")}\n` };
+	const files: Record<string, string> = {
+		"mcp.json": `${JSON.stringify({ servers: {} }, null, "\t")}\n`,
+		// Node state (db, credentials, artifact store) lives in `state/`; never committed. Inline because gen-assets globs skip dotfiles.
+		".gitignore": "state/\n",
+	};
 	for (const path of FILES) files[path] = readFileSync(assetPath(`src/server/skeleton/${path}`, new URL(path, import.meta.url)), "utf8");
 	return files;
 }

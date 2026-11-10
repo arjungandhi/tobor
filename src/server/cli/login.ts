@@ -6,6 +6,7 @@ import type { WhoamiResponse } from "../../api/types.js";
 import type { CliArgs } from "../../cli.js";
 import { paths as homePaths, resolveHome } from "../../config/home.js";
 import { formatListen, loadConfig } from "../../config/load.js";
+import { migrateHomeLayout } from "../../config/migrate.js";
 import type { Config, ListenAddress } from "../../config/schema.js";
 import { HostError } from "../../host.js";
 import { BUILD, VERSION } from "../../version.js";
@@ -16,6 +17,7 @@ import { createModels } from "../harness/models.js";
 
 /** `tobor login <provider>`: headless OAuth (open the URL anywhere, paste the code) into `auth.json`. */
 export async function run(args: CliArgs): Promise<number> {
+	await migrateHomeLayout(args.home);
 	const { config } = await loadConfig(args.home);
 	const code = await login(args, config);
 	const node = await fetchWhoami(config.listen);

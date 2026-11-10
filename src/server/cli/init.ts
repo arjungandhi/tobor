@@ -10,6 +10,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { artifactsSkill } from "../../artifacts/tools.js";
 import type { CliArgs } from "../../cli.js";
 import { paths as homePaths } from "../../config/home.js";
+import { migrateHomeLayout } from "../../config/migrate.js";
 import { ensureSystemConversation, readNodeJson, writeNodeJson } from "../harness/boot.js";
 import { skeletonFiles } from "../skeleton/index.js";
 
@@ -23,7 +24,7 @@ export function nodeSkeleton(): Record<string, string> {
 /** What `initHome` did. */
 export type InitResult = { created: string[]; committed: boolean; systemConversationId: number; ntfyTopic: string };
 
-/** Create `$TOBOR_HOME`, the `.tobor/` git repo with the skeleton, `agent.env` and `node.json`. Idempotent. */
+/** Create `$TOBOR_HOME`, the `.tobor/` git repo with the skeleton, `state/agent.env` and `state/node.json`. Idempotent. */
 export async function initHome(
 	home: string,
 	skeleton: () => Record<string, string> = nodeSkeleton,
@@ -31,6 +32,8 @@ export async function initHome(
 	const paths = homePaths(home);
 	await mkdir(home, { recursive: true, mode: 0o700 });
 	await mkdir(paths.toborDir, { recursive: true });
+	await migrateHomeLayout(home);
+	await mkdir(paths.stateDir, { recursive: true, mode: 0o700 });
 	await mkdir(paths.artifacts, { recursive: true });
 	await mkdir(paths.designSystemsDir, { recursive: true });
 
@@ -44,7 +47,7 @@ export async function initHome(
 	}
 	if (!(await exists(paths.agentEnv))) {
 		await writeFile(paths.agentEnv, "# API keys and other secrets, KEY=value per line.\n", { mode: 0o600 });
-		created.push("agent.env");
+		created.push(join(".tobor", "state", "agent.env"));
 	}
 
 	const git = (...argv: string[]) =>

@@ -13,6 +13,7 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { type NodeJson, paths as homePaths } from "../../config/home.js";
 import { loadConfig } from "../../config/load.js";
+import { migrateHomeLayout } from "../../config/migrate.js";
 import { type Config, RESTART_LIMIT } from "../../config/schema.js";
 import { TOBOR_DOCS } from "../../docs.js";
 import { EventBus } from "../../events.js";
@@ -96,6 +97,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 	const home = options.home;
 	const paths = homePaths(home);
 	await mkdir(home, { recursive: true, mode: 0o700 });
+	await migrateHomeLayout(home);
 
 	const loaded = await loadConfig(home);
 	for (const e of loaded.errors) console.error(`tobor: ${paths.config}: ${e.path || "(file)"}: ${e.message}`);
