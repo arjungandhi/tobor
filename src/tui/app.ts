@@ -12,6 +12,7 @@ import {
 	ProcessTerminal,
 	type SelectItem,
 	SelectList,
+	stripTerminalSequences,
 	TuiAltScreen,
 	type TuiInputListenerResult,
 	truncateToWidth,
@@ -44,7 +45,7 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { COMMANDS, HELP, KEYS, matchesBinding, QuitGate } from "./keys.js";
+import { COMMANDS, DOUBLE_LEFT_WINDOW_MS, HELP, KEYS, matchesBinding, QuitGate } from "./keys.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
 import { showArtifacts } from "./screens/artifacts.js";
@@ -160,6 +161,8 @@ export class App {
 	/** Workspace connected to (for an unsaved `tobor host:port`, named after the address). */
 	workspace: Workspace | undefined;
 	whoami: WhoamiResponse | undefined;
+	/** Local time (ms) at which `whoami` was last assigned; `now()` extrapolates the server clock from it. */
+	private whoamiAt = 0;
 	sessions: SessionSummary[] = [];
 	approvals: PendingApproval[] = [];
 	questions: PendingQuestion[] = [];
@@ -176,6 +179,16 @@ export class App {
 	/** Generation whose initial session/picker was already opened (connect and the first events open both try). */
 	private initialOpened = 0;
 	private generation = 0;
+	/** A modal-opening flow (hotkey or slash command) is running: further ones are ignored until it settles. */
+	private flowActive = false;
+	/** The key being handled is a Kitty auto-repeat: one-shot hotkeys ignore it. */
+	private repeating = false;
+	/** Whether the TUI was already stopped (quit or fatal error). */
+	private stopped = false;
+	/** Fetch/event counters per shared list: a fetch is applied only if nothing newer started or happened meanwhile. */
+	private readonly sessionsSeq = { fetch: 0, event: 0 };
+	private readonly approvalsSeq = { fetch: 0, event: 0 };
+	private readonly onFatal = (err: unknown): void => this.fatal(err);
 
 	constructor(
 		public config: ClientConfig,
@@ -200,6 +213,18 @@ export class App {
 	run(start: Start, notice?: string): Promise<number> {
 		const { promise, resolve } = Promise.withResolvers<number>();
 		this.exit = resolve;
+		process.on("uncaughtException", this.onFatal);
+		process.on("unhandledRejection", this.onFatal);
+		try {
+			this.begin(start, notice);
+		} catch (err) {
+			this.stopUi();
+			throw err;
+		}
+		return promise;
+	}
+
+	private begin(start: Start, notice: string | undefined): void {
 		this.tui.addInputListener((data) => this.onInput(data));
 		this.tui.setFocus(this.session.composer);
 		this.tui.start();
@@ -217,16 +242,38 @@ export class App {
 		const flash = [notice, start.kind === "picker" ? start.reason : undefined].filter(Boolean).join(" · ");
 		if (flash) this.flash(flash);
 		this.changed();
-		return promise;
+	}
+
+	/** Stop sockets and the renderer once, restoring the terminal. */
+	private stopUi(preserveScreen = false): void {
+		process.off("uncaughtException", this.onFatal);
+		process.off("unhandledRejection", this.onFatal);
+		if (this.stopped) return;
+		this.stopped = true;
+		this.events?.close();
+		this.session.close();
+		this.tui.setLayoutRoot(new VStack([]));
+		this.tui.stop(preserveScreen ? { preserveScreen } : {});
+	}
+
+	/** Unexpected error: restore the terminal first, then print it and exit non-zero. */
+	private fatal(err: unknown): void {
+		try {
+			this.stopUi(true);
+		} catch {}
+		process.stderr.write(`tobor: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
+		process.exit(1);
 	}
 
 	/** Leave the TUI. */
 	quit(): void {
-		this.events?.close();
-		this.session.close();
-		this.tui.setLayoutRoot(new VStack([]));
-		this.tui.stop();
+		this.stopUi();
 		this.exit?.(0);
+	}
+
+	/** The server's clock now: `whoami.now` advanced by the time since it was fetched (local clock drift corrected). */
+	now(): number {
+		return this.whoami ? this.whoami.now + (Date.now() - this.whoamiAt) : Date.now();
 	}
 
 	/** Connect to a workspace: drop the old node's sockets and session, then load lists and open a session. */
@@ -237,6 +284,7 @@ export class App {
 		this.session.close();
 		this.workspace = workspace;
 		this.whoami = undefined;
+		this.whoamiAt = 0;
 		this.sessions = [];
 		this.approvals = [];
 		this.questions = [];
@@ -247,8 +295,8 @@ export class App {
 			onFrame: (frame) => {
 				if (frame.t === "event") this.onEvent(frame.event);
 			},
-			onOpen: (reconnect) => {
-				if (!reconnect && this.whoami) return;
+			onOpen: () => {
+				// Always refetch: events between the initial HTTP refresh and the socket opening are lost.
 				void this.refresh().then(() => {
 					if (generation === this.generation) this.openInitial();
 				});
@@ -315,20 +363,35 @@ export class App {
 			// A node without `ask_user` support has no /api/questions; treat that as no questions.
 			const [whoami, sessions, approvals, questions] = await Promise.all([
 				client.whoami(),
-				client.sessions(),
-				client.approvals(),
+				this.latest(client, () => client.sessions(), this.sessionsSeq),
+				this.latest(client, () => client.approvals(), this.approvalsSeq),
 				client.questions().catch(() => []),
 			]);
 			if (client !== this.client) return;
 			this.whoami = whoami;
-			this.sessions = sessions;
-			this.approvals = approvals;
+			this.whoamiAt = Date.now();
+			if (sessions) this.sessions = sessions;
+			if (approvals) this.approvals = approvals;
 			this.questions = questions;
 			this.session.rebuild();
 		} catch (err) {
 			if (client === this.client) this.flash(`${this.workspace?.name}: ${(err as Error).message}`);
 		}
 		this.changed();
+	}
+
+	/**
+	 * Fetch a shared list; undefined when the result is stale: a newer fetch started (it will apply), or an event changed
+	 * the list meanwhile (refetch, a couple of times, so the snapshot is not older than the event).
+	 */
+	private async latest<T>(client: ApiClient, fetch: () => Promise<T>, seq: { fetch: number; event: number }): Promise<T | undefined> {
+		const mine = ++seq.fetch;
+		for (let attempt = 0; ; attempt++) {
+			const events = seq.event;
+			const value = await fetch();
+			if (mine !== seq.fetch || client !== this.client) return undefined;
+			if (events === seq.event || attempt >= 2) return value;
+		}
 	}
 
 	/** Open a session in the Session view and remember it for this workspace (state.json). */
@@ -357,6 +420,7 @@ export class App {
 	private onEvent(event: NodeEvent): void {
 		switch (event.type) {
 			case "approval.requested": {
+				this.approvalsSeq.event++;
 				const { approval } = event;
 				if (!this.approvals.some((a) => a.callId === approval.callId && a.conversationId === approval.conversationId)) {
 					this.approvals = [...this.approvals, approval];
@@ -368,6 +432,7 @@ export class App {
 				break;
 			}
 			case "approval.resolved":
+				this.approvalsSeq.event++;
 				this.approvals = this.approvals.filter((a) => !(a.callId === event.callId && a.conversationId === event.conversationId));
 				this.session.rebuild();
 				break;
@@ -387,9 +452,14 @@ export class App {
 				this.session.rebuild();
 				break;
 			case "session.state":
-				this.sessions = this.sessions.map((s) =>
-					s.id === event.id ? { ...s, state: event.state, ...(event.failure ? { failure: event.failure } : {}) } : s,
-				);
+				this.sessionsSeq.event++;
+				this.sessions = this.sessions.map((s) => {
+					if (s.id !== event.id) return s;
+					const next = { ...s, state: event.state };
+					if (event.failure) next.failure = event.failure;
+					else delete next.failure;
+					return next;
+				});
 				break;
 			case "session.updated":
 				void this.refreshSessions().then(() => this.session.syncTitle(this.sessions));
@@ -414,8 +484,8 @@ export class App {
 		const client = this.client;
 		if (!client) return;
 		try {
-			const sessions = await client.sessions();
-			if (client === this.client) this.sessions = sessions;
+			const sessions = await this.latest(client, () => client.sessions(), this.sessionsSeq);
+			if (sessions && client === this.client) this.sessions = sessions;
 		} catch (err) {
 			this.flash((err as Error).message);
 		}
@@ -426,8 +496,8 @@ export class App {
 	async refreshApprovals(): Promise<void> {
 		const client = this.client;
 		if (!client) return;
-		const approvals = await client.approvals();
-		if (client !== this.client) return;
+		const approvals = await this.latest(client, () => client.approvals(), this.approvalsSeq);
+		if (!approvals || client !== this.client) return;
 		this.approvals = approvals;
 		this.session.rebuild();
 		this.changed();
@@ -457,7 +527,8 @@ export class App {
 
 	/** A transient message over the transcript. */
 	flash(message: string): void {
-		this.tui.flash(message.replace(/\s+/g, " ").slice(0, 300), 4000);
+		const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
+		this.tui.flash(Array.from(text).slice(0, 300).join(""), 4000);
 		this.tui.requestRender();
 	}
 
@@ -505,9 +576,15 @@ export class App {
 			if (!isKeyRelease(data) && !isKeyRepeat(data)) this.interrupt();
 			return { consume: true };
 		}
+		// Releases are never ours (pi-tui still sees them); matchesKey() would match them as a press.
+		if (isKeyRelease(data)) return undefined;
 		if (this.modals.length > 0) return undefined;
-		const consumed = this.handleKey(data);
-		return consumed ? { consume: true } : undefined;
+		this.repeating = isKeyRepeat(data);
+		try {
+			return this.handleKey(data) ? { consume: true } : undefined;
+		} finally {
+			this.repeating = false;
+		}
 	}
 
 	/** `Ctrl+C`: the second press within the window quits from any screen; the first closes the top dialog or clears the composer. */
@@ -520,13 +597,12 @@ export class App {
 	}
 
 	private handleKey(data: string): boolean {
-		// Kitty keyboard protocol reports releases as separate events; only presses (and repeats) act.
-		if (isKeyRelease(data)) return false;
 		const s = this.session;
 		const composer = s.composer;
 		if (s.transcript.selecting) {
 			if (matchesKey(data, "up")) s.moveSelection(-1);
 			else if (matchesKey(data, "down")) s.moveSelection(1);
+			else if (this.repeating) return true;
 			else if (matchesKey(data, "enter")) s.activateSelection();
 			else {
 				s.clearSelection();
@@ -538,8 +614,9 @@ export class App {
 		const empty = composer.getText() === "";
 		if (empty && this.answerKey(data)) return true;
 		if (empty && matchesKey(data, "left")) {
+			if (this.repeating) return false;
 			const now = Date.now();
-			if (this.lastLeft > 0 && now - this.lastLeft <= 500) {
+			if (this.lastLeft > 0 && now - this.lastLeft <= DOUBLE_LEFT_WINDOW_MS) {
 				this.lastLeft = 0;
 				return this.do(() => showSessions(this));
 			}
@@ -550,10 +627,11 @@ export class App {
 		if (matchesKey(data, KEYS.navigate) && empty) return s.moveSelection(0);
 		if (matchesKey(data, KEYS.help) && empty) return this.do(() => this.help());
 		if (matchesBinding(data, KEYS.exit) && empty) {
-			this.quit();
+			if (!this.repeating) this.quit();
 			return true;
 		}
 		if (matchesKey(data, KEYS.abort)) {
+			if (this.repeating) return true;
 			if (s.target?.worker) {
 				this.openSession(s.target.worker.parent.id);
 				return true;
@@ -595,13 +673,27 @@ export class App {
 		return false;
 	}
 
+	/** Hotkey dispatch: swallows the key; ignores auto-repeats and anything while another flow is running. */
 	private do(flow: () => Promise<unknown>): true {
-		this.guard(flow);
+		if (!this.repeating) this.guard(() => this.exclusive(flow));
 		return true;
+	}
+
+	/** Run `flow` unless another exclusive one is active (modals open only after network calls, so `modals` alone is no guard). */
+	private exclusive(flow: () => Promise<unknown>): Promise<unknown> {
+		if (this.flowActive) return Promise.resolve();
+		this.flowActive = true;
+		return new Promise((resolve) => resolve(flow())).finally(() => {
+			this.flowActive = false;
+		});
 	}
 
 	/** Run a slash command typed into the composer. */
 	async command(line: string): Promise<void> {
+		await this.exclusive(() => this.runCommand(line));
+	}
+
+	private async runCommand(line: string): Promise<void> {
 		const [name = "", ...rest] = line.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
 		const s = this.session;
@@ -712,6 +804,7 @@ export class App {
 		const chosen = (key: string): void => {
 			const item = list.getSelectedItem();
 			if (item?.value.startsWith(COMMAND_PREFIX)) return finish({ key, command: item.value.slice(COMMAND_PREFIX.length) });
+			if (!item && items.length > 0) return; // a filter without matches: Enter does nothing
 			const picked = item ? items[Number(item.value)] : undefined;
 			finish(picked ? { key, value: picked.value } : items.length === 0 ? { key } : undefined);
 		};
@@ -742,7 +835,7 @@ export class App {
 				panel.setHint(baseHint);
 			} else {
 				const needle = query.toLowerCase();
-				const matches = entries.filter((e) => `${e.label} ${e.description ?? ""}`.toLowerCase().includes(needle));
+				const matches = entries.filter((e) => stripTerminalSequences(`${e.label} ${e.description ?? ""}`).toLowerCase().includes(needle));
 				const cmds: SelectItem[] = options.commands
 					? commandRows(query).map((cmd) => ({ value: `${COMMAND_PREFIX}${cmd.name}`, label: c.accent(`/${cmd.name}`), description: cmd.description }))
 					: [];
@@ -774,7 +867,13 @@ export class App {
 						refilter();
 						return true;
 					}
-					const typed = data.length === 1 && data >= " " && data !== "\x7f" ? data : decodeKittyPrintable(data);
+					const unpasted = data.replace(/\x1b\[20[01]~/g, "");
+					const typed =
+						unpasted !== data
+							? unpasted.replace(/[\x00-\x1f\x7f-\x9f]/g, " ") // bracketed paste: one chunk, newlines become spaces
+							: /^[^\x00-\x1f\x7f-\x9f]+$/.test(data)
+								? data
+								: decodeKittyPrintable(data);
 					if (typed && !isKeyRelease(data)) {
 						query += typed;
 						refilter();
@@ -801,7 +900,10 @@ export class App {
 	ask(title: string, options: { lines?: string[]; initial?: string; placeholder?: string; hint?: string } = {}): Promise<string | undefined> {
 		const { promise, resolve } = Promise.withResolvers<string | undefined>();
 		const input = new Input(options.placeholder ? { placeholder: options.placeholder, placeholderStyle: c.dim } : {});
-		if (options.initial) input.setValue(options.initial);
+		if (options.initial) {
+			input.setValue(options.initial);
+			input.handleInput("\x05"); // Ctrl+E: cursor to the end
+		}
 		let close = (): void => {};
 		const finish = (value: string | undefined): void => {
 			close();
@@ -858,7 +960,7 @@ export class App {
 
 	/** Suspend the UI around a foreground child process such as `$EDITOR`. */
 	async suspend<T>(fn: () => T | Promise<T>): Promise<T> {
-		this.tui.stop();
+		this.tui.stop({ preserveScreen: true });
 		try {
 			return await fn();
 		} finally {

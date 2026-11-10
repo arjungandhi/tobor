@@ -28,6 +28,9 @@ export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]):
 /** Two `Ctrl+C` presses at most this far apart quit the TUI. */
 export const QUIT_WINDOW_MS = 500;
 
+/** Two bare `Left` presses on an empty composer at most this far apart open the sessions list. */
+export const DOUBLE_LEFT_WINDOW_MS = 500;
+
 /** Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`. */
 export class QuitGate {
 	private armedAt = Number.NEGATIVE_INFINITY;
