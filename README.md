@@ -15,13 +15,13 @@ self-contained binary (no Bun or node_modules needed to run it).
 ```
 bun install && bun run build && cp dist/tobor ~/.local/bin/   # dist/tobor: single-file binary
 export TOBOR_HOME=~/.local/share/tobor     # or --home DIR on every command
-tobor init                   # $TOBOR_HOME, the .tobor/ git repo (config.yml, agents/, skills/), node.json
+tobor init                   # $TOBOR_HOME, the .tobor/ git repo (config.yml, agents/, skills/), .tobor/state/ (gitignored node state)
 $EDITOR $TOBOR_HOME/.tobor/config.yml     # roots: directories sessions may start in
-tobor login anthropic        # Claude Pro/Max OAuth; or put ANTHROPIC_API_KEY=… in $TOBOR_HOME/agent.env
+tobor login anthropic        # Claude Pro/Max OAuth; or put ANTHROPIC_API_KEY=… in $TOBOR_HOME/.tobor/state/agent.env
 tobor node                   # API on 127.0.0.1:7879, artifacts on :7880
 tobor workspace add personal 127.0.0.1:7879   # name the node (client config, see below)
 tobor                        # terminal client (TUI): workspace picker; `tobor personal` opens it directly
-tobor backup <file>          # VACUUM INTO a copy of tobor.sqlite
+tobor backup <file>          # VACUUM INTO a copy of .tobor/state/tobor.sqlite
 ```
 
 Worker models: a `task` item's `model` wins, then `agents.model_overrides.<agent>` in config.yml, then the agent
@@ -29,7 +29,7 @@ file's `model`, then `defaults.worker_model`, else the director's model.
 
 Web access: agents get `web_search` and `fetch_url` (search providers and fetch handling adapted from
 [oh-my-pi](https://github.com/can1357/oh-my-pi)). Search works without keys (Exa's public MCP endpoint, then
-DuckDuckGo); keys in `agent.env` (`BRAVE_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`) put those providers first.
+DuckDuckGo); keys in `.tobor/state/agent.env` (`BRAVE_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`) put those providers first.
 In `.tobor/config.yml`:
 
 ```yaml
