@@ -449,7 +449,11 @@ export class SessionScreen {
 	/** Enter on the selection: toggle a tool, or load history. */
 	activateSelection(): void {
 		const action = this.transcript.activate();
-		if (action?.kind === "earlier") this.app.guard(() => this.loadEarlier());
+		if (action?.kind === "toggled") {
+			// The block grew or shrank under the cursor: keep its first line in view.
+			const line = this.transcript.selectedLine();
+			if (line !== undefined) this.scroll.scrollTo(Math.max(0, line - 2), { disableFollow: true });
+		} else if (action?.kind === "earlier") this.app.guard(() => this.loadEarlier());
 		else if (action?.kind === "gap") {
 			const replica = this.replica;
 			this.app.guard(async () => {
