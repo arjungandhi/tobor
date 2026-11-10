@@ -42,7 +42,7 @@ export class QuitGate {
 export const HELP: readonly (readonly [string, string])[] = [
 	["Enter", "send prompt (while a run is going: steer the running agent)"],
 	["Ctrl+Q / Ctrl+Enter", "queue a follow-up for after the current turn"],
-	["Esc", "abort the run (in a worker view: back to the director)"],
+	["Esc", "abort the run · worker view: back to the director · idle: sessions list (then workspaces)"],
 	["Shift+Enter / Alt+Enter", "new line in the composer"],
 	["Alt+Shift+A", "pending approvals: approve / approve for session / deny"],
 	["Alt+A", "workers of this session (Ctrl+S also works)"],

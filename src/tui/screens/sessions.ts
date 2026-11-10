@@ -2,6 +2,7 @@ import type { SessionState, SessionSummary } from "../../api/types.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
 import { newSession } from "./new-session.js";
+import { showWorkspaces } from "./workspaces.js";
 
 const STATE: Record<SessionState, (text: string) => string> = {
 	idle: c.dim,
@@ -18,8 +19,13 @@ function when(ms: number, now: number): string {
 	return `${Math.round(s / 86_400)}d ago`;
 }
 
-/** Ctrl+L: sessions with state tag and cost; Enter opens, n new, r rename, a archive/unarchive, x delete, h archived. */
-export async function showSessions(app: App, archived = false, focus?: { id: number; index: number }): Promise<void> {
+/**
+ * Ctrl+L: sessions with state tag and cost; Enter opens, n new, r rename, a archive/unarchive, x delete, h archived.
+ * `nav` is the Esc meaning: "close" (mid-session: back to where you were) or "up" (the hierarchy workspace → sessions →
+ * session: startup, or Esc from an idle session; Esc goes back to the workspace picker, from the archived view to the
+ * active list).
+ */
+export async function showSessions(app: App, archived = false, focus?: { id: number; index: number }, nav: "close" | "up" = "close"): Promise<void> {
 	const client = app.api();
 	const sessions = archived ? (await client.sessions(true)).filter((s) => s.archived) : await client.sessions();
 	if (!archived) app.sessions = sessions;
@@ -31,22 +37,29 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	}));
 	const current = app.session.target?.id;
 	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`, items, {
-		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · h ${archived ? "active" : "archived"} · Esc close`,
+		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · h ${archived ? "active" : "archived"} · Esc ${nav === "up" ? "back" : "close"}`,
 		keys: ["n", "r", "a", "x", "h"],
-		selected: initialIndex(sessions, current, focus),
+		selected: initialIndex(sessions, current ?? app.lastSessionId(), focus),
 	});
-	if (!picked) return;
+	if (!picked) {
+		if (nav !== "up") return;
+		return archived ? showSessions(app, false, undefined, nav) : showWorkspaces(app, "switch", undefined, true);
+	}
 	const s = picked.value;
 	switch (picked.key) {
-		case "n":
-			return newSession(app);
+		case "n": {
+			await newSession(app);
+			// Cancelled out of the wizard with nothing opened: stay on this level of the hierarchy.
+			if (nav === "up" && app.session.target?.id === current) return showSessions(app, archived, undefined, nav);
+			return;
+		}
 		case "h":
-			return showSessions(app, !archived);
+			return showSessions(app, !archived, undefined, nav);
 		case "enter":
 			if (s) app.openSession(s.id);
 			return;
 	}
-	if (!s) return showSessions(app, archived);
+	if (!s) return showSessions(app, archived, undefined, nav);
 	const at = { id: s.id, index: sessions.findIndex((x) => x.id === s.id) };
 	if (picked.key === "r") {
 		const title = await app.ask(`rename #${s.id}`, { initial: s.title });
@@ -61,10 +74,10 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 		}
 	}
 	await app.refreshSessions();
-	return showSessions(app, archived, at);
+	return showSessions(app, archived, at, nav);
 }
 
-/** Cursor row: the row just acted on (or its nearest successor once it is gone), else the open session, else the top. */
+/** Cursor row: the row just acted on (or its nearest successor once it is gone), else the open (or last opened) session, else the top. */
 function initialIndex(sessions: SessionSummary[], current: number | undefined, focus?: { id: number; index: number }): number {
 	if (focus) {
 		const i = sessions.findIndex((s) => s.id === focus.id);

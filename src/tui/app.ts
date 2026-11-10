@@ -202,7 +202,7 @@ export class App {
 					this.openInitial();
 				});
 			}
-		} else this.guard(() => showWorkspaces(this));
+		} else this.guard(() => showWorkspaces(this, "switch", undefined, true));
 		const flash = [notice, start.kind === "picker" ? start.reason : undefined].filter(Boolean).join(" · ");
 		if (flash) this.flash(flash);
 		this.changed();
@@ -283,16 +283,17 @@ export class App {
 		this.changed();
 	}
 
-	/** Open the last session, else the session list, else New session; once per connection, never over a modal. */
+	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc walks back up to the workspace picker); once per connection, never over a modal. */
 	openInitial(): void {
 		if (this.initialOpened === this.generation || this.session.target || this.modals.length > 0) return;
 		if (!this.client || !this.whoami || !this.workspace) return;
 		this.initialOpened = this.generation;
-		const last = lastSession(this.statePath, this.workspace.name);
-		const known = this.sessions.find((s) => s.id === last);
-		if (known) this.openSession(known.id);
-		else if (this.sessions.length > 0) this.guard(() => showSessions(this));
-		else this.guard(() => newSession(this));
+		this.guard(() => showSessions(this, false, undefined, "up"));
+	}
+
+	/** The session last opened on the connected workspace (state.json), for default cursors. */
+	lastSessionId(): SessionId | undefined {
+		return this.workspace ? lastSession(this.statePath, this.workspace.name) : undefined;
 	}
 
 	/** Refetch whoami, sessions and approvals (on connect and after every reconnect; `/api/events` is lossy). */
@@ -502,6 +503,8 @@ export class App {
 				return true;
 			}
 			if (s.state() === "running" || s.state() === "waiting") return this.do(() => s.abort());
+			// Idle session, empty composer: one level up the hierarchy (sessions list; Esc there goes on to workspaces).
+			if (s.target && empty) return this.do(() => showSessions(this, false, undefined, "up"));
 			return false;
 		}
 		if (matchesBinding(data, KEYS.followUp)) return this.do(() => s.queueFollowUp());

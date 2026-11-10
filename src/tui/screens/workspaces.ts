@@ -1,5 +1,6 @@
 import type { WhoamiResponse } from "../../api/types.js";
 import type { App } from "../app.js";
+import { showSessions } from "./sessions.js";
 import { c } from "../theme.js";
 import {
 	type Address,
@@ -32,12 +33,14 @@ function whoamiLines(w: WhoamiResponse | undefined, ws: Workspace): string[] {
 /**
  * The workspace list with reachability (each probed via `/api/whoami`, 1.5 s timeout). `switch` (startup picker,
  * Ctrl+T): Enter connects. `manage` (settings): Enter opens the edit menu. Both: a add, e edit.
+ * `hierarchy` (startup, or one level up from the sessions list): Enter goes on to that workspace's sessions list, and Esc
+ * leaves the workspace level with no session open.
  */
-export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string): Promise<void> {
+export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string, hierarchy = false): Promise<void> {
 	const config = app.config;
 	if (config.workspaces.length === 0) {
 		const added = await addWorkspace(app);
-		return added ? showWorkspaces(app, mode, added.name) : undefined;
+		return added ? showWorkspaces(app, mode, added.name, hierarchy) : undefined;
 	}
 	app.flash("probing workspaces…");
 	const probes = await Promise.all(config.workspaces.map((ws) => probe(ws)));
@@ -55,19 +58,27 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 		keys: ["a", "e"],
 		selected: Math.max(0, config.workspaces.findIndex((w) => w.name === preselect)),
 	});
-	if (!picked) return;
+	if (!picked) {
+		if (hierarchy && app.session.target) {
+			app.session.close();
+			app.changed();
+		}
+		return;
+	}
 	if (picked.key === "a") {
 		const added = await addWorkspace(app);
-		return showWorkspaces(app, mode, added?.name);
+		return showWorkspaces(app, mode, added?.name, hierarchy);
 	}
 	const name = picked.value;
 	if (!name) return;
 	if (picked.key === "e" || mode === "manage") {
 		const next = await editWorkspace(app, name);
-		return showWorkspaces(app, mode, next);
+		return showWorkspaces(app, mode, next, hierarchy);
 	}
 	const ws = findWorkspace(config, name);
-	if (ws && ws.name !== current?.name) app.connect(ws);
+	if (!ws) return;
+	if (ws.name !== current?.name || (hierarchy && !app.whoami)) app.connect(ws);
+	else if (hierarchy) return showSessions(app, false, undefined, "up");
 }
 
 /** Ask for a host:port; an empty answer keeps `initial` (default 127.0.0.1:7879). */
