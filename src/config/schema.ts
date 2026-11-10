@@ -131,7 +131,7 @@ export type ConfigResult = { config: Config; errors: ConfigError[] };
 /** Default API port. */
 export const DEFAULT_PORT = 7879;
 /** Default session model. */
-export const DEFAULT_MODEL = "anthropic/claude-opus-5-5";
+export const DEFAULT_MODEL = "anthropic/claude-fable-5";
 /** Default cheap model (titles, the `fast` agent). */
 export const DEFAULT_CHEAP_MODEL = "anthropic/claude-haiku-5-5";
 /** Built-in artifact theme. */

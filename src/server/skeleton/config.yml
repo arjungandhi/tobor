@@ -13,7 +13,7 @@
 #   on: [approval, error, settled]
 
 defaults:
-  model: anthropic/claude-opus-5-5
+  model: anthropic/claude-fable-5
   thinking: high
   approval_mode: ask            # (operator) ask | auto
   max_turns: 100
@@ -23,7 +23,7 @@ defaults:
   idle: 30m
   approval_timeout: 12h
 
-# agents: { model_overrides: { worker: anthropic/claude-opus-5-5 } }   # beats the agent file, not a task item's model
+# agents: { model_overrides: { worker: anthropic/claude-fable-5 } }   # beats the agent file, not a task item's model
 
 retention: { context: 30d, documents: 90d }
 # mcp: { approval: { github: { allow: [list_issues], ask: [create_issue] } } }   # (operator)
