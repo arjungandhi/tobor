@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import type {
+	AnswerQuestionRequest,
 	ApiError,
 	AuthStatusResponse,
 	CreateScheduleRequest,
@@ -17,6 +18,7 @@ import type {
 	ListApprovalsResponse,
 	ListArtifactRevisionsResponse,
 	ListArtifactsResponse,
+	ListQuestionsResponse,
 	ListSchedulesResponse,
 	ListSessionsResponse,
 	ListWorkersResponse,
@@ -136,6 +138,16 @@ export class ApiClient {
 	/** `POST /api/approvals/:callId`. */
 	decide(callId: string, req: DecideApprovalRequest): Promise<OkResponse> {
 		return this.request("POST", `/api/approvals/${encodeURIComponent(callId)}`, req);
+	}
+
+	/** `GET /api/questions`. */
+	questions(): Promise<ListQuestionsResponse> {
+		return this.request("GET", "/api/questions");
+	}
+
+	/** `POST /api/questions/:callId`. */
+	answer(callId: string, req: AnswerQuestionRequest): Promise<OkResponse> {
+		return this.request("POST", `/api/questions/${encodeURIComponent(callId)}`, req);
 	}
 
 	/** `GET /api/sessions/:id/workers`. */

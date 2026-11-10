@@ -8,6 +8,7 @@ import type {
 	ArtifactSummary,
 	NodeEvent,
 	PendingApproval,
+	PendingQuestion,
 	Schedule,
 	SessionSummary,
 	WatchValue,
@@ -24,6 +25,7 @@ type Conversation = { view: WatchValue; older: unknown[]; watchers: Set<WebSocke
 const conversations = new Map<number, Conversation>();
 const events = new Set<WebSocket>();
 let approvals: PendingApproval[] = [];
+let questions: PendingQuestion[] = [];
 
 function userEntry(conversationId: number, id: number, text: string): Record<string, unknown> {
 	return { kind: "pi.user", id, conversationId, model: [{ role: "user", content: text, timestamp: now }] };
@@ -230,6 +232,16 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		return send(res, 200, { items: ordered.slice(0, limit), more: ordered.length > limit });
 	}
 	if ((match = m(/^\/api\/sessions\/(\d+)\/workers$/))) return send(res, 200, Number(match[1]) === SESSION_ID ? workers : []);
+	if (path === "/api/questions" && method === "GET") return send(res, 200, questions);
+	if ((match = m(/^\/api\/questions\/(.+)$/)) && method === "POST") {
+		const callId = decodeURIComponent(match[1] ?? "");
+		await body(req);
+		const question = questions.find((q) => q.callId === callId);
+		if (!question) return send(res, 409, { error: "already answered", code: "conflict" });
+		questions = questions.filter((q) => q !== question);
+		emit({ type: "question.answered", conversationId: question.conversationId, callId, outcome: "answered" });
+		return send(res, 200, { ok: true });
+	}
 	if (path === "/api/approvals" && method === "GET") return send(res, 200, approvals);
 	if ((match = m(/^\/api\/approvals\/(.+)$/)) && method === "POST") {
 		const callId = decodeURIComponent(match[1] ?? "");
