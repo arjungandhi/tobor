@@ -16,6 +16,20 @@ export const KEYS = {
 	navigate: "up",
 } as const satisfies Record<string, KeyId>;
 
+/** Two `Ctrl+C` presses at most this far apart quit the TUI. */
+export const QUIT_WINDOW_MS = 2000;
+
+/** Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`. */
+export class QuitGate {
+	private armedAt = Number.NEGATIVE_INFINITY;
+
+	press(now: number): boolean {
+		if (now - this.armedAt < QUIT_WINDOW_MS) return true;
+		this.armedAt = now;
+		return false;
+	}
+}
+
 /** Rows of the help overlay: key, then what it does. */
 export const HELP: readonly (readonly [string, string])[] = [
 	["Enter", "send prompt (queued as a follow-up while a run is going)"],
@@ -32,7 +46,7 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],
 	["PgUp/PgDn, wheel", "scroll the transcript; Ctrl+Shift+F searches it"],
 	["?", "this help (empty composer)"],
-	["Ctrl+C", "clear the composer; twice to quit"],
+	["Ctrl+C", "clear the composer or close the dialog; twice within 2 s to quit"],
 ];
 
 /** Slash commands typed into the composer. */

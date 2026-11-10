@@ -4,6 +4,8 @@ import {
 	type Focusable,
 	Input,
 	isFocusable,
+	isKeyRelease,
+	isKeyRepeat,
 	matchesKey,
 	type OverlayHandle,
 	ProcessTerminal,
@@ -28,7 +30,7 @@ import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
 import { Band } from "./components/band.js";
 import { StatusLine } from "./components/status.js";
 import { activeContext, baseUrl, saveContexts, setLastSession, type TuiConfig, type TuiContext } from "./contexts.js";
-import { COMMANDS, HELP, KEYS } from "./keys.js";
+import { COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showArtifacts } from "./screens/artifacts.js";
 import { showFiles } from "./screens/files.js";
@@ -123,9 +125,12 @@ export class App {
 	approvals: PendingApproval[] = [];
 	eventsState: SocketState = "closed";
 	private events: ReconnectingSocket<EventsFrame> | undefined;
-	private modals: OverlayHandle[] = [];
+	/** Open modals, bottom to top; `cancel` dismisses one as if Esc was pressed. */
+	private modals: { handle: OverlayHandle; cancel: () => void }[] = [];
 	private exit: ((code: number) => void) | undefined;
-	private quitArmed = 0;
+	private readonly quitGate = new QuitGate();
+	/** Generation whose initial session/picker was already opened (connect and the first events open both try). */
+	private initialOpened = 0;
 	private generation = 0;
 
 	constructor(
@@ -226,12 +231,14 @@ export class App {
 	}
 
 	private openInitial(): void {
-		if (this.session.target || this.modals.length > 0) return;
+		if (this.initialOpened === this.generation || this.session.target || this.modals.length > 0) return;
+		if (!this.client || !this.whoami) return;
+		this.initialOpened = this.generation;
 		const last = this.context?.lastSession;
 		const known = this.sessions.find((s) => s.id === last);
 		if (known) this.openSession(known.id);
 		else if (this.sessions.length > 0) this.guard(() => showSessions(this));
-		else if (this.client && this.whoami) this.guard(() => newSession(this));
+		else this.guard(() => newSession(this));
 	}
 
 	/** Refetch whoami, sessions and approvals (on connect and after every reconnect; `/api/events` is lossy). */
@@ -383,27 +390,28 @@ export class App {
 	}
 
 	private onInput(data: string): TuiInputListenerResult {
+		if (matchesKey(data, KEYS.quit)) {
+			// Kitty keyboard protocol reports release/repeat as separate events; only a press counts.
+			if (!isKeyRelease(data) && !isKeyRepeat(data)) this.interrupt();
+			return { consume: true };
+		}
 		if (this.modals.length > 0) return undefined;
 		const consumed = this.handleKey(data);
 		return consumed ? { consume: true } : undefined;
 	}
 
+	/** `Ctrl+C`: the second press within the window quits from any screen; the first closes the top dialog or clears the composer. */
+	private interrupt(): void {
+		if (this.quitGate.press(Date.now())) return this.quit();
+		const top = this.modals.at(-1);
+		if (top) top.cancel();
+		else this.session.composer.setText("");
+		this.flash("Ctrl+C again to quit");
+	}
+
 	private handleKey(data: string): boolean {
 		const s = this.session;
 		const composer = s.composer;
-		if (matchesKey(data, KEYS.quit)) {
-			if (composer.getText() !== "") {
-				composer.setText("");
-				return true;
-			}
-			if (Date.now() - this.quitArmed < 1500) {
-				this.quit();
-				return true;
-			}
-			this.quitArmed = Date.now();
-			this.flash("press Ctrl+C again to quit");
-			return true;
-		}
 		if (s.transcript.selecting) {
 			if (matchesKey(data, "up")) s.moveSelection(-1);
 			else if (matchesKey(data, "down")) s.moveSelection(1);
@@ -500,14 +508,14 @@ export class App {
 		await this.info("help", lines);
 	}
 
-	/** Show a modal and focus it; returns a function that closes it. */
-	openModal(component: Component): () => void {
+	/** Show a modal and focus it; `cancel` dismisses it as Esc would (used by `Ctrl+C`). Returns a function that closes it. */
+	openModal(component: Component, cancel: () => void): () => void {
 		const handle = this.tui.showOverlay(component, { width: "80%", minWidth: 40, maxHeight: "85%", anchor: "center" });
-		this.modals.push(handle);
+		this.modals.push({ handle, cancel });
 		this.tui.requestRender();
 		return () => {
 			handle.hide();
-			this.modals = this.modals.filter((h) => h !== handle);
+			this.modals = this.modals.filter((m) => m.handle !== handle);
 			if (this.modals.length === 0) this.tui.setFocus(this.session.composer);
 			this.tui.requestRender();
 		};
@@ -552,7 +560,7 @@ export class App {
 			child: items.length === 0 ? undefined : list,
 			hint: options.hint ?? "Enter select · Esc close",
 			onKey: (data) => {
-				if (items.length === 0 && (matchesKey(data, "enter") || matchesKey(data, "escape") || matchesKey(data, "ctrl+c"))) {
+				if (items.length === 0 && (matchesKey(data, "enter") || matchesKey(data, "escape"))) {
 					finish(undefined);
 					return true;
 				}
@@ -562,7 +570,7 @@ export class App {
 				return true;
 			},
 		});
-		close = this.openModal(panel);
+		close = this.openModal(panel, () => finish(undefined));
 		return promise;
 	}
 
@@ -582,13 +590,8 @@ export class App {
 			lines: options.lines ?? [],
 			child: input,
 			hint: options.hint ?? "Enter confirm · Esc cancel",
-			onKey: (data) => {
-				if (!matchesKey(data, "ctrl+c")) return false;
-				finish(undefined);
-				return true;
-			},
 		});
-		close = this.openModal(panel);
+		close = this.openModal(panel, () => finish(undefined));
 		return promise;
 	}
 
@@ -609,18 +612,19 @@ export class App {
 	info(title: string, lines: string[]): Promise<void> {
 		const { promise, resolve } = Promise.withResolvers<void>();
 		let close = (): void => {};
+		const done = (): void => {
+			close();
+			resolve();
+		};
 		const panel = new Panel(title, {
 			lines,
 			hint: "Enter/Esc close",
 			onKey: (data) => {
-				if (matchesKey(data, "enter") || matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") {
-					close();
-					resolve();
-				}
+				if (matchesKey(data, "enter") || matchesKey(data, "escape") || data === "q") done();
 				return true;
 			},
 		});
-		close = this.openModal(panel);
+		close = this.openModal(panel, done);
 		return promise;
 	}
 
