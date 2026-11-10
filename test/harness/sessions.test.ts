@@ -115,6 +115,34 @@ describe("SessionIndex", () => {
 		expect(node.systemConversationId).toBe(t.host.systemConversationId);
 	});
 
+	it("creates a promptless session idle with no turns, and the first input names it", async () => {
+		const t = await start();
+		const created = await t.host.sessions.create({ cwd: t.root });
+		const { id } = created;
+		expect(created.submissionId).toBeUndefined();
+		expect((await t.host.sessions.create({ cwd: t.root, prompt: "   " })).submissionId).toBeUndefined();
+
+		expect((await t.host.sessions.list()).find((s) => s.id === id)).toMatchObject({ id, state: "idle", pending: 0, cwd: t.root, title: "new session" });
+		expect(await t.host.sessions.get(id)).toMatchObject({ id, state: "idle", title: "new session", workers: 0 });
+		const page = await t.host.sessions.entries(id, { order: "asc" });
+		expect(page.items.filter((e) => e.kind === "pi.user" || e.kind === "pi.assistant")).toEqual([]);
+		expect(t.states.filter((s) => s.id === id)).toEqual([]);
+		expect(await t.host.sessions.cwds()).toEqual({ roots: [t.root], recent: [t.root] });
+
+		t.script([fauxAssistantMessage("hello")]);
+		const { submissionId } = await t.host.sessions.input(id, { content: "  first   words\nhere ", mode: "prompt", requestId: "r1" });
+		expect(await t.settle(submissionId)).toMatchObject({ status: "done" });
+		await t.reachedState(id, "idle");
+		expect(await t.host.sessions.get(id)).toMatchObject({ state: "idle", title: "first words here" });
+		const after = await t.host.sessions.entries(id, { order: "asc" });
+		expect(after.items.filter((e) => e.kind === "pi.user" || e.kind === "pi.assistant").map((e) => e.kind)).toEqual(["pi.user", "pi.assistant"]);
+
+		await t.host.sessions.patch(id, { title: "mine" });
+		t.script([fauxAssistantMessage("again")]);
+		await t.settle((await t.host.sessions.input(id, { content: "second", mode: "prompt", requestId: "r2" })).submissionId);
+		expect((await t.host.sessions.get(id))?.title).toBe("mine");
+	});
+
 	it("rejects bad cwds and models", async () => {
 		const t = await start();
 		await expect(t.host.sessions.create({ cwd: "relative/dir", prompt: "x" })).rejects.toMatchObject({ status: 400 });

@@ -389,7 +389,7 @@ All JSON; mutating requests require `Content-Type: application/json`. Every requ
 
 - `GET /api/whoami` → `{host, version, build, pi_durable: "1.5.1", node, public_url, artifacts_url, ntfy_topic, chrome: {found, version?}, now}` (`build`: content hash of the binary's sources from `build/gen-assets.ts`, `dev` from source)
 - `GET /api/sessions` → `[{id, title, cwd, model, approval_mode, state: idle|running|waiting|failed, failure?, pending, usage, updatedAt}]` (from `tobor.sessions` plus live state)
-- `POST /api/sessions {cwd, model?, thinking?, approval_mode?, prompt}` → `{id}` (create, configure, submit)
+- `POST /api/sessions {cwd, model?, thinking?, approval_mode?, prompt?}` → `{id}` (create, configure, submit; without `prompt` the session is created idle with no turns)
 - `GET /api/sessions/:id`, `PATCH /api/sessions/:id {title?, model?, thinking?, approval_mode?, archived?}`, `DELETE /api/sessions/:id`
 - `POST /api/sessions/:id/input {content, mode: prompt|steer|follow_up, requestId}` → `{submissionId}`
 - `POST /api/sessions/:id/abort`

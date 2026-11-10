@@ -16,7 +16,7 @@ export function sessionsRoutes(r: Router): void {
 		const b = await body();
 		const { id } = await host.sessions.create({
 			cwd: reqString(b, "cwd"),
-			prompt: reqString(b, "prompt"),
+			prompt: optString(b, "prompt"),
 			model: optString(b, "model"),
 			thinking: optEnum(b, "thinking", THINKING_LEVELS),
 			approvalMode: optEnum(b, "approval_mode", APPROVAL_MODES),

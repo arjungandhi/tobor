@@ -77,6 +77,9 @@ export function deriveState(
 	return { state: "idle" };
 }
 
+/** Shown for a session created without a prompt until its first input names it. */
+const UNTITLED = "new session";
+
 /** Title for a new session: the prompt's first 60 characters, whitespace collapsed. */
 export function titleFromPrompt(prompt: string): string {
 	return prompt.replace(/\s+/g, " ").trim().slice(0, 60);
@@ -140,7 +143,9 @@ export class SessionIndex implements SessionIndexContract {
 			.sort((a, b) => b.createdAt - a.createdAt);
 	}
 
-	async create(options: CreateSessionOptions): Promise<{ id: SessionId; submissionId: SubmissionId }> {
+	create(options: CreateSessionOptions & { prompt: string }): Promise<{ id: SessionId; submissionId: SubmissionId }>;
+	create(options: CreateSessionOptions): Promise<{ id: SessionId; submissionId?: SubmissionId }>;
+	async create(options: CreateSessionOptions): Promise<{ id: SessionId; submissionId?: SubmissionId }> {
 		const { harness, ctx } = this.o;
 		const cwd = await this.resolveCwd(options.cwd);
 		const config = await this.configFor(cwd);
@@ -148,7 +153,8 @@ export class SessionIndex implements SessionIndexContract {
 		const mode = options.mode ?? config.defaults.mode;
 		const kind = options.kind ?? "session";
 		const createdAt = Date.now();
-		const title = titleFromPrompt(options.prompt);
+		const prompt = options.prompt?.trim() ? options.prompt : undefined;
+		const title = titleFromPrompt(prompt ?? "");
 		const systemId = this.o.systemConversationId as ConversationId;
 		const modelTools = this.modelTools(mode);
 		const conversation = await harness.createConversation(
@@ -182,13 +188,16 @@ export class SessionIndex implements SessionIndexContract {
 			},
 			ctx,
 		);
-		const submission = await conversation.submit(
-			{ type: "input", content: options.prompt, ...(options.requestId ? { requestId: options.requestId } : {}) },
-			ctx,
-		);
+		// Promptless: the session stays idle with no turns (nothing to track until `input`); the first input seeds the title.
+		const submission = prompt
+			? await conversation.submit(
+					{ type: "input", content: prompt, ...(options.requestId ? { requestId: options.requestId } : {}) },
+					ctx,
+				)
+			: undefined;
 		this.o.events.emit({ type: "session.updated", id: conversation.id });
-		this.track(conversation.id);
-		return { id: conversation.id, submissionId: submission.id };
+		if (submission) this.track(conversation.id);
+		return { id: conversation.id, ...(submission ? { submissionId: submission.id } : {}) };
 	}
 
 	async get(id: SessionId): Promise<SessionDetail | undefined> {
@@ -261,6 +270,7 @@ export class SessionIndex implements SessionIndexContract {
 		input: { content: string; mode: InputMode; requestId: string },
 	): Promise<{ submissionId: SubmissionId }> {
 		const conversation = await this.conversation(id);
+		await this.seedTitle(id, input.content);
 		const submission = await conversation.submit(
 			{
 				type: "input",
@@ -272,6 +282,24 @@ export class SessionIndex implements SessionIndexContract {
 		);
 		this.track(id);
 		return { submissionId: submission.id };
+	}
+
+	/** A session created without a prompt has an empty title; its first input names it, as a first prompt would. */
+	private async seedTitle(id: SessionId, content: string): Promise<void> {
+		const cid = id as ConversationId;
+		const session = await this.o.harness.snapshot(SessionDoc, cid, this.o.ctx);
+		if (!session || session.title !== "" || session.worker) return;
+		const title = titleFromPrompt(content);
+		if (!title) return;
+		await this.o.harness.commit(async (tx) => {
+			const doc = await tx.doc(SessionDoc, cid);
+			if (doc.title !== "") return;
+			doc.title = title;
+			const index = await tx.doc(SessionsDoc, this.o.systemConversationId as ConversationId);
+			const entry = index.sessions[String(id)];
+			if (entry) entry.title = title;
+		}, this.o.ctx);
+		this.o.events.emit({ type: "session.updated", id });
 	}
 
 	async abort(id: SessionId): Promise<void> {
@@ -397,7 +425,7 @@ export class SessionIndex implements SessionIndexContract {
 		const { state, failure } = deriveState(live, pending);
 		const summary: SessionSummary = {
 			id,
-			title: entry?.title ?? session.title,
+			title: entry?.title || session.title || UNTITLED,
 			cwd: entry?.cwd ?? session.cwd,
 			model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : this.o.config().defaults.model,
 			approval_mode: session.approval_mode,

@@ -67,7 +67,10 @@ describe("routes", () => {
 		const created = await http(port, "POST", "/api/sessions", { body: { cwd: "/w", prompt: "hi", approval_mode: "auto" } });
 		expect(created).toMatchObject({ status: 201, body: { id: 7 } });
 		expect(calls.at(-1)?.args[0]).toMatchObject({ cwd: "/w", prompt: "hi", approvalMode: "auto" });
-		expect((await http(port, "POST", "/api/sessions", { body: { cwd: "/w" } })).status).toBe(400);
+		expect((await http(port, "POST", "/api/sessions", { body: { cwd: "/w" } })).status).toBe(201);
+		expect(calls.at(-1)?.args[0]).toEqual({ cwd: "/w" });
+		expect((await http(port, "POST", "/api/sessions", { body: { prompt: "p" } })).status).toBe(400);
+		expect((await http(port, "POST", "/api/sessions", { body: { cwd: "/w", prompt: 3 } })).status).toBe(400);
 		expect((await http(port, "POST", "/api/sessions", { body: { cwd: "/w", prompt: "p", thinking: "huge" } })).status).toBe(400);
 
 		expect((await http(port, "GET", "/api/sessions/7")).body).toEqual(detail);

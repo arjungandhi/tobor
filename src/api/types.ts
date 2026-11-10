@@ -116,7 +116,7 @@ export type SessionDetail = SessionSummary & {
 	workers: number;
 };
 
-/** `POST /api/sessions`: create, configure and submit the first prompt. */
+/** `POST /api/sessions`: create, configure and (when `prompt` is given) submit the first prompt. */
 export type CreateSessionRequest = {
 	/** Must realpath inside a configured root. */
 	cwd: string;
@@ -125,8 +125,8 @@ export type CreateSessionRequest = {
 	thinking?: ThinkingLevel;
 	approval_mode?: ApprovalMode;
 	mode?: SessionMode;
-	/** First prompt; also seeds the title. */
-	prompt: string;
+	/** First prompt; also seeds the title. Omit for an idle session with no turns. */
+	prompt?: string;
 };
 
 /** Response to `POST /api/sessions`. */

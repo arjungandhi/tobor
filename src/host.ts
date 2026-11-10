@@ -94,8 +94,8 @@ export type CreateSessionOptions = {
 	thinking?: ThinkingLevel;
 	approvalMode?: ApprovalMode;
 	mode?: SessionMode;
-	/** First input; seeds the title (first 60 characters). */
-	prompt: string;
+	/** First input; seeds the title (first 60 characters). Absent or blank: the session is created idle with no turns. */
+	prompt?: string;
 	/** Default `session`. */
 	kind?: SessionKind;
 	/** With `kind: "schedule"`. */
@@ -108,8 +108,12 @@ export type CreateSessionOptions = {
 export interface SessionIndex {
 	/** Index rows joined with live state, newest first; archived only with `archived: true`. */
 	list(options?: { archived?: boolean }): Promise<ListSessionsResponse>;
-	/** Create, configure and submit in order; returns once the first input is admitted. Throws 403 outside roots. */
-	create(options: CreateSessionOptions): Promise<{ id: SessionId; submissionId: SubmissionId }>;
+	/**
+	 * Create, configure and submit in order; returns once the first input is admitted. Throws 403 outside roots.
+	 * Without a (non-blank) `prompt` nothing is submitted: the session is idle with no turns and there is no `submissionId`.
+	 */
+	create(options: CreateSessionOptions & { prompt: string }): Promise<{ id: SessionId; submissionId: SubmissionId }>;
+	create(options: CreateSessionOptions): Promise<{ id: SessionId; submissionId?: SubmissionId }>;
 	/** One session, or undefined if unknown (workers resolve too, for their transcripts). */
 	get(id: SessionId): Promise<SessionDetail | undefined>;
 	/** Apply a patch: `title`/`approval_mode`/`mode` to `tobor.session`, `model`/`thinking` via `configure`. */
