@@ -87,3 +87,11 @@ export function paths(home: string): HomePaths {
 		artifactsPdf: join(artifacts, "pdf"),
 	};
 }
+
+/** Contents of `$TOBOR_HOME/node.json`, written at first boot. */
+export type NodeJson = {
+	/** Ownerless system conversation holding `tobor.sessions` and `tobor.schedules` (and owning schedule tasks). */
+	systemConversationId: number;
+	/** Random ntfy topic suggested by `tobor init` (`tobor-<random>`). */
+	ntfyTopic?: string;
+};

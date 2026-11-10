@@ -494,7 +494,7 @@ export type WatchFrame =
 	/** First frame: the full view to replicate. */
 	| { t: "snapshot"; value: WatchValue }
 	/** Chord ops to apply in order (`chord/delta` `applyImmutable`). */
-	| { t: "ops"; ops: Op[] }
+	| { t: "ops"; ops: readonly Op[] }
 	/** The watch ended (session deleted, node shutting down, Session failed); the socket closes after it. */
 	| { t: "end"; reason: string }
 	/** Reply to a client ping. */
