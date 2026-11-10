@@ -50,7 +50,7 @@ import { generateTitle, resolveTitleModel } from "./titles.js";
 /** Tools the model sees in `director` mode; `artifact_*` tools are added from the registry. */
 export const DIRECTOR_TOOLS: readonly string[] = ["read", "todo", "task", "wait", "agent_output", "agent_list", "agent_stop", "agent_send", "fetch_url", "web_search", "ask_user"];
 
-/** What `SessionIndex` reads pending approvals from. */
+/** What `SessionIndex` reads pending approvals and questions from. */
 export type PendingSource = { pending(): Promise<{ sessionId: SessionId }[]> };
 
 /** Dependencies of `SessionIndex`. */
@@ -62,11 +62,12 @@ export type SessionIndexOptions = {
 	events: EventBus;
 	config: () => Config;
 	approvals: PendingSource;
+	questions: PendingSource;
 	/** Node lifetime context. */
 	ctx: Context;
 };
 
-/** Client-facing state of a conversation from its `pi.live` doc and its pending approval count. */
+/** Client-facing state of a conversation from its `pi.live` doc and its pending approval and question count. */
 export function deriveState(
 	live: Readonly<LiveState> | undefined,
 	pending: number,
@@ -117,10 +118,12 @@ export class SessionIndex implements SessionIndexContract {
 	private readonly titleAbort = new AbortController();
 
 	constructor(private readonly o: SessionIndexOptions) {
-		const onApproval = (conversationId: number) => void this.sessionOf(conversationId).then((id) => this.refresh(id));
+		const onPending = (conversationId: number) => void this.sessionOf(conversationId).then((id) => this.refresh(id));
 		this.unsubscribe.push(
-			o.events.on("approval.requested", (e) => onApproval(e.approval.sessionId)),
-			o.events.on("approval.resolved", (e) => onApproval(e.conversationId)),
+			o.events.on("approval.requested", (e) => onPending(e.approval.sessionId)),
+			o.events.on("approval.resolved", (e) => onPending(e.conversationId)),
+			o.events.on("question.asked", (e) => onPending(e.question.sessionId)),
+			o.events.on("question.answered", (e) => onPending(e.conversationId)),
 		);
 	}
 
@@ -489,7 +492,8 @@ export class SessionIndex implements SessionIndexContract {
 
 	private async pendingCounts(): Promise<Map<number, number>> {
 		const counts = new Map<number, number>();
-		for (const p of await this.o.approvals.pending()) counts.set(p.sessionId, (counts.get(p.sessionId) ?? 0) + 1);
+		const pending = await Promise.all([this.o.approvals.pending(), this.o.questions.pending()]);
+		for (const p of pending.flat()) counts.set(p.sessionId, (counts.get(p.sessionId) ?? 0) + 1);
 		return counts;
 	}
 

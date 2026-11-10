@@ -61,7 +61,7 @@ async function start(): Promise<Started> {
 }
 
 describe("pure helpers", () => {
-	it("derives state from pi.live and pending approvals", () => {
+	it("derives state from pi.live and pending approvals or questions", () => {
 		const run = { taskId: 1, inputs: [], turns: 0 } as unknown as NonNullable<LiveState["run"]>;
 		const failure = { taskId: 1, inputs: [], reason: "model_error", detail: "boom" } as unknown as NonNullable<LiveState["runFailure"]>;
 		expect(deriveState(undefined, 0)).toEqual({ state: "idle" });
@@ -202,6 +202,26 @@ describe("SessionIndex", () => {
 		expect(await t.settle(submissionId)).toMatchObject({ status: "done" });
 		await t.reachedState(id, "idle");
 		expect(t.states.filter((s) => s.id === id).map((s) => s.state)).toEqual(["running", "waiting", "running", "idle"]);
+	});
+
+	it("reports waiting while an ask_user question is pending", async () => {
+		const t = await start();
+		t.script([
+			fauxAssistantMessage(fauxToolCall("ask_user", { question: "Which database?" }, { id: "call-1" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("ok"),
+		]);
+		const asked = Promise.withResolvers<void>();
+		t.host.events.on("question.asked", () => asked.resolve());
+		const { id, submissionId } = await t.host.sessions.create({ cwd: t.root, prompt: "build it" });
+		await asked.promise;
+		await t.reachedState(id, "waiting");
+		expect((await t.host.sessions.list())[0]).toMatchObject({ state: "waiting", pending: 1 });
+		expect(await t.host.sessions.get(id)).toMatchObject({ state: "waiting", pending: 1 });
+		await t.host.questions.answer(id, "call-1", "sqlite");
+		expect(await t.settle(submissionId)).toMatchObject({ status: "done" });
+		await t.reachedState(id, "idle");
+		expect(t.states.filter((s) => s.id === id).map((s) => s.state)).toEqual(["running", "waiting", "running", "idle"]);
+		expect((await t.host.sessions.get(id))?.pending).toBe(0);
 	});
 
 	it("aborts a running session", async () => {

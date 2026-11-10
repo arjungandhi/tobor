@@ -31,7 +31,7 @@ export type ApiError = {
 /** Body of mutations that return nothing else. */
 export type OkResponse = { ok: true };
 
-/** Session lifecycle as shown to clients: `waiting` means at least one approval is pending. */
+/** Session lifecycle as shown to clients: `waiting` means at least one approval or `ask_user` question is pending. */
 export type SessionState = "idle" | "running" | "waiting" | "failed";
 
 /** Token and cost totals summed over a conversation's `pi.usage`. */
@@ -97,7 +97,7 @@ export type SessionSummary = {
 	state: SessionState;
 	/** Present when `state` is `failed`. */
 	failure?: SessionFailure;
-	/** Number of pending approvals (session plus its workers). */
+	/** Number of pending approvals and questions (session plus its workers). */
 	pending: number;
 	usage: UsageSummary;
 	archived: boolean;

@@ -153,6 +153,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 		events,
 		config: getConfig,
 		approvals,
+		questions,
 		ctx,
 	});
 	const auth = new AuthService({ models, credentials, config: getConfig });
