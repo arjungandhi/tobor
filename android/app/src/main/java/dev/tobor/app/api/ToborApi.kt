@@ -126,12 +126,6 @@ class ToborApi(baseUrl: String) {
     /** Raw `{models, providers, defaults}`. */
     suspend fun models(): JsonObject = get("/api/models").decode<JsonElement>().jsonObject
 
-    /**
-     * `"provider/modelId"` strings plus the default model, parsed tolerantly from [models]: each entry may be a string
-     * or an object with `ref`, or `provider`+`id`/`modelId`; the default is `defaults.model`.
-     */
-    suspend fun modelIds(): Pair<List<String>, String?> = parseModelIds(models())
-
     suspend fun cwds(): CwdsResponse = get("/api/cwds").decode()
 
     // ─── Socket plumbing (used by WatchClient / EventsClient) ────────────────────────────────────────────────────
@@ -237,6 +231,13 @@ class ToborApi(baseUrl: String) {
             val defaults = raw["defaults"] as? JsonObject
             val def = (defaults?.get("model") as? JsonPrimitive)?.contentOrNull
             return ids to def
+        }
+
+        internal fun parseSessionDefaults(raw: JsonObject): Pair<String?, String?> {
+            val defaults = raw["defaults"] as? JsonObject
+            val approval = (defaults?.get("approval_mode") as? JsonPrimitive)?.contentOrNull
+            val mode = (defaults?.get("mode") as? JsonPrimitive)?.contentOrNull
+            return approval to mode
         }
     }
 }

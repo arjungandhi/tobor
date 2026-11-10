@@ -106,7 +106,7 @@ describe("AuthService", () => {
 		const { auth } = await setup();
 		const res = await auth.models();
 		expect(res.models.find((m) => m.ref === "keyed/m")).toMatchObject({ provider: "keyed", id: "m", available: true });
-		expect(res.defaults).toEqual({ model: "anthropic/claude-fable-5", thinking: "high" });
+		expect(res.defaults).toEqual({ model: "anthropic/claude-fable-5", thinking: "high", approval_mode: "auto", mode: "director" });
 	});
 });
 

@@ -55,8 +55,8 @@ export class AuthService implements AuthServiceContract {
 			cost: { input: m.cost.input, output: m.cost.output },
 			available: (providers[m.provider]?.source ?? "none") !== "none",
 		}));
-		const { model, thinking } = this.options.config().defaults;
-		return { models, providers, defaults: { model, thinking } };
+		const { model, thinking, approval_mode, mode } = this.options.config().defaults;
+		return { models, providers, defaults: { model, thinking, approval_mode, mode } };
 	}
 
 	async loginStart(provider: string): Promise<LoginStartResponse> {

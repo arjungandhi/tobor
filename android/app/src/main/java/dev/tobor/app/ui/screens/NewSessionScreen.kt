@@ -112,7 +112,7 @@ fun NewSessionScreen(
     var prompt by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
-    var approvalMode by remember { mutableStateOf("ask") }
+    var approvalMode by remember { mutableStateOf<String?>(null) }
     var mode by remember { mutableStateOf<String?>(null) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var submitting by remember { mutableStateOf(false) }
@@ -131,9 +131,13 @@ fun NewSessionScreen(
     }
     LaunchedEffect(api) {
         try {
-            val (ids, default) = api.modelIds()
+            val raw = api.models()
+            val (ids, default) = ToborApi.parseModelIds(raw)
             models = ids
             if (ids.isNotEmpty() && model.isEmpty()) model = default ?: ""
+            val (defApproval, defMode) = ToborApi.parseSessionDefaults(raw)
+            if (approvalMode == null) approvalMode = defApproval
+            if (mode == null) mode = defMode
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -250,7 +254,7 @@ fun NewSessionScreen(
                 RuleLabel("mode")
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("director", "solo").forEach { m ->
-                        OptionChip(m, mode == m) { mode = if (mode == m) null else m }
+                        OptionChip(m, mode == m) { mode = m }
                     }
                 }
 
