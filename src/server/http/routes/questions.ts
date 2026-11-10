@@ -8,7 +8,8 @@ export function questionsRoutes(r: Router): void {
 	r.on("POST", "/api/questions/:callId", async ({ host, params, body }) => {
 		const callId = params.callId!;
 		const b = await body();
-		const answer = reqString(b, "answer");
+		const answer = reqString(b, "answer").trim();
+		if (answer === "") throw invalid("answer must be a non-empty string");
 		let conversationId = b.conversationId;
 		if (conversationId !== undefined && (typeof conversationId !== "number" || !Number.isSafeInteger(conversationId))) {
 			throw invalid("conversationId must be an integer");

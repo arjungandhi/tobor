@@ -155,6 +155,12 @@ describe("routes", () => {
 		});
 		expect((await http(port, "POST", "/api/questions/zz", { body: { answer: "x" } })).status).toBe(404);
 		expect((await http(port, "POST", "/api/questions/q1", { body: {} })).status).toBe(400);
+		const blank = await http(port, "POST", "/api/questions/q1", { body: { answer: " \n\t " } });
+		expect(blank.status).toBe(400);
+		expect(blank.body).toEqual((await http(port, "POST", "/api/questions/q1", { body: {} })).body);
+		expect(calls.filter((c) => c.method === "questions.answer")).toHaveLength(2);
+		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "  padded  ", conversationId: 4 } })).status).toBe(409);
+		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", "padded"] });
 		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "x", conversationId: "4" } })).status).toBe(400);
 	});
 
