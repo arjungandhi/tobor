@@ -561,6 +561,7 @@ export class App {
 				if (!arg) throw new Error("usage: /title <title>");
 				return s.patch({ title: arg });
 			case "archive":
+			case "complete":
 				await s.patch({ archived: true });
 				this.session.close();
 				await this.refreshSessions();
