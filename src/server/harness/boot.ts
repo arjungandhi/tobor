@@ -18,7 +18,7 @@ import { TOBOR_DOCS } from "../../docs.js";
 import { EventBus } from "../../events.js";
 import { type Host, HostError } from "../../host.js";
 import { composeExtension, type ToolModule } from "../../tools/registry.js";
-import { MIN_NODE, nodeSupported, PI_DURABLE_VERSION, VERSION } from "../../version.js";
+import { bunSupported, MIN_BUN, PI_DURABLE_VERSION, RUNTIME, VERSION } from "../../version.js";
 import { AuthService } from "../auth.js";
 import { ApprovalService, type GatePredicate } from "./approvals.js";
 import { FileCredentialStore } from "./credentials.js";
@@ -88,9 +88,7 @@ export interface BootedHost extends Host {
 
 /** Boot sequence (design: Node process components): config, models, registry, open, resume, system conversation. */
 export async function boot(options: BootOptions): Promise<BootedHost> {
-	if (!nodeSupported()) {
-		throw new Error(`Node >= ${MIN_NODE.join(".")} is required (running ${process.versions.node})`);
-	}
+	if (!bunSupported()) throw new Error(`Bun >= ${MIN_BUN} is required (running ${RUNTIME})`);
 	const plugins: NodePlugins = options.plugins ?? { modules: [] };
 	const home = options.home;
 	const paths = homePaths(home);
@@ -201,7 +199,7 @@ export async function boot(options: BootOptions): Promise<BootedHost> {
 			host: hostname(),
 			version: VERSION,
 			pi_durable: PI_DURABLE_VERSION,
-			node: process.versions.node,
+			runtime: RUNTIME,
 			public_url: config.public_url,
 			artifacts_url: config.artifacts_url,
 			...(config.notify.ntfy ? { ntfy_topic: config.notify.ntfy.topic } : {}),

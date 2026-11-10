@@ -62,8 +62,8 @@ export type WhoamiResponse = {
 	version: string;
 	/** Pinned pi-durable version. */
 	pi_durable: string;
-	/** `process.versions.node`. */
-	node: string;
+	/** Runtime of the node: `bun <Bun.version>`. */
+	runtime: string;
 	public_url: string;
 	artifacts_url: string;
 	/** ntfy topic, if notifications are configured. */

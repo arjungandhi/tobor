@@ -23,7 +23,7 @@ function reachability(who: WhoamiResponse | undefined): string {
 function whoamiLines(w: WhoamiResponse | undefined, ws: Workspace): string[] {
 	if (!w) return [c.warning(`${ws.name} (${formatAddress(ws)}): not reachable`)];
 	return [
-		`${c.accent(w.host)} ${c.dim(`tobor ${w.version} · pi-durable ${w.pi_durable} · node ${w.node}`)}`,
+		`${c.accent(w.host)} ${c.dim(`tobor ${w.version} · pi-durable ${w.pi_durable} · ${w.runtime}`)}`,
 		c.dim(`api ${w.public_url} · artifacts ${w.artifacts_url}${w.ntfy_topic ? ` · ntfy ${w.ntfy_topic}` : ""}`),
 		w.chrome.found ? c.success(`chrome ${w.chrome.version ?? "found"} (PDF export)`) : c.warning("chrome not found: PDF export unavailable"),
 	];

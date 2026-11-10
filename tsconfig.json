@@ -11,12 +11,13 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "types": [
-      "node"
+      "bun"
     ]
   },
   "include": [
     "src",
     "test",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "build/gen-assets.ts"
   ]
 }

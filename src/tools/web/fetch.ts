@@ -189,7 +189,8 @@ function decodeBody(bytes: Uint8Array, contentType: string): string {
 	}
 	if (label && !/^utf-?8$/i.test(label)) {
 		try {
-			return new TextDecoder(label).decode(bytes);
+			// Bun's typings list a narrower label set than its decoder accepts; unknown labels throw below.
+			return new TextDecoder(label as ConstructorParameters<typeof TextDecoder>[0]).decode(bytes);
 		} catch {
 			// unknown label: fall through to UTF-8
 		}

@@ -1,5 +1,5 @@
-// Stub tobor node for exercising the TUI by hand: `node --import tsx test/tui/stub-server.ts [port]`, then
-// `node --import tsx src/cli.ts tui 127.0.0.1:<port>`. Serves a canned director session whose answer streams in, ends
+// Stub tobor node for exercising the TUI by hand: `bun test/tui/stub-server.ts [port]`, then
+// `bun src/cli.ts tui 127.0.0.1:<port>`. Serves a canned director session whose answer streams in, ends
 // in a bash call waiting for approval, and finishes once approved; plus enough of every other endpoint for the screens.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
@@ -177,7 +177,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	let match: RegExpMatchArray | null;
 
 	if (path === "/api/whoami") {
-		return send(res, 200, { host: "stub-host", version: "0.0.0-stub", pi_durable: "1.5.1", node: process.versions.node, public_url: base, artifacts_url: "http://127.0.0.1:7880", chrome: { found: true, version: "131.0" }, now: Date.now() });
+		return send(res, 200, { host: "stub-host", version: "0.0.0-stub", pi_durable: "1.5.1", runtime: `bun ${process.versions.bun}`, public_url: base, artifacts_url: "http://127.0.0.1:7880", chrome: { found: true, version: "131.0" }, now: Date.now() });
 	}
 	if (path === "/api/sessions" && method === "GET") {
 		const all = url.searchParams.get("archived") === "1";
