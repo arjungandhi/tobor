@@ -128,6 +128,22 @@ class ToborApi(baseUrl: String) {
 
     suspend fun cwds(): CwdsResponse = get("/api/cwds").decode()
 
+    suspend fun schedules(): List<Schedule> =
+        get("/api/schedules").decode(ListSerializer(Schedule.serializer()))
+
+    suspend fun schedule(id: String): Schedule = get("/api/schedules/${encodeSegment(id)}").decode()
+
+    /** Creates a schedule and returns its id (the node answers `{id}`, not the schedule). */
+    suspend fun createSchedule(request: CreateScheduleRequest): String =
+        send("POST", "/api/schedules", toborJson.encodeToString(request)).decode<CreateScheduleResponse>().id
+
+    suspend fun updateSchedule(id: String, patch: UpdateScheduleRequest): Schedule =
+        send("PUT", "/api/schedules/${encodeSegment(id)}", toborJson.encodeToString(patch)).decode()
+
+    suspend fun deleteSchedule(id: String) {
+        send("DELETE", "/api/schedules/${encodeSegment(id)}", null)
+    }
+
     // ─── Socket plumbing (used by WatchClient / EventsClient) ────────────────────────────────────────────────────
 
     /** `ws(s)://host:port<path>` derived from [baseUrl], with optional query parameters. */

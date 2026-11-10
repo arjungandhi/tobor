@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -80,6 +81,7 @@ fun SessionsScreen(
     onOpen: (Long) -> Unit,
     onNew: () -> Unit,
     onSettings: () -> Unit,
+    onSchedules: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var showWorkspaceMenu by remember { mutableStateOf(false) }
@@ -261,6 +263,9 @@ fun SessionsScreen(
                             )
                         }
                     }
+                }
+                IconButton(onClick = onSchedules) {
+                    Icon(Icons.Default.Schedule, contentDescription = "schedules", tint = ToborColors.muted)
                 }
                 IconButton(onClick = onSettings) {
                     Icon(Icons.Default.Settings, contentDescription = "settings", tint = ToborColors.muted)
