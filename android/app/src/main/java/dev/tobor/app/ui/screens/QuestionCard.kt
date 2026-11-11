@@ -25,12 +25,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.PendingQuestion
 import dev.tobor.app.ui.theme.FontFamilies
+import dev.tobor.app.ui.theme.fieldTextStyle
 import dev.tobor.app.ui.theme.ToborColors
 import java.util.Locale
 
@@ -82,9 +82,9 @@ fun QuestionCard(
             onValueChange = { draft = it },
             modifier = Modifier.fillMaxWidth(),
             enabled = !busy,
-            textStyle = TextStyle(fontFamily = FontFamilies.CourierPrime, fontSize = 13.sp, color = ToborColors.fg),
+            textStyle = fieldTextStyle(fontSize = 13.sp, color = ToborColors.fg),
             placeholder = {
-                Text("type an answer…", color = ToborColors.subtle, fontFamily = FontFamilies.CourierPrime, fontSize = 13.sp)
+                Text("type an answer…", color = ToborColors.subtle, style = fieldTextStyle(fontSize = 13.sp))
             },
             maxLines = 4,
             colors = OutlinedTextFieldDefaults.colors(

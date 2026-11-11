@@ -45,7 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,7 +78,7 @@ private fun toborFieldColors(): TextFieldColors = OutlinedTextFieldDefaults.colo
     unfocusedTrailingIconColor = ToborColors.muted,
 )
 
-private val fieldTextStyle = TextStyle(fontFamily = FontFamilies.CourierPrime, fontSize = 14.sp)
+private val fieldTextStyle = dev.tobor.app.ui.theme.fieldTextStyle()
 
 @Composable
 private fun OptionChip(text: String, selected: Boolean, onClick: () -> Unit) {
@@ -179,7 +178,7 @@ fun NewSessionScreen(
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = fieldTextStyle,
                     singleLine = true,
-                    placeholder = { Text("/path/to/project", fontFamily = FontFamilies.CourierPrime) },
+                    placeholder = { Text("/path/to/project", style = fieldTextStyle) },
                     colors = toborFieldColors(),
                 )
                 if (suggestions.isNotEmpty()) {
@@ -205,7 +204,7 @@ fun NewSessionScreen(
                         modifier = Modifier.fillMaxWidth(),
                         textStyle = fieldTextStyle,
                         singleLine = true,
-                        placeholder = { Text("node default", fontFamily = FontFamilies.CourierPrime) },
+                        placeholder = { Text("node default", style = fieldTextStyle) },
                         colors = toborFieldColors(),
                     )
                 } else {
@@ -219,7 +218,7 @@ fun NewSessionScreen(
                                 .menuAnchor(MenuAnchorType.PrimaryNotEditable),
                             textStyle = fieldTextStyle,
                             singleLine = true,
-                            placeholder = { Text("node default", fontFamily = FontFamilies.CourierPrime) },
+                            placeholder = { Text("node default", style = fieldTextStyle) },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenu) },
                             colors = toborFieldColors(),
                         )
@@ -269,7 +268,7 @@ fun NewSessionScreen(
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = fieldTextStyle,
                     minLines = 4,
-                    placeholder = { Text("what needs doing?", fontFamily = FontFamilies.CourierPrime) },
+                    placeholder = { Text("what needs doing?", style = fieldTextStyle) },
                     colors = toborFieldColors(),
                 )
 

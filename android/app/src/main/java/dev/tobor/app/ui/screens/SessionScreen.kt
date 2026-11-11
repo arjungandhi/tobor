@@ -56,7 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,6 +82,7 @@ import dev.tobor.app.ui.screens.session.toItem
 import dev.tobor.app.ui.screens.session.toRaw
 import dev.tobor.app.ui.screens.session.toRawOrNull
 import dev.tobor.app.ui.theme.CourierPrime
+import dev.tobor.app.ui.theme.fieldTextStyle
 import dev.tobor.app.ui.theme.Righteous
 import dev.tobor.app.ui.theme.SpecialElite
 import dev.tobor.app.ui.theme.StripeBand
@@ -689,9 +689,9 @@ private fun Composer(
                 value = draft,
                 onValueChange = { draft = it },
                 modifier = Modifier.weight(1f),
-                textStyle = TextStyle(fontFamily = CourierPrime, fontSize = 14.sp, color = ToborColors.fg),
+                textStyle = fieldTextStyle(color = ToborColors.fg),
                 placeholder = {
-                    Text("log an instruction…", color = ToborColors.subtle, fontFamily = CourierPrime, fontSize = 14.sp)
+                    Text("log an instruction…", color = ToborColors.subtle, style = fieldTextStyle())
                 },
                 minLines = 1,
                 maxLines = 6,
