@@ -36,7 +36,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.ToborApi
@@ -46,6 +45,7 @@ import dev.tobor.app.update.AppUpdater
 import dev.tobor.app.data.SettingsStore
 import dev.tobor.app.data.Workspace
 import dev.tobor.app.ui.theme.FontFamilies
+import dev.tobor.app.ui.theme.fieldTextStyle
 import dev.tobor.app.ui.theme.Tag
 import dev.tobor.app.ui.theme.RuleLabel
 import dev.tobor.app.ui.theme.StripeBand
@@ -336,9 +336,9 @@ fun SettingsScreen(
                         saved = false
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    textStyle = TextStyle(fontFamily = FontFamilies.SpecialElite, fontSize = 14.sp),
+                    textStyle = fieldTextStyle(fontFamily = FontFamilies.SpecialElite),
                     singleLine = true,
-                    placeholder = { Text("workspace name", fontFamily = FontFamilies.SpecialElite) },
+                    placeholder = { Text("workspace name", style = fieldTextStyle(fontFamily = FontFamilies.SpecialElite)) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = ToborColors.fg,
                         unfocusedTextColor = ToborColors.fg,
@@ -359,9 +359,9 @@ fun SettingsScreen(
                         saved = false
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    textStyle = TextStyle(fontFamily = FontFamilies.CourierPrime, fontSize = 14.sp),
+                    textStyle = fieldTextStyle(),
                     singleLine = true,
-                    placeholder = { Text("http://127.0.0.1:7879", fontFamily = FontFamilies.CourierPrime) },
+                    placeholder = { Text("http://127.0.0.1:7879", style = fieldTextStyle()) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = ToborColors.fg,
                         unfocusedTextColor = ToborColors.fg,
