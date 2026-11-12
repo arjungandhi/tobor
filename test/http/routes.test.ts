@@ -111,6 +111,18 @@ describe("routes", () => {
 		expect((await http(port, "GET", "/api/sessions/abc/complete")).status).toBe(400);
 	});
 
+	it("session-less path completion passes cwd and prefix, blank cwd means undefined", async () => {
+		const body = { dir: "/w", entries: [{ name: "src", type: "dir" }] };
+		const { port, calls } = await api({ "sessions.completeAt": () => body });
+		const q = "cwd=" + encodeURIComponent("~/my dir") + "&prefix=" + encodeURIComponent("s&r/");
+		expect(await http(port, "GET", "/api/complete?" + q)).toMatchObject({ status: 200, body });
+		expect(calls.at(-1)).toEqual({ method: "sessions.completeAt", args: ["~/my dir", "s&r/"] });
+		expect((await http(port, "GET", "/api/complete")).status).toBe(200);
+		expect(calls.at(-1)?.args).toEqual([undefined, ""]);
+		expect((await http(port, "GET", "/api/complete?cwd=&prefix=x")).status).toBe(200);
+		expect(calls.at(-1)?.args).toEqual([undefined, "x"]);
+	});
+
 	it("maps HostError status/code/errors and hides unknown errors", async () => {
 		const { port } = await api({
 			"sessions.create": () => Promise.reject(new HostError(403, "outside_roots", "cwd outside roots")),

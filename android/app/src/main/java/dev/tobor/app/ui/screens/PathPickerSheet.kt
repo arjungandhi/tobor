@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,7 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.PathCompleteEntry
-import dev.tobor.app.api.ToborApi
+import dev.tobor.app.api.PathCompleteResponse
 import dev.tobor.app.ui.theme.CourierPrime
 import dev.tobor.app.ui.theme.ToborColors
 import dev.tobor.app.ui.theme.fieldTextStyle
@@ -49,14 +50,13 @@ import kotlinx.coroutines.launch
 
 /**
  * Searchable path picker opened by typing `@` in the composer. The top field holds the raw path prefix (empty lists
- * the session cwd); rows below come from `api.complete`. [onInsert] receives the picked path exactly as navigated;
+ * the session cwd); rows below come from [fetch]. [onInsert] receives the picked path exactly as navigated;
  * [onDismiss] is called when the sheet is closed without a pick. Both fire after the sheet has animated away.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PathPickerSheet(
-    api: ToborApi,
-    sessionId: Long,
+    fetch: suspend (prefix: String) -> PathCompleteResponse,
     onInsert: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -69,12 +69,14 @@ fun PathPickerSheet(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     val prefix = field.text
+    // Always call the latest lambda (it may read state that changed since the sheet opened) without restarting the fetch.
+    val currentFetch by rememberUpdatedState(fetch)
 
-    LaunchedEffect(api, sessionId, prefix) {
+    LaunchedEffect(prefix) {
         loading = true
         delay(150)
         try {
-            val r = api.complete(sessionId, prefix)
+            val r = currentFetch(prefix)
             entries = r.entries
             error = null
         } catch (e: CancellationException) {
@@ -120,7 +122,7 @@ fun PathPickerSheet(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 textStyle = fieldTextStyle(color = ToborColors.fg),
-                placeholder = { Text("path (empty = session cwd)", color = ToborColors.subtle, style = fieldTextStyle()) },
+                placeholder = { Text("path (empty = cwd)", color = ToborColors.subtle, style = fieldTextStyle()) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (prefix.isNotEmpty()) close { onInsert(prefix) } }),
                 colors = OutlinedTextFieldDefaults.colors(

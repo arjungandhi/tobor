@@ -394,6 +394,8 @@ All JSON; mutating requests require `Content-Type: application/json`. The API ac
 - `POST /api/sessions/:id/input {content, mode: prompt|steer|follow_up, requestId}` → `{submissionId}`
 - `POST /api/sessions/:id/abort`
 - `GET /api/sessions/:id/entries?minEntryId=&maxEntryId=&order=asc|desc&limit=` (`EntryQuery`)
+- `GET /api/sessions/:id/complete?prefix=` → `{dir, entries: [{name, type: dir|file}]}`: path completion relative to the session's cwd (`~/` and absolute prefixes allowed), sandboxed to the config roots; denied or missing parents yield empty `dir` and `entries`; 404 for an unknown session
+- `GET /api/complete?cwd=&prefix=` → same shape, no session: a blank `cwd` defaults to the newest recent cwd inside the roots, else the first root (the new-session default); `cwd` is tilde-expanded and sandboxed like any other path; never 404s
 - `GET /api/approvals` → pending records from `tobor.approvals`; `POST /api/approvals/:callId {decision: approve|approve_session|deny}`
 - `GET /api/questions` → pending `ask_user` records from `tobor.questions`; `POST /api/questions/:callId {answer, conversationId?}` (409 once answered)
 - `GET /api/sessions/:id/workers` → `[{id, name, agent, state, usage, lastText}]`

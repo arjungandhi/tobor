@@ -82,7 +82,7 @@ export class SessionScreen {
 					return undefined;
 				}
 			},
-			sessionId: () => (this.target && !this.target.worker ? this.target.id : undefined),
+			target: () => (!this.target ? { kind: "default" } : this.target.worker ? { kind: "none" } : { kind: "session", id: this.target.id }),
 		});
 		this.questions = new QuestionPanel(app, () => this.target);
 		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());

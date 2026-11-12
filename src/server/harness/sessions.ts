@@ -37,6 +37,7 @@ import type {
 	UsageSummary,
 	WatchWindow,
 } from "../../api/types.js";
+import { expandTilde } from "../../config/home.js";
 import { applyProjectConfig, parseProjectConfig } from "../../config/load.js";
 import { type Config, parseModelRef, type SessionMode } from "../../config/schema.js";
 import { type SessionIndexEntry, SessionDoc, SessionsDoc, type WorkerRecord, WorkersDoc } from "../../docs.js";
@@ -47,7 +48,7 @@ import {
 	type SessionIndex as SessionIndexContract,
 } from "../../host.js";
 import { completePath } from "./complete.js";
-import { findGitRoot, resolveCwd } from "./env.js";
+import { findGitRoot, isInside, resolveCwd } from "./env.js";
 import { ASK_USER } from "./questions/tool.js";
 import { generateTitle, resolveTitleModel } from "./titles.js";
 import { isLive } from "./workers/tools.js";
@@ -454,6 +455,18 @@ export class SessionIndex implements SessionIndexContract {
 		const detail = await this.get(id);
 		if (!detail) throw new HostError(404, "not_found", `no session ${id}`);
 		return completePath(prefix, detail.cwd, this.o.config().roots);
+	}
+
+	async completeAt(cwd: string | undefined, prefix: string): Promise<PathCompleteResponse> {
+		const roots = this.o.config().roots;
+		let dir = cwd?.trim() ? expandTilde(cwd.trim()) : undefined;
+		if (dir === undefined) {
+			// The default a new session gets: the newest recent cwd inside a root, else the first root.
+			const { recent } = await this.cwds();
+			dir = recent.find((d) => roots.some((root) => isInside(root, d))) ?? roots[0];
+		}
+		if (dir === undefined) return { dir: "", entries: [] };
+		return completePath(prefix, dir, roots);
 	}
 
 	async cwds(): Promise<CwdsResponse> {

@@ -169,6 +169,13 @@ class ToborApi(baseUrl: String) {
     suspend fun complete(sessionId: Long, prefix: String): PathCompleteResponse =
         get("/api/sessions/$sessionId/complete", mapOf("prefix" to prefix)).decode()
 
+    /** Session-less path completion for the New Session page: [cwd] (blank/null = the node's default new-session cwd) resolves relative prefixes. */
+    suspend fun completeAt(cwd: String?, prefix: String): PathCompleteResponse =
+        get("/api/complete", buildMap {
+            put("prefix", prefix)
+            if (!cwd.isNullOrBlank()) put("cwd", cwd)
+        }).decode()
+
     suspend fun schedules(): List<Schedule> =
         get("/api/schedules").decode(ListSerializer(Schedule.serializer()))
 

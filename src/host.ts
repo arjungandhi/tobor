@@ -141,6 +141,8 @@ export interface SessionIndex {
 	entries(id: SessionId, query: EntriesQuery): Promise<EntriesResponse>;
 	/** Path completion for `prefix` (relative to the session's cwd), limited to the roots. Throws 404 if the session is unknown. */
 	complete(id: SessionId, prefix: string): Promise<PathCompleteResponse>;
+	/** Path completion without a session: `cwd` (tilde-expanded; blank = newest recent cwd inside the roots, else the first root) plus `prefix`, limited to the roots. A cwd outside the roots yields an empty response. */
+	completeAt(cwd: string | undefined, prefix: string): Promise<PathCompleteResponse>;
 	/** Roots plus recently used cwds. */
 	cwds(): Promise<CwdsResponse>;
 	/** Resolve a cwd: realpath, then require it to sit inside a root. Throws 403 `outside_roots`. */
