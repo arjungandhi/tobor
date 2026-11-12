@@ -31,13 +31,16 @@ export const QUIT_WINDOW_MS = 500;
 /** Two bare `Left` presses on an empty composer at most this far apart open the sessions list. */
 export const DOUBLE_LEFT_WINDOW_MS = 500;
 
-/** Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`. */
+/**
+ * Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`.
+ * A press that already did something (closed a dialog, cleared the composer) passes `arm = false` and does not start the window.
+ */
 export class QuitGate {
 	private armedAt = Number.NEGATIVE_INFINITY;
 
-	press(now: number): boolean {
+	press(now: number, arm = true): boolean {
 		if (now - this.armedAt < QUIT_WINDOW_MS) return true;
-		this.armedAt = now;
+		if (arm) this.armedAt = now;
 		return false;
 	}
 }
