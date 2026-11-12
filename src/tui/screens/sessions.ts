@@ -41,14 +41,25 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`, items, {
 		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · s schedules · h ${archived ? "active" : "archived"} · Esc ${nav === "up" ? "back" : "close"}`,
 		keys: ["n", "r", "a", "x", "s", "h"],
+		commands: true,
 		selected: initialIndex(sessions, current ?? app.lastSessionId(), focus),
 	});
 	if (!picked) {
 		if (nav !== "up") return;
 		return archived ? showSessions(app, false, undefined, nav) : showWorkspaces(app, "switch", undefined, true);
 	}
+	if (picked.command === "sessions") return showSessions(app, false, undefined, nav);
+	if (picked.command && picked.command !== "new") {
+		// Like a composer command run through `app.guard`: an error flashes, and the list comes back.
+		try {
+			await app.command(`/${picked.command}`);
+		} catch (err) {
+			app.flash(`✗ ${(err as Error).message ?? String(err)}`);
+		}
+		return showSessions(app, archived, undefined, nav);
+	}
 	const s = picked.value;
-	switch (picked.key) {
+	switch (picked.command ? "n" : picked.key) {
 		case "n": {
 			const started = await startSession(app);
 			// Cancelled the cwd fallback picker with nothing started: stay on this level of the hierarchy.
