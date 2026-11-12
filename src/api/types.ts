@@ -419,6 +419,20 @@ export type CwdsResponse = {
 	recent: string[];
 };
 
+/** One directory entry offered by path completion. */
+export interface PathCompleteEntry {
+	name: string;
+	type: "dir" | "file";
+}
+
+/** `GET /api/sessions/:id/complete?prefix=…`. */
+export interface PathCompleteResponse {
+	/** Absolute directory that was listed; empty when nothing was listed (missing, not a directory or outside the roots). */
+	dir: string;
+	/** Matching entries, directories first then alphabetical, capped. */
+	entries: PathCompleteEntry[];
+}
+
 // ─── Agent data files (.tobor) ──────────────────────────────────────────────────────────────────────────────────────
 
 /** One directory entry under `$TOBOR_HOME/.tobor`. */

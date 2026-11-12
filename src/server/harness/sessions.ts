@@ -27,6 +27,7 @@ import type {
 	InputMode,
 	ListSessionsResponse,
 	PatchSessionRequest,
+	PathCompleteResponse,
 	SessionDetail,
 	SessionFailure,
 	SessionId,
@@ -45,6 +46,7 @@ import {
 	HostError,
 	type SessionIndex as SessionIndexContract,
 } from "../../host.js";
+import { completePath } from "./complete.js";
 import { findGitRoot, resolveCwd } from "./env.js";
 import { ASK_USER } from "./questions/tool.js";
 import { generateTitle, resolveTitleModel } from "./titles.js";
@@ -446,6 +448,12 @@ export class SessionIndex implements SessionIndexContract {
 			this.o.ctx,
 		);
 		return { items: [...page.items], more: page.next !== undefined };
+	}
+
+	async complete(id: SessionId, prefix: string): Promise<PathCompleteResponse> {
+		const detail = await this.get(id);
+		if (!detail) throw new HostError(404, "not_found", `no session ${id}`);
+		return completePath(prefix, detail.cwd, this.o.config().roots);
 	}
 
 	async cwds(): Promise<CwdsResponse> {

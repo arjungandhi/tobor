@@ -28,6 +28,7 @@ import type {
 	OkResponse,
 	PatchSessionRequest,
 	PatchSessionResponse,
+	PathCompleteResponse,
 	PutToborFileRequest,
 	RestartResponse,
 	ScheduleResponse,
@@ -193,6 +194,11 @@ export class ApiClient {
 	/** `POST /api/auth/:provider/login/code`. */
 	loginCode(provider: string, code: string): Promise<LoginCodeResponse> {
 		return this.request("POST", `/api/auth/${encodeURIComponent(provider)}/login/code`, { code });
+	}
+
+	/** `GET /api/sessions/:id/complete?prefix=…`. */
+	complete(id: SessionId, prefix: string): Promise<PathCompleteResponse> {
+		return this.request("GET", `/api/sessions/${encodeURIComponent(id)}/complete?prefix=${encodeURIComponent(prefix)}`, undefined, 10_000);
 	}
 
 	/** `GET /api/cwds`. */
