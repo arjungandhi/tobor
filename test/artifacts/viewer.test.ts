@@ -145,7 +145,7 @@ describe("viewer", () => {
 		const again = await service.publish({ cwd: project, slug: "demo", tags: ["t"] });
 		expect(again.deduped).toBe(true);
 		expect(events).toHaveLength(1);
-		const [summary] = await service.list(projectId);
+		const [summary] = await service.list({ projectId });
 		expect(summary?.url).toBe(`${base}/art/${projectId}/demo`);
 		expect(summary?.latest.url).toBe(`${base}/art/r/${rev}`);
 	});

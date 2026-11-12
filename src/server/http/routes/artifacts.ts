@@ -2,12 +2,24 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Host } from "../../../host.js";
-import { sendJson } from "../json.js";
+import { invalid, parseInt10, sendJson } from "../json.js";
 import type { Router } from "../router.js";
 
 /** Artifact listings on the API origin. */
 export function artifactsRoutes(r: Router): void {
-	r.on("GET", "/api/artifacts", async ({ host, query }) => host.artifacts.list(query.get("project") || undefined));
+	r.on("GET", "/api/artifacts", async ({ host, query }) => {
+		const projectId = query.get("project") || undefined;
+		const session = parseInt10(query.get("session"), "session");
+		if (session === 0) throw invalid("session must be a positive integer");
+		const conversations =
+			session === undefined
+				? undefined
+				: [session, ...(await host.workers.list(session)).flatMap((w) => (w.conversationId === undefined ? [] : [w.conversationId]))];
+		return host.artifacts.list({
+			...(projectId === undefined ? {} : { projectId }),
+			...(conversations === undefined ? {} : { conversations }),
+		});
+	});
 	r.on("GET", "/api/artifacts/:projectId/:slug/revisions", async ({ host, params }) =>
 		host.artifacts.revisions(params.projectId!, params.slug!),
 	);

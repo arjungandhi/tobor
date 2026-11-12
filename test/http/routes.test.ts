@@ -236,7 +236,7 @@ describe("routes", () => {
 			"schedules.update": sched,
 		});
 		expect((await http(port, "GET", "/api/artifacts?project=p")).body).toEqual([{ slug: "a" }]);
-		expect(calls.at(-1)?.args).toEqual(["p"]);
+		expect(calls.at(-1)?.args).toEqual([{ projectId: "p" }]);
 		expect((await http(port, "GET", "/api/artifacts/p/a/revisions")).body).toEqual([{ rev: "r1" }]);
 		expect((await http(port, "GET", "/api/schedules")).body).toEqual([sched]);
 		const body = { name: "n", cron: "0 9 * * *", cwd: "/w", prompt: "p", enabled: false };
@@ -248,6 +248,33 @@ describe("routes", () => {
 		expect(calls.at(-1)?.args).toEqual(["s1", { enabled: true }]);
 		expect((await http(port, "PUT", "/api/schedules/s1", { body: { enabled: "yes" } })).status).toBe(400);
 		expect((await http(port, "DELETE", "/api/schedules/s1")).body).toEqual({ ok: true });
+	});
+});
+
+describe("GET /api/artifacts session filter", () => {
+	const workers = (sessionId: unknown) =>
+		sessionId === 4 ? [{ id: "w1", conversationId: 11 }, { id: "w2" }, { id: "w3", conversationId: 12 }] : [];
+
+	it("passes the session and its workers' conversations to the artifact service", async () => {
+		const { port, calls } = await api({ "artifacts.list": [{ slug: "a" }], "workers.list": workers });
+		expect((await http(port, "GET", "/api/artifacts?session=4")).body).toEqual([{ slug: "a" }]);
+		expect(calls.find((c) => c.method === "workers.list")?.args).toEqual([4]);
+		expect(calls.at(-1)).toEqual({ method: "artifacts.list", args: [{ conversations: [4, 11, 12] }] });
+		await http(port, "GET", "/api/artifacts?session=4&project=p");
+		expect(calls.at(-1)?.args).toEqual([{ projectId: "p", conversations: [4, 11, 12] }]);
+		await http(port, "GET", "/api/artifacts?session=9");
+		expect(calls.at(-1)?.args).toEqual([{ conversations: [9] }]);
+	});
+
+	it("does not look up workers without a session, and rejects a bad session with 400", async () => {
+		const { port, calls } = await api({ "artifacts.list": [] });
+		await http(port, "GET", "/api/artifacts");
+		expect(calls.map((c) => c.method)).toEqual(["artifacts.list"]);
+		expect(calls[0]?.args).toEqual([{}]);
+		for (const bad of ["abc", "0", "-1"]) {
+			expect((await http(port, "GET", `/api/artifacts?session=${bad}`)).status).toBe(400);
+		}
+		expect(calls).toHaveLength(1);
 	});
 });
 

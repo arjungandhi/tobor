@@ -489,7 +489,10 @@ export type ArtifactSummary = {
 	url: string;
 };
 
-/** `GET /api/artifacts?project=` → artifacts, newest first. */
+/**
+ * `GET /api/artifacts?project=&session=` → artifacts, newest first. `session` keeps only artifacts published by that
+ * session or by any of its workers (the latest revision among those the session published).
+ */
 export type ListArtifactsResponse = ArtifactSummary[];
 
 /** `GET /api/artifacts/:projectId/:slug/revisions` → revisions, newest first. */

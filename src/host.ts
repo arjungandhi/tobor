@@ -234,8 +234,8 @@ export type PdfResult =
 
 /** Artifacts: revision store under `$TOBOR_HOME/.tobor/state/artifacts`, served by the artifacts listener. */
 export interface ArtifactService {
-	/** Latest revision per artifact, newest first, optionally for one project. */
-	list(projectId?: string): Promise<ArtifactSummary[]>;
+	/** Latest revision per artifact, newest first, optionally for one project and/or published by the given conversations. */
+	list(filter?: { projectId?: string; conversations?: readonly SessionId[] }): Promise<ArtifactSummary[]>;
 	/** All revisions of one artifact, newest first. */
 	revisions(projectId: string, slug: string): Promise<ArtifactRevision[]>;
 	/** One revision by global id. */

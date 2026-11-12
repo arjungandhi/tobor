@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { ArtifactRevision, ArtifactSummary } from "../api/types.js";
+import type { ArtifactRevision, ArtifactSummary, SessionId } from "../api/types.js";
 import type { HomePaths } from "../config/home.js";
 import type { EventBus } from "../events.js";
 import type { ArtifactService, PdfResult } from "../host.js";
@@ -90,8 +90,12 @@ export class ArtifactsService implements ArtifactService {
 		};
 	}
 
-	async list(projectId?: string): Promise<ArtifactSummary[]> {
-		const entries = (await this.store.entries()).filter((e) => !projectId || e.projectId === projectId);
+	async list(filter: { projectId?: string; conversations?: readonly SessionId[] } = {}): Promise<ArtifactSummary[]> {
+		const { projectId, conversations } = filter;
+		const published = conversations && new Set(conversations);
+		const entries = (await this.store.entries()).filter(
+			(e) => (!projectId || e.projectId === projectId) && (!published || (e.conversationId !== undefined && published.has(e.conversationId))),
+		);
 		return latestPerArtifact(entries).map(({ latest, revisions }) => ({
 			projectId: latest.projectId,
 			slug: latest.slug,

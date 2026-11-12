@@ -235,7 +235,7 @@ export function artifactsModule(deps: ArtifactsDeps): ToolModule {
 		async execute(args, api, context) {
 			try {
 				const projectId = args.all ? undefined : (await projectInfo(await cwdOf(api, context))).projectId;
-				const artifacts = await service.list(projectId);
+				const artifacts = await service.list(projectId ? { projectId } : undefined);
 				if (artifacts.length === 0) return text("No artifacts published.", { artifacts: [] });
 				const rows = artifacts.map((a) => `${a.slug}  r${a.latest.revision}  ${a.title}  ${a.url}`);
 				return text(["slug  rev  title  url", ...rows].join("\n"), {
