@@ -1,7 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sanitizeHtml } from "./sanitize.js";
@@ -196,10 +195,15 @@ function runChrome(chrome: string, args: string[]): Promise<ChromeResult> {
 	return promise;
 }
 
-/** Print `html` to `outPath` (A4) with headless Chromium; returns the binary used. */
+/**
+ * Print `html` to `outPath` (A4) with headless Chromium; returns the binary used.
+ * The scratch dir (page + profile) is created beside `outPath` because sandboxed
+ * (snap/flatpak) Chromium has a private `/tmp` and cannot read the host's.
+ */
 export async function renderPdf(html: string, outPath: string, chrome = resolveChrome()): Promise<string> {
 	const out = resolve(outPath);
-	const tmp = await mkdtemp(join(tmpdir(), "tobor-pdf-"));
+	await mkdir(dirname(out), { recursive: true });
+	const tmp = await mkdtemp(join(dirname(out), ".tobor-pdf-"));
 	const page = join(tmp, "index.html");
 	await writeFile(page, html);
 	await rm(out, { force: true });
