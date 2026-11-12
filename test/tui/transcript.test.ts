@@ -4,7 +4,7 @@ import { argsSummary, ToolSlotView } from "../../src/tui/components/tool-slot.js
 import { Transcript } from "../../src/tui/components/transcript.js";
 import type { Block, ToolBlock } from "../../src/tui/replica.js";
 import { pdfPath } from "../../src/tui/screens/artifacts.js";
-import { parseTiming } from "../../src/tui/screens/schedules.js";
+import { fieldRows, parseTiming } from "../../src/tui/screens/schedules.js";
 
 const plain = (lines: string[]): string[] => lines.map((line) => stripTerminalSequences(line).trimEnd());
 
@@ -134,6 +134,16 @@ describe("screen helpers", () => {
 		expect(parseTiming(" 0 9 * * 1-5 ")).toEqual({ cron: "0 9 * * 1-5" });
 		expect(parseTiming("2026-12-01T09:00:00Z")).toEqual({ at: "2026-12-01T09:00:00.000Z" });
 		expect(() => parseTiming("every day")).toThrow("not a 5-field cron");
+	});
+
+	it("fieldRows shows current values and truncates a long multi-line prompt", () => {
+		const s = { id: "s1", name: "nightly", cron: "0 9 * * *", tz: "UTC", cwd: "/w", prompt: `first\nsecond`, model: "a/b", approval_mode: "auto", enabled: true, runs: [] } as unknown as Parameters<typeof fieldRows>[0];
+		const rows = fieldRows(s);
+		expect(rows.map((r) => r.field)).toEqual(["name", "timing", "tz", "cwd", "prompt", "model", "approval_mode", "misfire_grace"]);
+		expect(rows[1]!.description).toBe("cron 0 9 * * *");
+		expect(rows[4]!.description).toBe("first…");
+		expect(rows[5]!.description).toBe("a/b");
+		expect(rows[7]!.description).toContain("2h");
 	});
 
 	it("pdfPath names the file after project, slug and revision", () => {
