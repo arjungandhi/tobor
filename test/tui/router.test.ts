@@ -49,15 +49,26 @@ describe("routeKey: Esc priority", () => {
 	it("clears a slash command without completions instead of aborting", () => {
 		// '/zz': no matches, so the menu is not showing, but the composer has text.
 		expect(route(ESC, { composerEmpty: false, autocompleteOpen: false, state: "running" })).toEqual({ type: "clearComposer" });
-		expect(route(ESC, { composerEmpty: false, state: "waiting" })).toEqual({ type: "clearComposer" });
+		expect(route(ESC, { composerEmpty: false, autocompleteOpen: false, state: "waiting" })).toEqual({ type: "clearComposer" });
 	});
 
-	it("clears the text left after the menu closed (second Esc)", () => {
-		expect(route(ESC, { composerEmpty: false, autocompleteOpen: false, state: "running" })).toEqual({ type: "clearComposer" });
+	it("Esc with the menu open closes the menu (pass); the next Esc clears the leftover text", () => {
+		const open = { composerEmpty: false, autocompleteOpen: true, state: "running" } as const;
+		expect(route(ESC, open)).toEqual({ type: "pass" });
+		expect(route(ESC, { ...open, autocompleteOpen: false })).toEqual({ type: "clearComposer" });
 	});
 
-	it("clears text even during the async window before the menu opens", () => {
-		expect(route(ESC, { composerEmpty: false, autocompleteOpen: false, state: "running" }).type).not.toBe("abort");
+	it("clears text even during the async window before the menu opens, in every session state", () => {
+		// The editor opens its menu asynchronously: text just typed, `autocompleteOpen` still false.
+		for (const state of ["idle", "running", "waiting", "failed"] as const) {
+			expect(route(ESC, { composerEmpty: false, autocompleteOpen: false, state })).toEqual({ type: "clearComposer" });
+		}
+	});
+
+	it("staged images alone do not count as composer text: Esc aborts / goes up and the images stay", () => {
+		// Current behavior: `composerEmpty` ignores attachments, and no action touches them.
+		expect(route(ESC, { hasStagedImages: true, state: "running" })).toEqual({ type: "abort" });
+		expect(route(ESC, { hasStagedImages: true })).toEqual({ type: "showSessions", up: true });
 	});
 
 	it("clears text on an idle session too", () => {
