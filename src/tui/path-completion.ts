@@ -22,10 +22,18 @@ export type PathToken = {
 /** What a completion request should try: slash commands first, then a remote path token. */
 export type CompletionRoute = { slash: boolean; path: PathToken | null };
 
-/** Where the editor's completion gets its host: the connected client and the open session, when there are any. */
+/**
+ * What the composer is typing to, as far as completion cares:
+ * - `session`: paths relative to that session's cwd;
+ * - `default`: nothing is open, so this is the first prompt of a new session; the node's new-session default cwd applies;
+ * - `none`: completion is off (a worker transcript is read-only, and the default cwd would be the wrong context).
+ */
+export type CompletionTarget = { kind: "session"; id: SessionId } | { kind: "default" } | { kind: "none" };
+
+/** Where the editor's completion gets its host: the connected client and what the composer targets. */
 export type PathCompletionSource = {
 	api(): ApiClient | undefined;
-	sessionId(): SessionId | undefined;
+	target(): CompletionTarget;
 };
 
 const WHITESPACE = /\s/;
@@ -90,7 +98,7 @@ export function pathItems(token: PathToken, response: PathCompleteResponse): Aut
 
 /**
  * Composer completion: slash commands on the first line, plus paths on the host the session runs on
- * (Tab anywhere, or live after `@`). Local files never complete; the prompt is for the remote machine.
+ * (Tab anywhere, or live after `@`), for the open session or, with none open, the new-session default cwd. Local files never complete; the prompt is for the remote machine.
  */
 export class ComposerCompletion extends CombinedAutocompleteProvider {
 	readonly triggerCharacters = ["@"];
@@ -116,12 +124,12 @@ export class ComposerCompletion extends CombinedAutocompleteProvider {
 	}
 
 	private async pathSuggestions(token: PathToken, signal: AbortSignal): Promise<AutocompleteSuggestions | null> {
-		const id = this.source.sessionId();
+		const target = this.source.target();
 		const api = this.source.api();
-		if (id === undefined || !api) return null;
+		if (target.kind === "none" || !api) return null;
 		let response: PathCompleteResponse;
 		try {
-			response = await api.complete(id, token.raw);
+			response = target.kind === "session" ? await api.complete(target.id, token.raw) : await api.completeAt(undefined, token.raw);
 		} catch {
 			return null;
 		}
@@ -156,6 +164,6 @@ export class ComposerCompletion extends CombinedAutocompleteProvider {
 	}
 
 	override shouldTriggerFileCompletion(): boolean {
-		return this.source.sessionId() !== undefined && this.source.api() !== undefined;
+		return this.source.target().kind !== "none" && this.source.api() !== undefined;
 	}
 }

@@ -134,7 +134,7 @@ describe("ComposerCompletion", () => {
 	};
 	const make = (calls: string[], id: number | null = 7, api: Partial<ApiClient> | undefined = undefined) =>
 		new ComposerCompletion({
-			sessionId: () => id ?? undefined,
+			target: () => (id === null ? { kind: "none" } : { kind: "session", id }),
 			api: () =>
 				(api ?? {
 					complete: async (_id: number, prefix: string) => {
@@ -174,10 +174,10 @@ describe("ComposerCompletion", () => {
 		expect(out?.prefix).toBe("/etc/s");
 	});
 
-	it("returns null without a session target, a client, or on errors", async () => {
+	it("returns null for a worker target, without a client, or on errors", async () => {
 		const force = { signal, force: true };
 		expect(await make([], null).getSuggestions(["a"], 0, 1, force)).toBeNull();
-		const none = new ComposerCompletion({ sessionId: () => 1, api: () => undefined });
+		const none = new ComposerCompletion({ target: () => ({ kind: "session", id: 1 }), api: () => undefined });
 		expect(await none.getSuggestions(["a"], 0, 1, force)).toBeNull();
 		const failing = make([], 1, {
 			complete: async () => {
@@ -185,6 +185,41 @@ describe("ComposerCompletion", () => {
 			},
 		});
 		expect(await failing.getSuggestions(["a"], 0, 1, force)).toBeNull();
+	});
+
+	it("with nothing open, completes against the node's default cwd (no session id)", async () => {
+		const calls: unknown[][] = [];
+		const provider = new ComposerCompletion({
+			target: () => ({ kind: "default" }),
+			api: () =>
+				({
+					complete: async () => {
+						throw new Error("must not use the session route");
+					},
+					completeAt: async (...args: unknown[]) => {
+						calls.push(args);
+						return response;
+					},
+				}) as unknown as ApiClient,
+		});
+		const out = await provider.getSuggestions(["see @s"], 0, 6, { signal });
+		expect(calls).toEqual([[undefined, "s"]]);
+		expect(out?.items.map((i) => i.value)).toEqual(["src/", "setup.sh"]);
+		expect((await provider.getSuggestions(["see s"], 0, 5, { signal, force: true }))?.prefix).toBe("s");
+		expect(provider.shouldTriggerFileCompletion()).toBe(true);
+		expect(new ComposerCompletion({ target: () => ({ kind: "default" }), api: () => undefined }).shouldTriggerFileCompletion()).toBe(false);
+	});
+
+	it("stays off for a worker target even when a client exists", async () => {
+		const calls: unknown[] = [];
+		const provider = new ComposerCompletion({
+			target: () => ({ kind: "none" }),
+			api: () => ({ complete: async () => calls.push("c"), completeAt: async () => calls.push("a") }) as unknown as ApiClient,
+		});
+		expect(await provider.getSuggestions(["see @s"], 0, 6, { signal })).toBeNull();
+		expect(await provider.getSuggestions(["s"], 0, 1, { signal, force: true })).toBeNull();
+		expect(calls).toEqual([]);
+		expect(provider.shouldTriggerFileCompletion()).toBe(false);
 	});
 
 	it("drops stale results", async () => {
@@ -201,7 +236,7 @@ describe("ComposerCompletion", () => {
 	it("gates file completion on a session target and a client", () => {
 		expect(make([]).shouldTriggerFileCompletion()).toBe(true);
 		expect(make([], null).shouldTriggerFileCompletion()).toBe(false);
-		expect(new ComposerCompletion({ sessionId: () => 1, api: () => undefined }).shouldTriggerFileCompletion()).toBe(false);
+		expect(new ComposerCompletion({ target: () => ({ kind: "session", id: 1 }), api: () => undefined }).shouldTriggerFileCompletion()).toBe(false);
 	});
 
 	it("declares @ as a trigger character", () => {
@@ -218,7 +253,7 @@ describe("ComposerCompletion", () => {
 
 	it("applies a Tab file without a trailing space and a quoted dir with the cursor inside the quotes", async () => {
 		const provider = new ComposerCompletion({
-			sessionId: () => 1,
+			target: () => ({ kind: "session", id: 1 }),
 			api: () => ({ complete: async () => ({ dir: "/w", entries: [{ name: "my dir", type: "dir" }] }) }) as unknown as ApiClient,
 		});
 		const out = await provider.getSuggestions(['x "my'], 0, 5, { signal, force: true });

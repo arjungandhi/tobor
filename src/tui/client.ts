@@ -196,6 +196,13 @@ export class ApiClient {
 		return this.request("POST", `/api/auth/${encodeURIComponent(provider)}/login/code`, { code });
 	}
 
+	/** `GET /api/complete?cwd=…&prefix=…`: completion with no session; a blank `cwd` lets the node pick the new-session default. */
+	completeAt(cwd: string | undefined, prefix: string): Promise<PathCompleteResponse> {
+		const params = new URLSearchParams({ prefix });
+		if (cwd?.trim()) params.set("cwd", cwd);
+		return this.request("GET", `/api/complete?${params}`, undefined, 10_000);
+	}
+
 	/** `GET /api/sessions/:id/complete?prefix=…`. */
 	complete(id: SessionId, prefix: string): Promise<PathCompleteResponse> {
 		return this.request("GET", `/api/sessions/${encodeURIComponent(id)}/complete?prefix=${encodeURIComponent(prefix)}`, undefined, 10_000);
