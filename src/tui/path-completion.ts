@@ -55,8 +55,10 @@ export function extractPathToken(before: string): PathToken {
 	return { text, at, quoted, raw: quoted ? rest.slice(1) : rest };
 }
 
-/** Decide what to complete: `@` tokens always go remote, a leading `/word` tries slash commands first, Tab completes any token. */
+/** Decide what to complete: nothing in a `/attach` argument, `@` tokens otherwise always go remote, a leading `/word` tries slash commands first, Tab completes any token. */
 export function routeCompletion(before: string, cursorLine: number, force: boolean): CompletionRoute {
+	// `/attach` takes a LOCAL file, so the host's filesystem must not be suggested for its argument.
+	if (cursorLine === 0 && /^\s*\/attach\s/.test(before)) return { slash: false, path: null };
 	const token = extractPathToken(before);
 	if (token.at) return { slash: false, path: token };
 	if (cursorLine === 0 && /^\s*\/\S*$/.test(before)) {
@@ -66,8 +68,9 @@ export function routeCompletion(before: string, cursorLine: number, force: boole
 	return { slash: false, path: force ? token : null };
 }
 
-/** The directory part of the typed path, kept verbatim in the completed value. */
+/** The directory part of the typed path, kept verbatim in the completed value (a bare `~` means `~/`, as on the host). */
 function dirPart(raw: string): string {
+	if (raw === "~") return "~/";
 	return raw.slice(0, raw.lastIndexOf("/") + 1);
 }
 

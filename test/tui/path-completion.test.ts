@@ -52,6 +52,11 @@ describe("pathValue", () => {
 		expect(pathValue(token("RE"), { name: "README.md", type: "file" })).toBe("README.md");
 	});
 
+	it("keeps the ~ of a bare ~ token (the host lists the home directory)", () => {
+		expect(pathValue(token("~"), { name: "Documents", type: "dir" })).toBe("~/Documents/");
+		expect(pathValue(token("@~"), { name: "notes.txt", type: "file" })).toBe("~/notes.txt");
+	});
+
 	it("drops the @ and wraps values containing whitespace in quotes", () => {
 		expect(pathValue(token("@src/my"), { name: "my dir", type: "dir" })).toBe('"src/my dir/"');
 	});
@@ -106,6 +111,15 @@ describe("routeCompletion", () => {
 		expect(routeCompletion("see @sr", 2, false)).toEqual({ slash: false, path: extractPathToken("see @sr") });
 		expect(routeCompletion("/cmd @sr", 0, false).slash).toBe(false);
 		expect(routeCompletion("/cmd @sr", 0, false).path?.at).toBe(true);
+	});
+
+	it("never completes the argument of /attach remotely, @ tokens included", () => {
+		const none = { slash: false, path: null };
+		expect(routeCompletion("/attach sh", 0, true)).toEqual(none);
+		expect(routeCompletion("  /attach ~/pi", 0, true)).toEqual(none);
+		expect(routeCompletion("/attach @sh", 0, false)).toEqual(none);
+		expect(routeCompletion("/attach", 0, true).slash).toBe(true);
+		expect(routeCompletion("/attachment sh", 0, true).path?.raw).toBe("sh");
 	});
 });
 
