@@ -29,6 +29,7 @@ import type {
 	WhoamiResponse,
 } from "../api/types.js";
 import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
+import { commandRows } from "./command-rows.js";
 import { Band } from "./components/band.js";
 import { StatusLine } from "./components/status.js";
 import {
@@ -139,11 +140,14 @@ export class Panel implements Component, Focusable {
 	}
 }
 
+/** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
+const COMMAND_PREFIX = "cmd:";
+
 /** One choice of `App.pick`. */
 export type PickItem<T> = { value: T; label: string; description?: string };
 
-/** Result of `App.pick`: the chosen value and the key that chose it (`enter` or one of `keys`). */
-export type Picked<T> = { key: string; value?: T };
+/** Result of `App.pick`: the chosen value and the key that chose it (`enter` or one of `keys`); `command` is a slash command row chosen with `commands` (no value). */
+export type Picked<T> = { key: string; value?: T; command?: string };
 
 /** The TUI: owns the renderer, the active node connection, shared lists, modals and global keys. */
 export class App {
@@ -691,7 +695,7 @@ export class App {
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
-		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number } = {},
+		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number; commands?: boolean } = {},
 	): Promise<Picked<T> | undefined> {
 		const { promise, resolve } = Promise.withResolvers<Picked<T> | undefined>();
 		const entries: SelectItem[] = items.map((item, i) => ({
@@ -707,6 +711,7 @@ export class App {
 		};
 		const chosen = (key: string): void => {
 			const item = list.getSelectedItem();
+			if (item?.value.startsWith(COMMAND_PREFIX)) return finish({ key, command: item.value.slice(COMMAND_PREFIX.length) });
 			const picked = item ? items[Number(item.value)] : undefined;
 			finish(picked ? { key, value: picked.value } : items.length === 0 ? { key } : undefined);
 		};
@@ -729,7 +734,7 @@ export class App {
 			handleMouse: (event) => list.handleMouse(event),
 			invalidate: () => list.invalidate(),
 		};
-		const baseHint = `${options.hint ?? "Enter select · Esc close"}${items.length === 0 ? "" : " · / filter"}`;
+		const baseHint = `${options.hint ?? "Enter select · Esc close"}${items.length === 0 ? "" : options.commands ? " · / filter or command" : " · / filter"}`;
 		let query: string | undefined;
 		const refilter = (): void => {
 			if (query === undefined) {
@@ -737,7 +742,11 @@ export class App {
 				panel.setHint(baseHint);
 			} else {
 				const needle = query.toLowerCase();
-				list = makeList(entries.filter((e) => `${e.label} ${e.description ?? ""}`.toLowerCase().includes(needle)));
+				const matches = entries.filter((e) => `${e.label} ${e.description ?? ""}`.toLowerCase().includes(needle));
+				const cmds: SelectItem[] = options.commands
+					? commandRows(query).map((cmd) => ({ value: `${COMMAND_PREFIX}${cmd.name}`, label: c.accent(`/${cmd.name}`), description: cmd.description }))
+					: [];
+				list = makeList([...cmds, ...matches]);
 				panel.setHint(`/${query}▏ · Enter select · Esc ${query === "" ? "close" : "clear filter"}`);
 			}
 			this.tui.requestRender();
