@@ -202,6 +202,24 @@ describe("SessionIndex", () => {
 		await expect(t.host.sessions.complete(999_999, "")).rejects.toMatchObject({ status: 404 });
 	});
 
+	it("completes without a session: defaults to the newest recent cwd inside the roots, else the first root, never outside", async () => {
+		const t = await start();
+		await mkdir(join(t.root, "pkg", "inner"), { recursive: true });
+		await writeFile(join(t.root, "pkg", "main.ts"), "");
+		await writeFile(join(t.root, "top.txt"), "");
+		// No sessions yet: the first root.
+		expect(await t.host.sessions.completeAt(undefined, "to")).toEqual({ dir: t.root, entries: [{ name: "top.txt", type: "file" }] });
+		expect((await t.host.sessions.completeAt("  ", "to")).dir).toBe(t.root);
+		await t.host.sessions.create({ cwd: join(t.root, "pkg") });
+		// Newest recent cwd.
+		expect(await t.host.sessions.completeAt(undefined, "ma")).toEqual({ dir: join(t.root, "pkg"), entries: [{ name: "main.ts", type: "file" }] });
+		// Explicit cwd wins, and a cwd or prefix outside the roots reveals nothing.
+		expect((await t.host.sessions.completeAt(t.root, "to")).entries).toEqual([{ name: "top.txt", type: "file" }]);
+		expect(await t.host.sessions.completeAt(t.home, "")).toEqual({ dir: "", entries: [] });
+		expect(await t.host.sessions.completeAt(t.root, "../")).toEqual({ dir: "", entries: [] });
+		expect(await t.host.sessions.completeAt(join(t.root, "missing"), "")).toEqual({ dir: "", entries: [] });
+	});
+
 	it("patches, archives, takes follow-up input and deletes", async () => {
 		const t = await start();
 		t.script([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
