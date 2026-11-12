@@ -89,8 +89,12 @@ fun PathPickerSheet(
 
     fun close(then: () -> Unit) {
         scope.launch {
-            sheetState.hide()
-            then()
+            // finally: the sheet may leave composition mid-animation (cancelling this scope); the pick must still land.
+            try {
+                sheetState.hide()
+            } finally {
+                then()
+            }
         }
     }
     fun navigate(to: String) {
