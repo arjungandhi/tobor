@@ -49,13 +49,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -654,7 +659,19 @@ private fun Composer(
     running: Boolean,
     sendFilled: Boolean,
 ) {
-    var draft by remember(sessionId) { mutableStateOf("") }
+    var draft by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+    var pathPickerOpen by remember(sessionId) { mutableStateOf(false) }
+    val draftFocus = remember { FocusRequester() }
+    var refocus by remember { mutableIntStateOf(0) }
+    LaunchedEffect(refocus) {
+        if (refocus > 0) {
+            delay(50) // let the sheet's window release focus first
+            try {
+                draftFocus.requestFocus()
+            } catch (_: IllegalStateException) {
+            }
+        }
+    }
     var sending by remember(sessionId) { mutableStateOf(false) }
     var composeError by remember(sessionId) { mutableStateOf<String?>(null) }
     var steerMode by remember(sessionId) { mutableStateOf("steer") }
@@ -687,8 +704,14 @@ private fun Composer(
             AttachImageButton(pendingImages, onProblem = { composeError = it }, modifier = Modifier.padding(bottom = 2.dp))
             OutlinedTextField(
                 value = draft,
-                onValueChange = { draft = it },
-                modifier = Modifier.weight(1f),
+                onValueChange = { next ->
+                    // `@` typed at a token boundary opens the path picker; the typed `@` stays until a path replaces it.
+                    if (typedAtTrigger(draft.text, next.text, next.selection.end) != null && next.selection.collapsed) {
+                        pathPickerOpen = true
+                    }
+                    draft = next
+                },
+                modifier = Modifier.weight(1f).focusRequester(draftFocus),
                 textStyle = fieldTextStyle(color = ToborColors.fg),
                 placeholder = {
                     Text("log an instruction…", color = ToborColors.subtle, style = fieldTextStyle())
@@ -704,10 +727,10 @@ private fun Composer(
                     cursorColor = ToborColors.gold,
                 ),
             )
-            val canSend = (draft.isNotBlank() || pendingImages.items.isNotEmpty()) && !sending && !pendingImages.loading
+            val canSend = (draft.text.isNotBlank() || pendingImages.items.isNotEmpty()) && !sending && !pendingImages.loading
             FilledIconButton(
                 onClick = {
-                    val text = draft.trim()
+                    val text = draft.text.trim()
                     val mode = if (running) steerMode else "prompt"
                     val attachments = pendingImages.attachments
                     sending = true
@@ -715,7 +738,7 @@ private fun Composer(
                     scope.launch {
                         try {
                             api.input(sessionId, text, mode, java.util.UUID.randomUUID().toString(), attachments)
-                            draft = ""
+                            draft = TextFieldValue("")
                             pendingImages.clear()
                         } catch (e: CancellationException) {
                             throw e
@@ -741,6 +764,22 @@ private fun Composer(
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "send")
             }
         }
+    }
+    if (pathPickerOpen) {
+        PathPickerSheet(
+            api = api,
+            sessionId = sessionId,
+            onInsert = { path ->
+                val r = replaceAtToken(draft.text, draft.selection.end, path)
+                draft = TextFieldValue(r.text, TextRange(r.cursor))
+                pathPickerOpen = false
+                refocus++
+            },
+            onDismiss = {
+                pathPickerOpen = false
+                refocus++
+            },
+        )
     }
 }
 
