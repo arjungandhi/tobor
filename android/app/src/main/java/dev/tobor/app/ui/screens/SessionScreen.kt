@@ -489,22 +489,15 @@ private fun SessionHeader(
         IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "back", tint = ToborColors.fg)
         }
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                color = ToborColors.gold,
-                fontFamily = Righteous,
-                fontSize = 18.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "no. %03d".format(sessionId),
-                color = ToborColors.muted,
-                fontFamily = SpecialElite,
-                fontSize = 11.sp,
-            )
-        }
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = ToborColors.gold,
+            fontFamily = Righteous,
+            fontSize = 18.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         when {
             failed -> Tag("failed", ToborColors.error)
             running -> Tag("running", ToborColors.gold)
