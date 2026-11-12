@@ -17,6 +17,7 @@ import { ReconnectingSocket, type SocketState } from "../client.js";
 import { Composer } from "../components/composer.js";
 import { QuestionPanel } from "../components/question-panel.js";
 import { Transcript } from "../components/transcript.js";
+import { BUSY_MESSAGE } from "../keys.js";
 import { ConversationReplica, liveOf, usageOf, type ViewUsage } from "../replica.js";
 import { c } from "../theme.js";
 import { startSession } from "./new-session.js";
@@ -211,7 +212,7 @@ export class SessionScreen {
 				: this.target.worker
 				? `worker ${this.target.worker.name} · read-only · Esc back`
 				: this.state() === "running" || this.state() === "waiting"
-					? "running · Enter steers · Ctrl+Q queues a follow-up · Esc aborts"
+					? "running · Enter steers · Ctrl+Q queues a follow-up · Esc clears / aborts when empty"
 					: "prompt · Enter sends · Shift+Enter newline · / commands";
 		this.composer.setLabel(label);
 	}
@@ -296,7 +297,11 @@ export class SessionScreen {
 			return;
 		}
 		if (text.startsWith("/")) {
-			this.keepOnFail(text, () => this.app.command(text));
+			this.keepOnFail(text, async () => {
+				// Another flow is running: refuse loudly (the text stays in the composer) instead of dropping the command.
+				if (this.app.busy) throw new Error(BUSY_MESSAGE);
+				await this.app.command(text);
+			});
 			return;
 		}
 		const question = this.questions.current();

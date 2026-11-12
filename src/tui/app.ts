@@ -45,7 +45,7 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
+import { BUSY_MESSAGE, COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
 import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
@@ -141,9 +141,6 @@ export class Panel implements Component, Focusable {
 		return out;
 	}
 }
-
-/** Flashed when a key or command needs a flow that cannot start because another one is running. */
-export const BUSY_MESSAGE = "busy — finish the open dialog";
 
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 const COMMAND_PREFIX = "cmd:";
@@ -714,6 +711,11 @@ export class App {
 		return new Promise((resolve) => resolve(flow())).finally(() => {
 			this.flowActive = false;
 		});
+	}
+
+	/** Whether a modal-opening flow is running (hotkeys and composer commands are refused meanwhile). */
+	get busy(): boolean {
+		return this.flowActive;
 	}
 
 	/** Run a slash command typed into the composer. */

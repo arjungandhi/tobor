@@ -25,6 +25,9 @@ export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]):
 	return typeof binding === "string" ? matchesKey(data, binding) : binding.some((key) => matchesKey(data, key));
 }
 
+/** Flashed when a key or command needs a flow that cannot start because another one is running. */
+export const BUSY_MESSAGE = "busy — finish the open dialog";
+
 /** Two `Ctrl+C` presses at most this far apart quit the TUI. */
 export const QUIT_WINDOW_MS = 500;
 
@@ -49,7 +52,7 @@ export class QuitGate {
 export const HELP: readonly (readonly [string, string])[] = [
 	["Enter", "send prompt (while a run is going: steer the running agent)"],
 	["Ctrl+Q / Ctrl+Enter", "queue a follow-up for after the current turn"],
-	["Esc", "abort the run · worker view: back to the director · idle: sessions list (then workspaces)"],
+	["Esc", "clear the composer; when empty: abort the run · worker view: back · idle: sessions list (then workspaces)"],
 	["Shift+Enter / Alt+Enter", "new line in the composer"],
 	["Alt+Shift+A", "pending approvals: approve / approve for session / deny"],
 	["Alt+Shift+U", "pending questions from the agent (ask_user): answer or pick an option"],
