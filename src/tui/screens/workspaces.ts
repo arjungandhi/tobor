@@ -151,8 +151,9 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 	switch (action?.value) {
 		case "address": {
 			const address = await askAddress(app, `${name} · host:port`, ws);
-			if (address) await testAndSave(app, name, address);
-			if (app.workspace?.name === name) app.connect(findWorkspace(app.config, name)!);
+			const saved = address ? await testAndSave(app, name, address) : undefined;
+			// Reconnect only when a new address was actually saved; Esc or declining keeps the open session.
+			if (saved && app.workspace?.name === name) app.connect(saved);
 			return name;
 		}
 		case "rename": {
@@ -181,7 +182,10 @@ export async function offerSave(app: App, address: Address): Promise<void> {
 	if (!save) return;
 	const name = await askName(app, `name for ${formatAddress(address)}`);
 	if (name === undefined) return;
+	// updateConfig relabels the connection, so capture the old (address-derived) name and its last session first.
+	const from = app.workspace?.name ?? "";
+	const hadLast = from !== "" && app.lastSessionId() !== undefined;
 	app.updateConfig(putWorkspace(app.config, name, address));
-	app.renamedWorkspace(app.workspace?.name ?? "", name);
+	if (hadLast && from !== name) app.renamedWorkspace(from, name);
 	app.flash(`saved workspace ${name}`);
 }

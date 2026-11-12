@@ -1,4 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { oneLineStyled } from "../sanitize.js";
 import { c } from "../theme.js";
 
 /** A one-line rule, then a one-line header (left: where you are, right: context). */
@@ -9,9 +10,11 @@ export class Band implements Component {
 
 	/** Set the header text (already styled). */
 	setHeader(left: string, right: string): void {
-		if (left === this.left && right === this.right) return;
-		this.left = left;
-		this.right = right;
+		const cleanLeft = oneLineStyled(left);
+		const cleanRight = oneLineStyled(right);
+		if (cleanLeft === this.left && cleanRight === this.right) return;
+		this.left = cleanLeft;
+		this.right = cleanRight;
 		this.cache = undefined;
 	}
 

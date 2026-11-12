@@ -15,7 +15,7 @@ function age(ms: number): string {
 
 /** The card shown for one approval: tool, where it came from, expiry, and the arguments. */
 export function approvalCard(app: App, a: PendingApproval): string[] {
-	const now = app.whoami?.now ?? Date.now();
+	const now = app.now();
 	const args = JSON.stringify(a.args, null, 2) ?? "";
 	const argLines = args.split("\n");
 	return [

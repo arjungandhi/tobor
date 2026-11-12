@@ -49,11 +49,11 @@ export async function run(args: CliArgs): Promise<number> {
 				config = setDefault(config, name);
 				break;
 		}
+		saveClientConfig(path, config);
 	} catch (err) {
 		process.stderr.write(`tobor workspace ${action}: ${(err as Error).message}\n`);
 		return 1;
 	}
-	saveClientConfig(path, config);
 	const ws = findWorkspace(config, name);
 	const done = { add: `added ${name} (${ws ? formatAddress(ws) : ""})`, remove: `removed ${name}`, use: `default workspace: ${name}` }[action as "add" | "remove" | "use"];
 	process.stdout.write(`${done}\n`);

@@ -31,7 +31,7 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	const client = app.api();
 	const sessions = archived ? (await client.sessions(true)).filter((s) => s.archived) : await client.sessions();
 	if (!archived) app.sessions = sessions;
-	const now = app.whoami?.now ?? Date.now();
+	const now = app.now();
 	const items = sessions.map((s: SessionSummary) => ({
 		value: s,
 		label: `${STATE[s.state](`[${s.state}]`.padEnd(9))} #${s.id} ${s.title}`,
@@ -50,9 +50,10 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	}
 	if (picked.command === "sessions") return showSessions(app, false, undefined, nav);
 	if (picked.command && picked.command !== "new") {
-		// Like a composer command run through `app.guard`: an error flashes, and the list comes back.
+		// Like a composer command run through `app.guard`: an error flashes, and the list comes back. The list is
+		// opened inside an exclusive flow (hotkey, Esc or /sessions), so the command continues that flow.
 		try {
-			await app.command(`/${picked.command}`);
+			await app.continueCommand(`/${picked.command}`);
 		} catch (err) {
 			app.flash(`✗ ${(err as Error).message ?? String(err)}`);
 		}

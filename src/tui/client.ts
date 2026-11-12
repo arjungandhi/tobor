@@ -75,10 +75,15 @@ export class ApiClient {
 		});
 		const text = await res.text();
 		let data: unknown;
+		let parseFailed = false;
 		try {
 			data = text === "" ? undefined : JSON.parse(text);
 		} catch {
 			data = undefined;
+			parseFailed = true;
+		}
+		if (res.ok && parseFailed) {
+			throw new ApiRequestError(res.status, undefined, `${method} ${path}: non-JSON response from server (${res.status}): ${text.slice(0, 80).replace(/\s+/g, " ")}`);
 		}
 		if (!res.ok) {
 			const err = data && typeof data === "object" && "error" in data ? (data as ApiError) : undefined;
@@ -278,6 +283,9 @@ function encodePath(path: string): string {
 		.join("/");
 }
 
+/** A connection must stay open this long before the reconnect backoff resets. */
+const STABLE_MS = 10_000;
+
 /** Connection state of a `ReconnectingSocket`. */
 export type SocketState = "connecting" | "open" | "waiting" | "closed";
 
@@ -302,6 +310,12 @@ export class ReconnectingSocket<In> {
 	private stopped = false;
 	private timer: NodeJS.Timeout | undefined;
 	private ping: NodeJS.Timeout | undefined;
+	/** Last time anything (message or pong) arrived on the current connection. */
+	private lastRx = 0;
+	/** When the current connection opened; 0 while not open. */
+	private openedAt = 0;
+	/** Most recent socket/handler error for the current attempt, shown in the retry detail. */
+	private lastError: string | undefined;
 
 	constructor(private readonly options: ReconnectingSocketOptions<In>) {}
 
@@ -331,38 +345,63 @@ export class ReconnectingSocket<In> {
 	private connect(): void {
 		if (this.stopped) return;
 		this.options.onState?.("connecting");
+		this.lastError = undefined;
 		const ws = new WebSocket(this.options.url(), { handshakeTimeout: 10_000 });
 		this.ws = ws;
+		const pingMs = this.options.pingMs ?? 20_000;
 		ws.on("open", () => {
 			const reconnect = this.opened;
 			this.opened = true;
-			this.attempt = 0;
+			// The backoff is only reset once the connection proves stable (see the close handler).
+			this.openedAt = this.lastRx = Date.now();
 			this.options.onState?.("open");
 			clearInterval(this.ping);
 			this.ping = setInterval(() => {
-				if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "ping" }));
-			}, this.options.pingMs ?? 20_000);
+				if (ws.readyState !== WebSocket.OPEN) return;
+				if (Date.now() - this.lastRx > pingMs * 2.5) {
+					// Half-open link: nothing (not even a pong) arrived; force the normal reconnect path.
+					this.lastError = "connection timed out (no data from server)";
+					ws.terminate();
+					return;
+				}
+				ws.send(JSON.stringify({ t: "ping" }));
+			}, pingMs);
 			this.options.onOpen?.(reconnect);
 		});
+		ws.on("pong", () => {
+			this.lastRx = Date.now();
+		});
 		ws.on("message", (data) => {
+			this.lastRx = Date.now();
 			let frame: In;
 			try {
 				frame = JSON.parse(data.toString()) as In;
 			} catch {
 				return;
 			}
-			this.options.onFrame(frame);
+			try {
+				this.options.onFrame(frame);
+			} catch (err) {
+				// Never let a frame handler crash the process; reconnect to resync instead.
+				this.lastError = `frame handler failed: ${err instanceof Error ? err.message : String(err)}`;
+				ws.terminate();
+			}
 		});
-		ws.on("error", () => {});
+		ws.on("error", (err) => {
+			this.lastError = err instanceof Error ? err.message : String(err);
+		});
 		ws.on("close", (code, reason) => {
 			if (this.ws !== ws) return;
 			clearInterval(this.ping);
 			this.ws = undefined;
 			if (this.stopped) return;
+			if (this.openedAt > 0 && Date.now() - this.openedAt >= STABLE_MS) this.attempt = 0;
+			this.openedAt = 0;
 			const delay = Math.min(this.options.maxDelayMs ?? 15_000, (this.options.minDelayMs ?? 500) * 2 ** this.attempt);
 			this.attempt++;
 			const jittered = Math.round(delay * (0.75 + Math.random() * 0.5));
-			this.options.onState?.("waiting", `${reason.toString() || `code ${code}`}; retry in ${Math.ceil(jittered / 1000)}s`);
+			const why = reason.toString() || this.lastError || `code ${code}`;
+			this.options.onState?.("waiting", `${why}; retry in ${Math.ceil(jittered / 1000)}s`);
 			this.timer = setTimeout(() => this.connect(), jittered);
 		});
 	}

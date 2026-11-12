@@ -1,5 +1,6 @@
-import { type Component, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import type { ImagePart } from "../replica.js";
+import { hardWrap, sanitizeText } from "../sanitize.js";
 import { c } from "../theme.js";
 import { ImageList } from "./image-parts.js";
 
@@ -34,7 +35,11 @@ export class UserBlock implements Component {
 		const queued = this.queued !== undefined;
 		const bar = queued ? c.dim("▌ ") : c.user("▌ ");
 		const style = queued ? c.dim : c.bold;
-		const body = wrapTextWithAnsi(this.text.replace(/\t/g, "    "), Math.max(1, width - 2)).map((line) => bar + style(line));
+		const inner = Math.max(1, width - 2);
+		const body = sanitizeText(this.text)
+			.split("\n")
+			.flatMap((line) => hardWrap(line, inner))
+			.map((line) => bar + style(line));
 		// A prompt that is only images shows no empty bar line.
 		const lines = ["", ...(body.length > 0 ? body : this.images.length === 0 ? [bar] : [])];
 		lines.push(...this.images.render(width));

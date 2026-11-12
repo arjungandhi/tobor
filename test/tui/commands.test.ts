@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactSummary } from "../../src/api/types.js";
-import type { App, Picked } from "../../src/tui/app.js";
+import { App as AppClass, type App, type Picked } from "../../src/tui/app.js";
 import { ApiClient } from "../../src/tui/client.js";
 import { COMMANDS } from "../../src/tui/keys.js";
 import { showArtifacts } from "../../src/tui/screens/artifacts.js";
+import { showSessions } from "../../src/tui/screens/sessions.js";
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -103,5 +104,43 @@ describe("/artifacts scope", () => {
 			expect(picks[0]?.title).toBe("artifacts · all");
 			expect(picks[0]?.keys).toEqual(["p", "v"]);
 		}
+	});
+});
+
+describe("slash command chosen from the sessions list", () => {
+	/** A fake App whose sessions picker answers with `/model`, then closes. */
+	function fake(flowActive: boolean) {
+		const picks = [{ command: "model" }, undefined];
+		const calls: string[] = [];
+		const app = {
+			session: { target: undefined },
+			sessions: [],
+			workspace: undefined,
+			api: () => ({ sessions: async () => [] }),
+			now: () => 0,
+			lastSessionId: () => undefined,
+			flash: vi.fn(),
+			pick: vi.fn(async () => picks.shift()),
+			flowActive,
+			runCommand: async (line: string) => void calls.push(`run ${line}`),
+			command: async (line: string) => void calls.push(`command ${line}`),
+		};
+		return { app, calls };
+	}
+
+	it("runs inside the open flow instead of being dropped by command()", async () => {
+		const { app, calls } = fake(true);
+		// Same body as the real `command`: exclusive() returns early while a flow is active.
+		app.command = async (line) => void (app.flowActive || calls.push(`command ${line}`));
+		(app as unknown as { continueCommand: unknown }).continueCommand = (line: string) => AppClass.prototype.continueCommand.call(app, line);
+		await showSessions(app as unknown as App);
+		expect(calls).toEqual(["run /model"]);
+	});
+
+	it("falls back to the guarded command() when no flow is active", async () => {
+		const { app, calls } = fake(false);
+		(app as unknown as { continueCommand: unknown }).continueCommand = (line: string) => AppClass.prototype.continueCommand.call(app, line);
+		await showSessions(app as unknown as App);
+		expect(calls).toEqual(["command /model"]);
 	});
 });

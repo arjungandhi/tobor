@@ -1,6 +1,7 @@
 import { Editor, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatSize, type StagedImage } from "../attachments.js";
 import { ComposerCompletion, type PathCompletionSource } from "../path-completion.js";
+import { oneLineStyled } from "../sanitize.js";
 import { c, editorTheme } from "../theme.js";
 
 /** The prompt editor; its top border names what Enter will do. */
@@ -15,8 +16,9 @@ export class Composer extends Editor {
 
 	/** Set the label drawn into the top border. */
 	setLabel(label: string): void {
-		if (label === this.label) return;
-		this.label = label;
+		const clean = oneLineStyled(label);
+		if (clean === this.label) return;
+		this.label = clean;
 		this.invalidate();
 	}
 

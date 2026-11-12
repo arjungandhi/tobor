@@ -1,9 +1,12 @@
-import { type Component, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ToolBlock, ToolStatus } from "../replica.js";
+import { hardWrap, oneLine, sanitizeText } from "../sanitize.js";
 import { c } from "../theme.js";
 import { ImageList } from "./image-parts.js";
 
 const TAIL_LINES = 5;
+/** Most wrapped rows the expanded view draws per section (arguments, output); the rest collapses into a count. */
+const MAX_EXPANDED_ROWS = 300;
 
 const STATUS: Record<ToolStatus, string> = {
 	streaming: c.dim("…"),
@@ -15,19 +18,28 @@ const STATUS: Record<ToolStatus, string> = {
 	error: c.error("✗"),
 };
 
-/** One-line summary of a tool call's arguments. */
+/** One-line summary of a tool call's arguments; always safe for a single terminal row. */
 export function argsSummary(name: string, args: unknown): string {
 	if (args === undefined || args === null) return "";
-	if (typeof args !== "object") return String(args);
+	if (typeof args !== "object") return oneLine(String(args));
 	const record = args as Record<string, unknown>;
-	if (typeof record.command === "string") return `$ ${record.command.split("\n")[0]}`;
-	if (typeof record.path === "string") return record.path;
+	if (typeof record.command === "string") return oneLine(`$ ${record.command.split("\n")[0]}`);
+	if (typeof record.path === "string") return oneLine(record.path);
 	if (name === "task" && Array.isArray(record.tasks)) return `${record.tasks.length} worker(s)`;
-	return JSON.stringify(args);
+	return oneLine(JSON.stringify(args) ?? "");
 }
 
-function clean(text: string): string {
-	return stripTerminalSequences(text).replace(/\t/g, "    ").replace(/\r/g, "");
+/** Hard-wrap preformatted lines into rows (indentation kept), stopping at the row budget; returns how many source lines were cut. */
+function wrapRows(source: string[], inner: number, limit: number, out: string[], paint: (piece: string) => string): number {
+	let rows = 0;
+	for (const [i, line] of source.entries()) {
+		for (const piece of hardWrap(line, inner)) {
+			if (rows >= limit) return source.length - i;
+			out.push(paint(piece));
+			rows++;
+		}
+	}
+	return 0;
 }
 
 /** A tool call: status, name and argument summary, then the output tail; Enter (via the transcript) expands it. */
@@ -48,7 +60,7 @@ export class ToolSlotView implements Component {
 		const old = this.block;
 		this.block = block;
 		if (this.images.update(block.images)) this.cache = undefined;
-		if (old.status !== block.status || old.output !== block.output || old.args !== block.args || old.droppedLines !== block.droppedLines) {
+		if (old.name !== block.name || old.status !== block.status || old.output !== block.output || old.args !== block.args || old.droppedLines !== block.droppedLines) {
 			this.cache = undefined;
 		}
 	}
@@ -85,20 +97,24 @@ export class ToolSlotView implements Component {
 					: status === "streaming"
 						? c.dim(" preparing")
 						: "";
-		const lines = ["", row(`${STATUS[status]} ${c.bold(c.tool(name))} ${c.dim(clean(argsSummary(name, args)))}${label}`)];
+		const lines = ["", row(`${STATUS[status]} ${c.bold(c.tool(oneLine(name)))} ${c.dim(argsSummary(name, args))}${label}`)];
+		const more = (count: number): string => row(c.dim(`  ⋮ ${count} more line${count === 1 ? "" : "s"}`));
 		if (this.expanded && args !== undefined && !(typeof args === "object" && args !== null && "command" in args && Object.keys(args).length === 1)) {
-			for (const line of clean(JSON.stringify(args, null, 2)).split("\n")) {
-				for (const wrapped of wrapTextWithAnsi(c.dim(line), inner)) lines.push(row(` ${wrapped}`));
-			}
+			const cut = wrapRows(sanitizeText(JSON.stringify(args, null, 2) ?? "").split("\n"), inner, MAX_EXPANDED_ROWS, lines, (piece) => row(` ${c.dim(piece)}`));
+			if (cut > 0) lines.push(more(cut));
 		}
-		const text = clean(output).replace(/\n+$/, "");
+		const text = sanitizeText(output).replace(/\n+$/, "");
 		if (text !== "") {
 			const all = text.split("\n");
 			const shown = this.expanded ? all : all.slice(-TAIL_LINES);
 			const hidden = all.length - shown.length + (droppedLines ?? 0);
 			if (hidden > 0) lines.push(row(c.dim(`  ⋮ ${hidden} earlier line${hidden === 1 ? "" : "s"}${this.expanded ? "" : " · Enter expands"}`)));
-						for (const line of shown) {
-				for (const wrapped of this.expanded ? wrapTextWithAnsi(line, inner) : [line]) lines.push(row(` ${status === "error" ? c.error(wrapped) : wrapped}`));
+			const paint = (piece: string): string => row(` ${status === "error" ? c.error(piece) : piece}`);
+			if (this.expanded) {
+				const cut = wrapRows(shown, inner, MAX_EXPANDED_ROWS, lines, paint);
+				if (cut > 0) lines.push(more(cut));
+			} else {
+				for (const line of shown) lines.push(paint(line));
 			}
 		}
 		lines.push(...this.images.render(width));

@@ -21,4 +21,17 @@ describe("QuitGate", () => {
 		gate.press(10_000);
 		expect(gate.press(10_000 + 499)).toBe(true);
 	});
+
+	it("does not arm on a press made with arm = false", () => {
+		const gate = new QuitGate();
+		expect(gate.press(0, false)).toBe(false);
+		expect(gate.press(100)).toBe(false);
+		expect(gate.press(200)).toBe(true);
+	});
+
+	it("still quits on a second press that does not arm", () => {
+		const gate = new QuitGate();
+		expect(gate.press(0)).toBe(false);
+		expect(gate.press(100, false)).toBe(true);
+	});
 });

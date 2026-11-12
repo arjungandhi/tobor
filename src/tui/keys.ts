@@ -25,16 +25,25 @@ export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]):
 	return typeof binding === "string" ? matchesKey(data, binding) : binding.some((key) => matchesKey(data, key));
 }
 
+/** Flashed when a key or command needs a flow that cannot start because another one is running. */
+export const BUSY_MESSAGE = "busy — finish or cancel the current dialog or command first";
+
 /** Two `Ctrl+C` presses at most this far apart quit the TUI. */
 export const QUIT_WINDOW_MS = 500;
 
-/** Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`. */
+/** Two bare `Left` presses on an empty composer at most this far apart open the sessions list. */
+export const DOUBLE_LEFT_WINDOW_MS = 500;
+
+/**
+ * Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`.
+ * A press that already did something (closed a dialog, cleared the composer) passes `arm = false` and does not start the window.
+ */
 export class QuitGate {
 	private armedAt = Number.NEGATIVE_INFINITY;
 
-	press(now: number): boolean {
+	press(now: number, arm = true): boolean {
 		if (now - this.armedAt < QUIT_WINDOW_MS) return true;
-		this.armedAt = now;
+		if (arm) this.armedAt = now;
 		return false;
 	}
 }
@@ -43,7 +52,7 @@ export class QuitGate {
 export const HELP: readonly (readonly [string, string])[] = [
 	["Enter", "send prompt (while a run is going: steer the running agent)"],
 	["Ctrl+Q / Ctrl+Enter", "queue a follow-up for after the current turn"],
-	["Esc", "abort the run · worker view: back to the director · idle: sessions list (then workspaces)"],
+	["Esc", "clear the composer; when empty: abort the run · worker view: back · idle: sessions list (then workspaces)"],
 	["Shift+Enter / Alt+Enter", "new line in the composer"],
 	["Alt+Shift+A", "pending approvals: approve / approve for session / deny"],
 	["Alt+Shift+U", "pending questions from the agent (ask_user): answer or pick an option"],
@@ -59,7 +68,7 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],
 	["PgUp/PgDn, wheel", "scroll the transcript; Ctrl+Shift+F searches it"],
 	["?", "this help (empty composer)"],
-	["Ctrl+C", "clear the composer or close the dialog; twice within 0.5 s to quit"],
+	["Ctrl+C", "close the dialog or clear the composer; with neither to do, twice within 0.5 s quits"],
 	["Ctrl+D", "quit (when the composer is empty)"],
 ];
 

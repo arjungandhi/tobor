@@ -19,13 +19,13 @@ export function parseTiming(input: string): Pick<CreateScheduleRequest, "cron" |
 }
 
 /** Schedules: list, n create, d delete, e enable/disable, Enter edit. */
-export async function showSchedules(app: App): Promise<void> {
+export async function showSchedules(app: App, focus?: { id: string; index: number }): Promise<void> {
 	const client = app.api();
 	const schedules = await client.schedules();
 	const picked = await app.pick(
 		"schedules",
 		schedules.map((s) => ({ value: s, label: `${s.enabled ? c.success("●") : c.dim("○")} ${s.name}`, description: describe(s) })),
-		{ hint: "Enter edit · n new · e enable/disable · d delete · Esc close", keys: ["n", "e", "d"] },
+		{ hint: "Enter edit · n new · e enable/disable · d delete · Esc close", keys: ["n", "e", "d"], selected: initialIndex(schedules, focus) },
 	);
 	if (!picked) return;
 	const s = picked.value;
@@ -34,13 +34,14 @@ export async function showSchedules(app: App): Promise<void> {
 		return showSchedules(app);
 	}
 	if (!s) return;
+	const at = { id: s.id, index: schedules.findIndex((x) => x.id === s.id) };
 	if (picked.key === "e") {
 		await client.updateSchedule(s.id, { enabled: !s.enabled });
-		return showSchedules(app);
+		return showSchedules(app, at);
 	}
 	if (picked.key === "d") {
 		if (await app.confirm(`delete ${s.name}`, [`Delete schedule “${s.name}”? Its pending fire is cancelled.`])) await client.deleteSchedule(s.id);
-		return showSchedules(app);
+		return showSchedules(app, at);
 	}
 	return editSchedule(app, s.id);
 }
@@ -80,7 +81,7 @@ async function editSchedule(app: App, id: string, selected = 0): Promise<void> {
 			selected,
 		},
 	);
-	if (!picked) return showSchedules(app);
+	if (!picked) return showSchedules(app, { id, index: 0 });
 	if (picked.key === "r") {
 		await showRuns(app, s);
 		return editSchedule(app, id, selected);
@@ -146,14 +147,32 @@ async function showRuns(app: App, s: Schedule): Promise<void> {
 	]);
 }
 
+/** Cursor row: the schedule just acted on (or its nearest successor once it is gone), else the top. */
+function initialIndex(schedules: Schedule[], focus?: { id: string; index: number }): number {
+	if (!focus) return 0;
+	const i = schedules.findIndex((s) => s.id === focus.id);
+	return i >= 0 ? i : Math.max(0, Math.min(focus.index, schedules.length - 1));
+}
+
 async function createSchedule(app: App): Promise<void> {
 	const name = await app.ask("new schedule · name");
 	if (!name?.trim()) return;
-	const timing = await app.ask("new schedule · when", {
-		lines: [c.dim("a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)")],
-	});
-	if (!timing?.trim()) return;
-	const when = parseTiming(timing);
+	let when: Pick<CreateScheduleRequest, "cron" | "at">;
+	for (let problem = "", initial = ""; ; ) {
+		const timing = await app.ask("new schedule · when", {
+			initial,
+			lines: [c.dim("a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)"), ...(problem ? [c.error(problem)] : [])],
+		});
+		if (!timing?.trim()) return;
+		try {
+			when = parseTiming(timing);
+			break;
+		} catch (err) {
+			problem = (err as Error).message;
+			initial = timing;
+			app.flash(problem);
+		}
+	}
 	const cwd = await app.ask("new schedule · working directory", { initial: app.session.detail?.cwd ?? (await app.api().cwds()).roots[0] ?? "" });
 	if (!cwd?.trim()) return;
 	const prompt = await app.ask("new schedule · prompt");
