@@ -11,7 +11,7 @@ import { COMMANDS } from "./keys.js";
 export type PathToken = {
 	/** Exactly the text before the cursor that completion replaces (`@"my d`, `~/pro`, …). */
 	text: string;
-	/** Started with `@`: live attachment-style completion that drops the `@`. */
+	/** Started with `@`: live attachment-style completion; the `@` stays on the completed value as a mention marker. */
 	at: boolean;
 	/** Opened with a double quote (paths with spaces). */
 	quoted: boolean;
@@ -82,10 +82,11 @@ function dirPart(raw: string): string {
 	return raw.slice(0, raw.lastIndexOf("/") + 1);
 }
 
-/** The text inserted for `entry`: typed directory + name, `/` after dirs, double-quoted when it has whitespace or the token was quoted. */
+/** The text inserted for `entry`: typed directory + name, `/` after dirs, double-quoted when it has whitespace or the token was quoted; an `@` token keeps its `@` (outside the quote: `@"my dir/"`). */
 export function pathValue(token: PathToken, entry: PathCompleteResponse["entries"][number]): string {
 	const path = `${dirPart(token.raw)}${entry.name}${entry.type === "dir" ? "/" : ""}`;
-	return token.quoted || WHITESPACE.test(path) ? `"${path}"` : path;
+	const value = token.quoted || WHITESPACE.test(path) ? `"${path}"` : path;
+	return token.at ? `@${value}` : value;
 }
 
 /** Autocomplete items for a completion response, dirs and files as the host listed them. */

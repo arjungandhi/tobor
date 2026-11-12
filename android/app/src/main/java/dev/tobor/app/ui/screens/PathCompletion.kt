@@ -27,13 +27,16 @@ fun findAtToken(text: String, cursor: Int): Int? {
 }
 
 /**
- * Replaces the `@` token ending at [cursor] (from the `@` to the cursor) with [path], leaving no `@` behind and the
- * cursor right after the inserted text. With no `@` token before the cursor, [path] is inserted at the cursor.
+ * Replaces the `@` token ending at [cursor] (from the `@` to the cursor) with `@` + [path], so the `@` stays as a
+ * mention marker, and puts the cursor right after the inserted text. With no `@` token before the cursor, [path] is
+ * inserted at the cursor as is.
  */
 fun replaceAtToken(text: String, cursor: Int, path: String): TextAndCursor {
     val end = cursor.coerceIn(0, text.length)
-    val start = findAtToken(text, end) ?: end
-    return TextAndCursor(text.substring(0, start) + path + text.substring(end), start + path.length)
+    val at = findAtToken(text, end)
+    val start = at ?: end
+    val inserted = if (at != null) "@$path" else path
+    return TextAndCursor(text.substring(0, start) + inserted + text.substring(end), start + inserted.length)
 }
 
 /** Splits a raw prefix at its last `/`: the directory part (with trailing slash, possibly empty) and the base being typed. */

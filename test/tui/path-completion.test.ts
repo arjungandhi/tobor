@@ -54,16 +54,36 @@ describe("pathValue", () => {
 
 	it("keeps the ~ of a bare ~ token (the host lists the home directory)", () => {
 		expect(pathValue(token("~"), { name: "Documents", type: "dir" })).toBe("~/Documents/");
-		expect(pathValue(token("@~"), { name: "notes.txt", type: "file" })).toBe("~/notes.txt");
+		expect(pathValue(token("@~"), { name: "notes.txt", type: "file" })).toBe("@~/notes.txt");
 	});
 
-	it("drops the @ and wraps values containing whitespace in quotes", () => {
-		expect(pathValue(token("@src/my"), { name: "my dir", type: "dir" })).toBe('"src/my dir/"');
+	it("keeps the @ on @ tokens and wraps values containing whitespace in quotes (@ outside the quote)", () => {
+		expect(pathValue(token("@src/tu"), { name: "tui", type: "dir" })).toBe("@src/tui/");
+		expect(pathValue(token("@src/ap"), { name: "app.ts", type: "file" })).toBe("@src/app.ts");
+		expect(pathValue(token("@src/my"), { name: "my dir", type: "dir" })).toBe('@"src/my dir/"');
+		expect(pathValue(token("src/my"), { name: "my dir", type: "dir" })).toBe('"src/my dir/"');
+	});
+
+	it("round-trips: the token after completing an @dir is the dir with at=true, so completion chains", () => {
+		const first = pathValue(token("see @src/tu"), { name: "tui", type: "dir" });
+		expect(first).toBe("@src/tui/");
+		const next = extractPathToken(`see ${first}`);
+		expect(next).toEqual({ text: "@src/tui/", at: true, quoted: false, raw: "src/tui/" });
+		expect(pathValue(next, { name: "path-completion.ts", type: "file" })).toBe("@src/tui/path-completion.ts");
+		expect(routeCompletion(`see ${first}p`, 0, false).path).toEqual({ text: "@src/tui/p", at: true, quoted: false, raw: "src/tui/p" });
+	});
+
+	it("round-trips a quoted @dir (cursor sits before the closing quote)", () => {
+		const value = pathValue(token('see @"my d'), { name: "my dir", type: "dir" });
+		expect(value).toBe('@"my dir/"');
+		// cursor before the closing quote: the text before the cursor is `@"my dir/`
+		expect(extractPathToken(`see ${value.slice(0, -1)}`)).toEqual({ text: '@"my dir/', at: true, quoted: true, raw: "my dir/" });
+		expect(pathValue(extractPathToken('see @"my dir/f'), { name: "file", type: "file" })).toBe('@"my dir/file"');
 	});
 
 	it("preserves a leading quote", () => {
 		expect(pathValue(token('"src/a'), { name: "app.ts", type: "file" })).toBe('"src/app.ts"');
-		expect(pathValue(token('@"a'), { name: "b c", type: "file" })).toBe('"b c"');
+		expect(pathValue(token('@"a'), { name: "b c", type: "file" })).toBe('@"b c"');
 	});
 
 	it("keeps the typed directory when it has spaces", () => {
@@ -83,6 +103,10 @@ describe("pathItems", () => {
 		expect(pathItems(extractPathToken("src/t"), response)).toEqual([
 			{ value: "src/tui/", label: "tui/" },
 			{ value: "src/types.ts", label: "types.ts" },
+		]);
+		expect(pathItems(extractPathToken("@src/t"), response)).toEqual([
+			{ value: "@src/tui/", label: "tui/" },
+			{ value: "@src/types.ts", label: "types.ts" },
 		]);
 	});
 });
@@ -149,7 +173,7 @@ describe("ComposerCompletion", () => {
 		const out = await make(calls).getSuggestions(["see @s"], 0, 6, { signal });
 		expect(calls).toEqual(["s"]);
 		expect(out?.prefix).toBe("@s");
-		expect(out?.items.map((i) => i.value)).toEqual(["src/", "setup.sh"]);
+		expect(out?.items.map((i) => i.value)).toEqual(["@src/", "@setup.sh"]);
 	});
 
 	it("completes on Tab only when forced", async () => {
@@ -204,7 +228,7 @@ describe("ComposerCompletion", () => {
 		});
 		const out = await provider.getSuggestions(["see @s"], 0, 6, { signal });
 		expect(calls).toEqual([[undefined, "s"]]);
-		expect(out?.items.map((i) => i.value)).toEqual(["src/", "setup.sh"]);
+		expect(out?.items.map((i) => i.value)).toEqual(["@src/", "@setup.sh"]);
 		expect((await provider.getSuggestions(["see s"], 0, 5, { signal, force: true }))?.prefix).toBe("s");
 		expect(provider.shouldTriggerFileCompletion()).toBe(true);
 		expect(new ComposerCompletion({ target: () => ({ kind: "default" }), api: () => undefined }).shouldTriggerFileCompletion()).toBe(false);
@@ -243,12 +267,59 @@ describe("ComposerCompletion", () => {
 		expect(make([]).triggerCharacters).toEqual(["@"]);
 	});
 
-	it("applies path items: replaces the @token, leaves dirs open, spaces after @files", async () => {
+	it("applies path items: replaces the @token but keeps the @, leaves dirs open, spaces after @files", async () => {
 		const provider = make([]);
 		const out = await provider.getSuggestions(["see @s now"], 0, 6, { signal });
 		const [dir, file] = out?.items ?? [];
-		expect(provider.applyCompletion(["see @s now"], 0, 6, dir!, "@s")).toEqual({ lines: ["see src/ now"], cursorLine: 0, cursorCol: 8 });
-		expect(provider.applyCompletion(["see @s"], 0, 6, file!, "@s")).toEqual({ lines: ["see setup.sh "], cursorLine: 0, cursorCol: 13 });
+		expect(provider.applyCompletion(["see @s now"], 0, 6, dir!, "@s")).toEqual({ lines: ["see @src/ now"], cursorLine: 0, cursorCol: 9 });
+		expect(provider.applyCompletion(["see @s"], 0, 6, file!, "@s")).toEqual({ lines: ["see @setup.sh "], cursorLine: 0, cursorCol: 14 });
+	});
+
+	it("keeps @ and chains: after completing an @dir the next keystroke completes inside it", async () => {
+		const calls: string[] = [];
+		const provider = make(calls);
+		const out = await provider.getSuggestions(["see @sr"], 0, 7, { signal });
+		const applied = provider.applyCompletion(["see @sr"], 0, 7, out!.items[0]!, out!.prefix);
+		expect(applied).toEqual({ lines: ["see @src/"], cursorLine: 0, cursorCol: 9 });
+		// the user types `t` right after the dir
+		const line = `${applied.lines[0]}t`;
+		const next = await provider.getSuggestions([line], 0, line.length, { signal });
+		expect(calls).toEqual(["sr", "src/t"]);
+		expect(next?.prefix).toBe("@src/t");
+		expect(next?.items.map((i) => i.value)).toEqual(["@src/src/", "@src/setup.sh"]);
+	});
+
+	it("applies quoted @ values: @ stays outside the quote, cursor before the closing quote for dirs, closing quote deduped", async () => {
+		const provider = new ComposerCompletion({
+			target: () => ({ kind: "session", id: 1 }),
+			api: () =>
+				({
+					complete: async () => ({
+						dir: "/w",
+						entries: [
+							{ name: "my dir", type: "dir" },
+							{ name: "my file.txt", type: "file" },
+						],
+					}),
+				}) as unknown as ApiClient,
+		});
+		const out = await provider.getSuggestions(['x @"my'], 0, 6, { signal });
+		expect(out?.prefix).toBe('@"my');
+		const [dir, file] = out!.items;
+		expect(dir!.value).toBe('@"my dir/"');
+		expect(provider.applyCompletion(['x @"my'], 0, 6, dir!, '@"my')).toEqual({ lines: ['x @"my dir/"'], cursorLine: 0, cursorCol: 11 });
+		// an auto-closed quote after the cursor is not doubled
+		expect(provider.applyCompletion(['x @"my"'], 0, 6, dir!, '@"my')).toEqual({ lines: ['x @"my dir/"'], cursorLine: 0, cursorCol: 11 });
+		// a quoted @file is finished: trailing space after the closing quote
+		expect(provider.applyCompletion(['x @"my"'], 0, 6, file!, '@"my')).toEqual({ lines: ['x @"my file.txt" '], cursorLine: 0, cursorCol: 17 });
+		// text after the closing quote survives
+		expect(provider.applyCompletion(['x @"my" y'], 0, 6, file!, '@"my')).toEqual({ lines: ['x @"my file.txt"  y'], cursorLine: 0, cursorCol: 17 });
+	});
+
+	it("does not complete or touch /attach arguments, @ included", async () => {
+		const calls: string[] = [];
+		expect(await make(calls).getSuggestions(["/attach @s"], 0, 10, { signal })).toBeNull();
+		expect(calls).toEqual([]);
 	});
 
 	it("applies a Tab file without a trailing space and a quoted dir with the cursor inside the quotes", async () => {
