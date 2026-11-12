@@ -628,7 +628,8 @@ export class App {
 			case "consume":
 				return true;
 			case "moveSelection":
-				return s.moveSelection(action.delta);
+				// Entering (0) may fail and then passes through; while navigating, Up/Down must not leak to composer history.
+				return s.moveSelection(action.delta) || action.delta !== 0;
 			case "activateSelection":
 				s.activateSelection();
 				return true;
