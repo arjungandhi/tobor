@@ -615,7 +615,8 @@ export class App {
 			case "model":
 				return pickModel(this);
 			case "artifacts":
-				return showArtifacts(this);
+				if (arg && arg !== "all") throw new Error("usage: /artifacts [all]");
+				return showArtifacts(this, arg === "all" ? "all" : undefined);
 			case "schedules":
 				return showSchedules(this);
 			case "files":

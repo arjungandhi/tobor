@@ -280,7 +280,10 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		return send(res, 200, { ok: true, auth: { source: "oauth", expiresAt: Date.now() + 3_600_000, oauth: true } });
 	}
 	if (path === "/api/cwds") return send(res, 200, { roots: ["/work"], recent: [CWD] });
-	if (path === "/api/artifacts") return send(res, 200, [artifact]);
+	if (path === "/api/artifacts") {
+		const session = url.searchParams.get("session");
+		return send(res, 200, session === null || Number(session) === SESSION_ID ? [artifact] : []);
+	}
 	if (m(/^\/api\/artifacts\/demo\/flaky-test-report\/revisions$/)) return send(res, 200, [artifact.latest, { ...artifact.latest, rev: "r3", revision: 1, url: "http://127.0.0.1:7880/art/r/r3", pdfUrl: `${base}/art/r/r3.pdf` }]);
 	if (m(/^\/art\/r\/\w+\.pdf$/)) {
 		res.writeHead(200, { "content-type": "application/pdf" });

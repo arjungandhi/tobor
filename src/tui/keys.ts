@@ -71,7 +71,7 @@ export const COMMANDS: readonly { name: string; description: string; argumentHin
 	{ name: "questions", description: "questions the agent asked you" },
 	{ name: "workers", description: "workers of this session" },
 	{ name: "model", description: "change the session's model" },
-	{ name: "artifacts", description: "published artifacts" },
+	{ name: "artifacts", description: "published artifacts (default: this session)", argumentHint: "[all]" },
 	{ name: "schedules", description: "scheduled prompts" },
 	{ name: "files", description: "edit agent files in .tobor/" },
 	{ name: "login", description: "log in to a model provider" },

@@ -206,9 +206,13 @@ export class ApiClient {
 		return this.request("GET", "/api/cwds");
 	}
 
-	/** `GET /api/artifacts`. */
-	artifacts(project?: string): Promise<ListArtifactsResponse> {
-		return this.request("GET", project ? `/api/artifacts?project=${encodeURIComponent(project)}` : "/api/artifacts");
+	/** `GET /api/artifacts`, optionally limited to a project and/or to the artifacts a session (or its workers) published. */
+	artifacts(opts: { project?: string; session?: SessionId } = {}): Promise<ListArtifactsResponse> {
+		const query = new URLSearchParams();
+		if (opts.project) query.set("project", opts.project);
+		if (opts.session !== undefined) query.set("session", String(opts.session));
+		const qs = query.toString();
+		return this.request("GET", qs ? `/api/artifacts?${qs}` : "/api/artifacts");
 	}
 
 	/** `GET /api/artifacts/:projectId/:slug/revisions`. */

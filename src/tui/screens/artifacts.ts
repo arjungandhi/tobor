@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { ArtifactRevision } from "../../api/types.js";
+import type { ArtifactRevision, SessionId } from "../../api/types.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
 
@@ -11,19 +11,33 @@ export function pdfPath(rev: ArtifactRevision, dir = join(homedir(), "Downloads"
 	return join(dir, `${safe}.pdf`);
 }
 
-/** Artifacts feed: Enter prints the viewer URLs, `p` saves the latest revision's PDF (prefs `pdf_dir`, default ~/Downloads), `v` lists revisions. */
-export async function showArtifacts(app: App): Promise<void> {
+/** The session whose artifacts `/artifacts` shows: the open session, or a worker's parent. Undefined when none is open. */
+function currentSessionId(app: App): SessionId | undefined {
+	const target = app.session.target;
+	return target?.worker ? target.worker.parent.id : target?.id;
+}
+
+/** Artifacts feed, by default of the open session (`a` toggles to all, `s` back): Enter prints the viewer URLs, `p` saves the latest revision's PDF (prefs `pdf_dir`, default ~/Downloads), `v` lists revisions. */
+export async function showArtifacts(app: App, scope?: "session" | "all"): Promise<void> {
 	const client = app.api();
-	const artifacts = await client.artifacts();
+	const sessionId = currentSessionId(app);
+	const inSession = scope !== "all" && sessionId !== undefined;
+	const artifacts = await client.artifacts(inSession ? { session: sessionId } : {});
+	const toggle = inSession ? "a: all artifacts" : sessionId !== undefined ? "s: this session" : undefined;
 	const picked = await app.pick(
-		"artifacts",
+		inSession ? `artifacts · #${sessionId}` : "artifacts · all",
 		artifacts.map((a) => ({
 			value: a,
 			label: a.title,
 			description: `${a.projectId}/${a.slug} · r${a.latest.revision} of ${a.revisions} · ${new Date(a.latest.createdAt).toLocaleString()}`,
 		})),
-		{ hint: "Enter URL · p download PDF · v revisions · Esc close", keys: ["p", "v"] },
+		{
+			hint: `Enter URL · p download PDF · v revisions${toggle ? ` · ${toggle}` : ""} · Esc close`,
+			keys: toggle ? ["p", "v", inSession ? "a" : "s"] : ["p", "v"],
+		},
 	);
+	if (picked?.key === "a" && inSession) return showArtifacts(app, "all");
+	if (picked?.key === "s" && !inSession && sessionId !== undefined) return showArtifacts(app, "session");
 	if (!picked?.value) return;
 	const artifact = picked.value;
 	if (picked.key === "p") {
