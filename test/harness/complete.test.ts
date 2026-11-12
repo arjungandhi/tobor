@@ -97,14 +97,14 @@ describe("completePath", () => {
 	it("returns nothing through a symlink that escapes the roots", async () => {
 		writeFileSync(join(outside, "secret"), "");
 		symlinkSync(outside, join(root, "escape"));
-		expect((await completePath("escape/", root, [root])).entries).toEqual([]);
-		expect((await completePath("escape/s", root, [root])).entries).toEqual([]);
+		expect(await completePath("escape/", root, [root])).toEqual({ dir: "", entries: [] });
+		expect(await completePath("escape/s", root, [root])).toEqual({ dir: "", entries: [] });
 	});
 
 	it("returns nothing for a missing or non-directory parent", async () => {
 		writeFileSync(join(root, "file"), "");
-		expect(await completePath("nope/x", root, [root])).toEqual({ dir: join(root, "nope"), entries: [] });
-		expect((await completePath("file/", root, [root])).entries).toEqual([]);
+		expect(await completePath("nope/x", root, [root])).toEqual({ dir: "", entries: [] });
+		expect(await completePath("file/", root, [root])).toEqual({ dir: "", entries: [] });
 	});
 
 	it("caps results at 50", async () => {

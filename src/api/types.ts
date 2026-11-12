@@ -427,7 +427,7 @@ export interface PathCompleteEntry {
 
 /** `GET /api/sessions/:id/complete?prefix=…`. */
 export interface PathCompleteResponse {
-	/** Absolute directory that was listed. */
+	/** Absolute directory that was listed; empty when nothing was listed (missing, not a directory or outside the roots). */
 	dir: string;
 	/** Matching entries, directories first then alphabetical, capped. */
 	entries: PathCompleteEntry[];

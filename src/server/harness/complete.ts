@@ -9,7 +9,7 @@ export const COMPLETE_LIMIT = 50;
 
 /**
  * List the entries that complete `prefix` (a raw path token: empty, relative to `cwd`, absolute or `~/…`).
- * Best-effort: a parent that is missing, not a directory or outside the (realpath'd) `roots` yields no entries, never an error.
+ * Best-effort: a parent that is missing, not a directory or outside the (realpath'd) `roots` yields no entries (and an empty `dir`, so a denied path reveals nothing), never an error.
  */
 export async function completePath(prefix: string, cwd: string, roots: readonly string[]): Promise<PathCompleteResponse> {
 	// Split the raw token (not the resolved path, which would swallow `.`, `..` and a trailing slash).
@@ -22,9 +22,9 @@ export async function completePath(prefix: string, cwd: string, roots: readonly 
 	let real: string;
 	try {
 		real = await realpath(parent);
-		if (!(await stat(real)).isDirectory()) return { dir: parent, entries: [] };
+		if (!(await stat(real)).isDirectory()) return { dir: "", entries: [] };
 	} catch {
-		return { dir: parent, entries: [] };
+		return { dir: "", entries: [] };
 	}
 	let allowed = false;
 	for (const root of roots) {
@@ -34,7 +34,7 @@ export async function completePath(prefix: string, cwd: string, roots: readonly 
 			break;
 		}
 	}
-	if (!allowed) return { dir: parent, entries: [] };
+	if (!allowed) return { dir: "", entries: [] };
 
 	const names = await readdir(real).catch(() => [] as string[]);
 	const wanted = base.toLowerCase();
