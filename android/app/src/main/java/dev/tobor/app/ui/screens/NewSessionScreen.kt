@@ -38,6 +38,7 @@ import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,6 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,6 +63,7 @@ import dev.tobor.app.ui.theme.RuleLabel
 import dev.tobor.app.ui.theme.StripeBand
 import dev.tobor.app.ui.theme.ToborColors
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -111,7 +117,19 @@ fun NewSessionScreen(
 ) {
     val scope = rememberCoroutineScope()
     var cwd by remember { mutableStateOf("") }
-    var prompt by remember { mutableStateOf("") }
+    var prompt by remember { mutableStateOf(TextFieldValue("")) }
+    var pathPickerOpen by remember { mutableStateOf(false) }
+    val promptFocus = remember { FocusRequester() }
+    var refocus by remember { mutableIntStateOf(0) }
+    LaunchedEffect(refocus) {
+        if (refocus > 0) {
+            delay(50) // let the sheet's window release focus first
+            try {
+                promptFocus.requestFocus()
+            } catch (_: IllegalStateException) {
+            }
+        }
+    }
     var model by remember { mutableStateOf("") }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
     var approvalMode by remember { mutableStateOf<String?>(null) }
@@ -147,7 +165,7 @@ fun NewSessionScreen(
         }
     }
 
-    val canSubmit = cwd.isNotBlank() && prompt.isNotBlank() && !submitting && !pendingImages.loading
+    val canSubmit = cwd.isNotBlank() && prompt.text.isNotBlank() && !submitting && !pendingImages.loading
 
     Surface(color = ToborColors.bg, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().fillMaxSize()) {
@@ -264,8 +282,14 @@ fun NewSessionScreen(
                 RuleLabel("prompt")
                 OutlinedTextField(
                     value = prompt,
-                    onValueChange = { prompt = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    onValueChange = { next ->
+                        // `@` typed at a token boundary opens the path picker; the typed `@` stays until a path replaces it.
+                        if (typedAtTrigger(prompt.text, next.text, next.selection.end) != null && next.selection.collapsed) {
+                            pathPickerOpen = true
+                        }
+                        prompt = next
+                    },
+                    modifier = Modifier.fillMaxWidth().focusRequester(promptFocus),
                     textStyle = fieldTextStyle,
                     minLines = 4,
                     placeholder = { Text("what needs doing?", style = fieldTextStyle) },
@@ -300,7 +324,7 @@ fun NewSessionScreen(
                             try {
                                 val id = api.createSession(
                                     cwd.trim(),
-                                    prompt.trim(),
+                                    prompt.text.trim(),
                                     model.trim().ifEmpty { null },
                                     null,
                                     approvalMode,
@@ -339,5 +363,21 @@ fun NewSessionScreen(
                 }
             }
         }
+    }
+    if (pathPickerOpen) {
+        PathPickerSheet(
+            // Re-read each fetch: the lambda tracks the latest recomposition, so edits to the cwd field are honoured.
+            fetch = { api.completeAt(cwd.ifBlank { null }, it) },
+            onInsert = { path ->
+                val r = replaceAtToken(prompt.text, prompt.selection.end, path)
+                prompt = TextFieldValue(r.text, TextRange(r.cursor))
+                pathPickerOpen = false
+                refocus++
+            },
+            onDismiss = {
+                pathPickerOpen = false
+                refocus++
+            },
+        )
     }
 }
