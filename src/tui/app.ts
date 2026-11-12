@@ -516,6 +516,8 @@ export class App {
 	}
 
 	private handleKey(data: string): boolean {
+		// Kitty keyboard protocol reports releases as separate events; only presses (and repeats) act.
+		if (isKeyRelease(data)) return false;
 		const s = this.session;
 		const composer = s.composer;
 		if (s.transcript.selecting) {
