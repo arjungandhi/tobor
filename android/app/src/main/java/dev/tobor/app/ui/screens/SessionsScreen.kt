@@ -658,13 +658,7 @@ private fun SessionRow(s: SessionSummary, onClick: () -> Unit, onLongClick: (Flo
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            String.format(Locale.US, "%03d", s.id),
-            fontFamily = FontFamilies.SpecialElite,
-            fontSize = 16.sp,
-            color = ToborColors.gold,
-        )
-        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(
                 s.title.ifBlank { "untitled" },
                 fontFamily = FontFamilies.SpecialElite,
