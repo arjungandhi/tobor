@@ -165,6 +165,10 @@ class ToborApi(baseUrl: String) {
 
     suspend fun cwds(): CwdsResponse = get("/api/cwds").decode()
 
+    /** Path completion for [prefix] (raw token: empty, relative to the session cwd, absolute or `~/…`). Never errors outside the roots; entries are just empty. */
+    suspend fun complete(sessionId: Long, prefix: String): PathCompleteResponse =
+        get("/api/sessions/$sessionId/complete", mapOf("prefix" to prefix)).decode()
+
     suspend fun schedules(): List<Schedule> =
         get("/api/schedules").decode(ListSerializer(Schedule.serializer()))
 

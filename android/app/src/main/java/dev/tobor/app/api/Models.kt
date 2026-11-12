@@ -240,6 +240,17 @@ data class CwdsResponse(
     val recent: List<String> = emptyList(),
 )
 
+/** One completion candidate; [type] is `dir` or `file`. */
+@Serializable
+data class PathCompleteEntry(val name: String, val type: String)
+
+/** Answer of `GET /api/sessions/:id/complete`: the resolved [dir] and its matching [entries] (dirs first, capped). */
+@Serializable
+data class PathCompleteResponse(
+    val dir: String = "",
+    val entries: List<PathCompleteEntry> = emptyList(),
+)
+
 /** `status`: running | done | failed | skipped_misfire | skipped_overlap. [notice] is the reason for skips or failures. */
 @Serializable
 data class ScheduleRun(
