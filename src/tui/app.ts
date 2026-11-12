@@ -723,6 +723,16 @@ export class App {
 		await this.exclusive(() => this.runCommand(line));
 	}
 
+	/**
+	 * Run a slash command as a continuation of the flow already running, e.g. one chosen from a picker that flow opened.
+	 * Only call from within an exclusive flow: `command` would see `flowActive` and silently drop it. A flow started
+	 * outside `exclusive` (startup) gets the normal guarded `command`, so the command still holds the flow lock.
+	 */
+	async continueCommand(line: string): Promise<void> {
+		if (!this.flowActive) return this.command(line);
+		await this.runCommand(line);
+	}
+
 	private async runCommand(line: string): Promise<void> {
 		const [name = "", ...rest] = line.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
