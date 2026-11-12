@@ -2,6 +2,7 @@ import type { SessionState, SessionSummary } from "../../api/types.js";
 import type { App } from "../app.js";
 import { c } from "../theme.js";
 import { startSession } from "./new-session.js";
+import { showSchedules } from "./schedules.js";
 import { showWorkspaces } from "./workspaces.js";
 
 const STATE: Record<SessionState, (text: string) => string> = {
@@ -21,7 +22,7 @@ function when(ms: number, now: number): string {
 }
 
 /**
- * Ctrl+L: sessions with state tag and cost; Enter opens, n new, r rename, a archive/unarchive, x delete, h archived.
+ * Ctrl+L: sessions with state tag and cost; Enter opens, n new, r rename, a archive/unarchive, x delete, h archived, s schedules.
  * `nav` is the Esc meaning: "close" (mid-session: back to where you were) or "up" (the hierarchy workspace → sessions →
  * session: startup, or Esc from an idle session; Esc goes back to the workspace picker, from the archived view to the
  * active list).
@@ -38,8 +39,8 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	}));
 	const current = app.session.target?.id;
 	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`, items, {
-		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · h ${archived ? "active" : "archived"} · Esc ${nav === "up" ? "back" : "close"}`,
-		keys: ["n", "r", "a", "x", "h"],
+		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · s schedules · h ${archived ? "active" : "archived"} · Esc ${nav === "up" ? "back" : "close"}`,
+		keys: ["n", "r", "a", "x", "s", "h"],
 		selected: initialIndex(sessions, current ?? app.lastSessionId(), focus),
 	});
 	if (!picked) {
@@ -54,6 +55,9 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 			if (!started && nav === "up" && app.session.target?.id === current) return showSessions(app, archived, undefined, nav);
 			return;
 		}
+		case "s":
+			await showSchedules(app);
+			return showSessions(app, archived, undefined, nav);
 		case "h":
 			return showSessions(app, !archived, undefined, nav);
 		case "enter":
