@@ -67,7 +67,16 @@ export class SessionScreen {
 	private answering = false;
 
 	constructor(private readonly app: App) {
-		this.composer = new Composer(app.tui);
+		this.composer = new Composer(app.tui, {
+			api: () => {
+				try {
+					return app.api();
+				} catch {
+					return undefined;
+				}
+			},
+			sessionId: () => (this.target && !this.target.worker ? this.target.id : undefined),
+		});
 		this.questions = new QuestionPanel(app, () => this.target);
 		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());
 		this.composer.onSubmit = (text) => this.submitted(text);

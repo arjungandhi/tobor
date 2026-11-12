@@ -1,44 +1,16 @@
-import {
-	type AutocompleteSuggestions,
-	CombinedAutocompleteProvider,
-	Editor,
-	type TUI,
-	truncateToWidth,
-	visibleWidth,
-} from "@earendil-works/pi-tui";
+import { Editor, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatSize, type StagedImage } from "../attachments.js";
-import { COMMANDS } from "../keys.js";
+import { ComposerCompletion, type PathCompletionSource } from "../path-completion.js";
 import { c, editorTheme } from "../theme.js";
-
-/** Slash-command completion only; the composer edits prompts for a remote host, so local file paths never complete. */
-class SlashCommands extends CombinedAutocompleteProvider {
-	constructor() {
-		super([...COMMANDS], "/", null);
-	}
-
-	override async getSuggestions(
-		lines: string[],
-		cursorLine: number,
-		cursorCol: number,
-		options: { signal: AbortSignal; force?: boolean },
-	): Promise<AutocompleteSuggestions | null> {
-		if (cursorLine !== 0 || !(lines[0] ?? "").trimStart().startsWith("/")) return null;
-		return super.getSuggestions(lines, cursorLine, cursorCol, { signal: options.signal });
-	}
-
-	override shouldTriggerFileCompletion(): boolean {
-		return false;
-	}
-}
 
 /** The prompt editor; its top border names what Enter will do. */
 export class Composer extends Editor {
 	private label = "";
 	private staged: StagedImage[] = [];
 
-	constructor(tui: TUI) {
+	constructor(tui: TUI, source: PathCompletionSource) {
 		super(tui, editorTheme, { paddingX: 1 });
-		this.setAutocompleteProvider(new SlashCommands());
+		this.setAutocompleteProvider(new ComposerCompletion(source));
 	}
 
 	/** Set the label drawn into the top border. */
