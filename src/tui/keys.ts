@@ -26,7 +26,7 @@ export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]):
 }
 
 /** Flashed when a key or command needs a flow that cannot start because another one is running. */
-export const BUSY_MESSAGE = "busy — finish the open dialog";
+export const BUSY_MESSAGE = "busy — finish or cancel the current dialog or command first";
 
 /** Two `Ctrl+C` presses at most this far apart quit the TUI. */
 export const QUIT_WINDOW_MS = 500;
@@ -68,7 +68,7 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],
 	["PgUp/PgDn, wheel", "scroll the transcript; Ctrl+Shift+F searches it"],
 	["?", "this help (empty composer)"],
-	["Ctrl+C", "clear the composer or close the dialog; twice within 0.5 s to quit"],
+	["Ctrl+C", "close the dialog or clear the composer; with neither to do, twice within 0.5 s quits"],
 	["Ctrl+D", "quit (when the composer is empty)"],
 ];
 
