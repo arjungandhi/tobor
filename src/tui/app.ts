@@ -45,7 +45,8 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { COMMANDS, DOUBLE_LEFT_WINDOW_MS, HELP, KEYS, matchesBinding, QuitGate } from "./keys.js";
+import { COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
+import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
 import { showArtifacts } from "./screens/artifacts.js";
@@ -140,6 +141,9 @@ export class Panel implements Component, Focusable {
 		return out;
 	}
 }
+
+/** Flashed when a key or command needs a flow that cannot start because another one is running. */
+export const BUSY_MESSAGE = "busy — finish the open dialog";
 
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 const COMMAND_PREFIX = "cmd:";
@@ -579,7 +583,6 @@ export class App {
 		}
 		// Releases are never ours (pi-tui still sees them); matchesKey() would match them as a press.
 		if (isKeyRelease(data)) return undefined;
-		if (this.modals.length > 0) return undefined;
 		this.repeating = isKeyRepeat(data);
 		try {
 			return this.handleKey(data) ? { consume: true } : undefined;
@@ -588,90 +591,114 @@ export class App {
 		}
 	}
 
-	/** `Ctrl+C`: the second press within the window quits from any screen; the first closes the top dialog or clears the composer. */
+	/** `Ctrl+C`: the second press within the window quits from any screen; the first closes the top dialog or clears the composer (only a press with nothing to do arms the gate). */
 	private interrupt(): void {
-		if (this.quitGate.press(Date.now())) return this.quit();
+		const composer = this.session.composer;
 		const top = this.modals.at(-1);
-		if (top) top.cancel();
-		else this.session.composer.setText("");
-		this.flash("Ctrl+C again to quit");
+		const action = routeInterrupt({ modalOpen: top !== undefined, composerEmpty: composer.getText() === "" });
+		if (this.quitGate.press(Date.now(), action.arm)) return this.quit();
+		if (action.type === "closeModal") top?.cancel();
+		else if (action.type === "clearComposer") composer.setText("");
+		if (action.arm) this.flash("Ctrl+C again to quit");
 	}
 
+	/** Thin interpreter: snapshot the state, let the router decide (`router.ts`), run the action. True when the key is consumed. */
 	private handleKey(data: string): boolean {
 		const s = this.session;
 		const composer = s.composer;
-		if (s.transcript.selecting) {
-			if (matchesKey(data, "up")) s.moveSelection(-1);
-			else if (matchesKey(data, "down")) s.moveSelection(1);
-			else if (this.repeating) return true;
-			else if (matchesKey(data, "enter")) s.activateSelection();
-			else {
-				s.clearSelection();
-				return matchesKey(data, "escape");
-			}
-			return true;
-		}
-		if (composer.isShowingAutocomplete()) return false;
-		const empty = composer.getText() === "";
-		if (empty && this.answerKey(data)) return true;
-		if (empty && matchesKey(data, "left")) {
-			if (this.repeating) return false;
-			const now = Date.now();
-			if (this.lastLeft > 0 && now - this.lastLeft <= DOUBLE_LEFT_WINDOW_MS) {
-				this.lastLeft = 0;
-				return this.do(() => showSessions(this));
-			}
-			this.lastLeft = now;
-			return false;
-		}
-		this.lastLeft = 0;
-		if (matchesKey(data, KEYS.navigate) && empty) return s.moveSelection(0);
-		if (matchesKey(data, KEYS.help) && empty) return this.do(() => this.help());
-		if (matchesBinding(data, KEYS.exit) && empty) {
-			if (!this.repeating) this.quit();
-			return true;
-		}
-		if (matchesKey(data, KEYS.abort)) {
-			if (this.repeating) return true;
-			if (s.target?.worker) {
-				this.openSession(s.target.worker.parent.id);
+		const action = routeKey(data, {
+			modalOpen: this.modals.length > 0,
+			selecting: s.transcript.selecting,
+			autocompleteOpen: composer.isShowingAutocomplete(),
+			composerEmpty: composer.getText() === "",
+			hasStagedImages: composer.stagedImages().length > 0,
+			workerView: s.target?.worker !== undefined,
+			state: s.state(),
+			hasTarget: s.target !== undefined,
+			questionOptions: (s.questions.current()?.options?.length ?? 0) > 0,
+			repeating: this.repeating,
+			busy: this.flowActive,
+			now: Date.now(),
+			lastLeft: this.lastLeft,
+		});
+		if (action.type === "armLeft") this.lastLeft = Date.now();
+		else if (action.type !== "passLeft") this.lastLeft = 0;
+		switch (action.type) {
+			case "pass":
+			case "armLeft":
+			case "passLeft":
+				return false;
+			case "consume":
 				return true;
+			case "moveSelection":
+				return s.moveSelection(action.delta);
+			case "activateSelection":
+				s.activateSelection();
+				return true;
+			case "clearSelection":
+				s.clearSelection();
+				return action.consume;
+			case "questionMove":
+				s.questions.move(action.delta);
+				this.tui.requestRender();
+				return true;
+			case "questionAnswer": {
+				const question = s.questions.current();
+				const answer = s.questions.selectedOption();
+				if (!question || answer === undefined) return false;
+				return this.do(() => s.answerQuestion(question, answer));
 			}
-			if (s.state() === "running" || s.state() === "waiting") return this.do(() => s.abort());
-			// Idle session, empty composer: one level up the hierarchy (sessions list; Esc there goes on to workspaces).
-			if (s.target && empty) return this.do(() => showSessions(this, false, undefined, "up"));
-			return false;
+			case "clearComposer":
+				composer.setText("");
+				return true;
+			case "backToParent":
+				if (s.target?.worker) this.openSession(s.target.worker.parent.id);
+				return true;
+			case "abort":
+				// Not via do(): an abort must not be dropped because another flow is running.
+				this.guard(() => s.abort());
+				return true;
+			case "showSessions":
+				return this.do(() => (action.up ? showSessions(this, false, undefined, "up") : showSessions(this)));
+			case "hotkey":
+				return this.do(() => this.hotkey(action.name));
+			case "busyFlash":
+				this.flash(BUSY_MESSAGE);
+				return true;
+			case "exit":
+				this.quit();
+				return true;
 		}
-		if (matchesBinding(data, KEYS.followUp)) return this.do(() => s.queueFollowUp());
-		if (matchesBinding(data, KEYS.approvals)) return this.do(() => showApprovals(this));
-		if (matchesBinding(data, KEYS.questions)) return this.do(() => showQuestions(this));
-		if (matchesBinding(data, KEYS.workers)) return this.do(() => showWorkers(this));
-		if (matchesKey(data, KEYS.workerTranscript)) return this.do(() => openWorkerTranscript(this));
-		if (matchesBinding(data, KEYS.model)) return this.do(() => pickModel(this));
-		if (matchesBinding(data, KEYS.modelCycle)) return this.do(() => s.cycleModel());
-		if (matchesKey(data, KEYS.newSession)) return this.do(() => newSession(this));
-		if (matchesKey(data, KEYS.sessions)) return this.do(() => showSessions(this));
-		if (matchesKey(data, KEYS.workspaces)) return this.do(() => showWorkspaces(this));
-		if (matchesKey(data, KEYS.settings)) return this.do(() => showSettings(this));
-		return false;
 	}
 
-	/** Inline question panel keys (empty composer): Up/Down move the option highlight, Enter answers with it. */
-	private answerKey(data: string): boolean {
+	private hotkey(name: HotkeyName): Promise<unknown> {
 		const s = this.session;
-		const question = s.questions.current();
-		if (!question?.options?.length) return false;
-		if (matchesKey(data, "up") || matchesKey(data, "down")) {
-			s.questions.move(matchesKey(data, "up") ? -1 : 1);
-			this.tui.requestRender();
-			return true;
+		switch (name) {
+			case "followUp":
+				return s.queueFollowUp();
+			case "approvals":
+				return showApprovals(this);
+			case "questions":
+				return showQuestions(this);
+			case "workers":
+				return showWorkers(this);
+			case "workerTranscript":
+				return openWorkerTranscript(this);
+			case "model":
+				return pickModel(this);
+			case "modelCycle":
+				return s.cycleModel();
+			case "newSession":
+				return newSession(this);
+			case "sessions":
+				return showSessions(this);
+			case "workspaces":
+				return showWorkspaces(this);
+			case "settings":
+				return showSettings(this);
+			case "help":
+				return this.help();
 		}
-		if (matchesKey(data, "enter") && s.composer.stagedImages().length === 0) {
-			const answer = s.questions.selectedOption();
-			if (answer === undefined) return false;
-			return this.do(() => s.answerQuestion(question, answer));
-		}
-		return false;
 	}
 
 	/** Hotkey dispatch: swallows the key; ignores auto-repeats and anything while another flow is running. */
