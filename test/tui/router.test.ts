@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QuitGate } from "../../src/tui/keys.js";
+import { KEYS, QuitGate, matchesBinding } from "../../src/tui/keys.js";
 import { type KeyAction, type RouteContext, routeInterrupt, routeKey } from "../../src/tui/router.js";
 
 const ESC = "\x1b";
@@ -240,4 +240,69 @@ describe("Ctrl+C", () => {
 		expect(press(gate, 0, { modalOpen: false, composerEmpty: true })).toBe(false);
 		expect(press(gate, 300, { modalOpen: false, composerEmpty: true })).toBe(true);
 	});
+});
+
+describe("KEYS completeness", () => {
+	/** One byte sequence per key id; a new KEYS entry without a sample fails the test below. */
+	const SAMPLE: Record<string, string> = {
+		"ctrl+q": "\x11",
+		"ctrl+enter": "\x1b[13;5u",
+		escape: "\x1b",
+		"alt+shift+a": "\x1b[97;4u",
+		"alt+shift+u": "\x1b[117;4u",
+		"alt+a": "\x1ba",
+		"ctrl+s": "\x13",
+		"ctrl+o": "\x0f",
+		"alt+m": "\x1bm",
+		"ctrl+p": "\x10",
+		"ctrl+n": CTRL_N,
+		"ctrl+l": CTRL_L,
+		"ctrl+t": "\x14",
+		"ctrl+,": "\x1b[44;5u",
+		"ctrl+c": "\x03",
+		"ctrl+d": CTRL_D,
+		"?": "?",
+		up: UP,
+	};
+
+	/** What each binding does on an idle, empty-composer session (quit is handled before the router, by `routeInterrupt`). */
+	const EXPECTED: Record<keyof typeof KEYS, (data: string) => KeyAction | "interrupt"> = {
+		followUp: () => ({ type: "hotkey", name: "followUp" }),
+		abort: () => ({ type: "abort" }),
+		approvals: () => ({ type: "hotkey", name: "approvals" }),
+		questions: () => ({ type: "hotkey", name: "questions" }),
+		workers: () => ({ type: "hotkey", name: "workers" }),
+		workerTranscript: () => ({ type: "hotkey", name: "workerTranscript" }),
+		model: () => ({ type: "hotkey", name: "model" }),
+		modelCycle: () => ({ type: "hotkey", name: "modelCycle" }),
+		newSession: () => ({ type: "hotkey", name: "newSession" }),
+		sessions: () => ({ type: "hotkey", name: "sessions" }),
+		workspaces: () => ({ type: "hotkey", name: "workspaces" }),
+		settings: () => ({ type: "hotkey", name: "settings" }),
+		quit: () => "interrupt",
+		exit: () => ({ type: "exit" }),
+		help: () => ({ type: "hotkey", name: "help" }),
+		navigate: () => ({ type: "moveSelection", delta: 0 }),
+	};
+
+	for (const [name, binding] of Object.entries(KEYS)) {
+		const ids: readonly string[] = typeof binding === "string" ? [binding] : binding;
+		for (const id of ids) {
+			it(`${name} (${id}) is routed to a non-pass action`, () => {
+				const data = SAMPLE[id];
+				expect(data, `add a SAMPLE byte sequence for ${id}`).toBeDefined();
+				expect(matchesBinding(data as string, binding), `SAMPLE for ${id} does not match its binding`).toBe(true);
+				const expected = EXPECTED[name as keyof typeof KEYS];
+				expect(expected, `add an EXPECTED entry for KEYS.${name}`).toBeDefined();
+				const want = expected(data as string);
+				if (want === "interrupt") {
+					expect(routeInterrupt({ modalOpen: false, composerEmpty: true }).type).not.toBe("pass");
+					return;
+				}
+				const got = route(data as string, name === "abort" ? { state: "running" } : {});
+				expect(got.type).not.toBe("pass");
+				expect(got).toEqual(want);
+			});
+		}
+	}
 });
