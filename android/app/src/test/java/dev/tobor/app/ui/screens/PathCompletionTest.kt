@@ -30,11 +30,20 @@ class PathCompletionTest {
     }
 
     @Test fun replacesTokenAndPlacesCursor() {
-        assertEquals(TextAndCursor("src/", 4), replaceAtToken("@", 1, "src/"))
-        assertEquals(TextAndCursor("see src/a.kt", 12), replaceAtToken("see @", 5, "src/a.kt"))
+        assertEquals(TextAndCursor("@src/", 5), replaceAtToken("@", 1, "src/"))
+        assertEquals(TextAndCursor("see @src/a.kt", 13), replaceAtToken("see @", 5, "src/a.kt"))
         // text after the cursor is preserved
-        assertEquals(TextAndCursor("see ~/x/ now", 8), replaceAtToken("see @ now", 5, "~/x/"))
-        assertEquals(TextAndCursor("a\nb.txt", 7), replaceAtToken("a\n@", 3, "b.txt"))
+        assertEquals(TextAndCursor("see @~/x/ now", 9), replaceAtToken("see @ now", 5, "~/x/"))
+        assertEquals(TextAndCursor("a\n@b.txt", 8), replaceAtToken("a\n@", 3, "b.txt"))
+    }
+
+    @Test fun keepsAtOnPartiallyTypedTokenAndDoneInsert() {
+        // picking replaces the typed `@src/ma` with `@src/main/`, the @ stays
+        assertEquals(TextAndCursor("see @src/main/", 14), replaceAtToken("see @src/ma", 11, "src/main/"))
+        // the sheet's Done key inserts the typed prefix the same way
+        assertEquals(TextAndCursor("see @src/ma now", 11), replaceAtToken("see @ now", 5, "src/ma"))
+        // an already-completed @dir re-picked does not double the @
+        assertEquals(TextAndCursor("@src/tui/a.ts", 13), replaceAtToken("@src/tui/", 9, "src/tui/a.ts"))
     }
 
     @Test fun insertsAtCursorWithoutToken() {
