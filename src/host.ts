@@ -22,6 +22,7 @@ import type {
 	McpServerStatus,
 	ModelsResponse,
 	PatchSessionRequest,
+	PathCompleteResponse,
 	PendingApproval,
 	PendingQuestion,
 	PutToborFileRequest,
@@ -138,6 +139,8 @@ export interface SessionIndex {
 	watch(id: SessionId, window: WatchWindow | undefined, ctx: Context): Promise<ConversationWatch>;
 	/** One page of stored entries (`EntryQuery`). */
 	entries(id: SessionId, query: EntriesQuery): Promise<EntriesResponse>;
+	/** Path completion for `prefix` (relative to the session's cwd), limited to the roots. Throws 404 if the session is unknown. */
+	complete(id: SessionId, prefix: string): Promise<PathCompleteResponse>;
 	/** Roots plus recently used cwds. */
 	cwds(): Promise<CwdsResponse>;
 	/** Resolve a cwd: realpath, then require it to sit inside a root. Throws 403 `outside_roots`. */

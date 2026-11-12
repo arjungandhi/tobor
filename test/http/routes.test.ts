@@ -96,6 +96,21 @@ describe("routes", () => {
 		expect((await http(port, "GET", "/api/sessions/7/entries?order=up")).status).toBe(400);
 	});
 
+	it("session path completion passes id and prefix, maps unknown session to 404", async () => {
+		const body = { dir: "/w", entries: [{ name: "src", type: "dir" }] };
+		const { port, calls } = await api({
+			"sessions.complete": (id: unknown) =>
+				id === 7 ? body : Promise.reject(new HostError(404, "not_found", `no session ${id}`)),
+		});
+		const ok = await http(port, "GET", "/api/sessions/7/complete?prefix=" + encodeURIComponent("my dir/s&r"));
+		expect(ok).toMatchObject({ status: 200, body });
+		expect(calls.at(-1)).toEqual({ method: "sessions.complete", args: [7, "my dir/s&r"] });
+		expect((await http(port, "GET", "/api/sessions/7/complete")).status).toBe(200);
+		expect(calls.at(-1)?.args).toEqual([7, ""]);
+		expect(await http(port, "GET", "/api/sessions/8/complete?prefix=x")).toMatchObject({ status: 404, body: { code: "not_found" } });
+		expect((await http(port, "GET", "/api/sessions/abc/complete")).status).toBe(400);
+	});
+
 	it("maps HostError status/code/errors and hides unknown errors", async () => {
 		const { port } = await api({
 			"sessions.create": () => Promise.reject(new HostError(403, "outside_roots", "cwd outside roots")),

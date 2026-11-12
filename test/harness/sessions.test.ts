@@ -191,6 +191,17 @@ describe("SessionIndex", () => {
 		expect(await t.host.sessions.list()).toEqual([]);
 	});
 
+	it("completes paths against the session cwd and 404s unknown sessions", async () => {
+		const t = await start();
+		await mkdir(join(t.root, "pkg"));
+		await writeFile(join(t.root, "pkg", "main.ts"), "");
+		const { id } = await t.host.sessions.create({ cwd: t.root });
+		expect(await t.host.sessions.complete(id, "pk")).toEqual({ dir: t.root, entries: [{ name: "pkg", type: "dir" }] });
+		expect((await t.host.sessions.complete(id, "pkg/")).entries).toEqual([{ name: "main.ts", type: "file" }]);
+		expect((await t.host.sessions.complete(id, "../")).entries).toEqual([]);
+		await expect(t.host.sessions.complete(999_999, "")).rejects.toMatchObject({ status: 404 });
+	});
+
 	it("patches, archives, takes follow-up input and deletes", async () => {
 		const t = await start();
 		t.script([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);

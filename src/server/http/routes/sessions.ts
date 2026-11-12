@@ -90,6 +90,10 @@ export function sessionsRoutes(r: Router): void {
 		return { ok: true };
 	});
 
+	r.on("GET", "/api/sessions/:id/complete", async (ctx) => {
+		return ctx.host.sessions.complete(idParam(ctx), ctx.query.get("prefix") ?? "");
+	});
+
 	r.on("GET", "/api/sessions/:id/entries", async (ctx) => {
 		const id = idParam(ctx);
 		const q = ctx.query;
