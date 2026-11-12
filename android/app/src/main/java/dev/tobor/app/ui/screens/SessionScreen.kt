@@ -767,8 +767,7 @@ private fun Composer(
     }
     if (pathPickerOpen) {
         PathPickerSheet(
-            api = api,
-            sessionId = sessionId,
+            fetch = { api.complete(sessionId, it) },
             onInsert = { path ->
                 val r = replaceAtToken(draft.text, draft.selection.end, path)
                 draft = TextFieldValue(r.text, TextRange(r.cursor))
