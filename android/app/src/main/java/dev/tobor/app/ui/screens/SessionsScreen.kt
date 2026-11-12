@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,9 +52,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tobor.app.api.EventsClient
@@ -105,6 +110,8 @@ fun SessionsScreen(
     var busyCalls by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showArchived by remember { mutableStateOf(false) }
     var menuFor by remember { mutableStateOf<SessionSummary?>(null) }
+    var menuOffset by remember { mutableStateOf(DpOffset.Zero) }
+    val density = LocalDensity.current
     var confirmDelete by remember { mutableStateOf<SessionSummary?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
 
@@ -474,10 +481,14 @@ fun SessionsScreen(
                             } else {
                                 items(list, key = { "s-" + it.id }) { s ->
                                     Box {
-                                        SessionRow(s, onClick = { onOpen(s.id) }, onLongClick = { menuFor = s })
+                                        SessionRow(s, onClick = { onOpen(s.id) }, onLongClick = { x ->
+                                            menuOffset = DpOffset(with(density) { x.toDp() }, 0.dp)
+                                            menuFor = s
+                                        })
                                         DropdownMenu(
                                             expanded = menuFor?.id == s.id,
                                             onDismissRequest = { menuFor = null },
+                                            offset = menuOffset,
                                         ) {
                                             DropdownMenuItem(
                                                 text = {
@@ -632,11 +643,18 @@ private fun stateColor(state: String): Color = when (state) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SessionRow(s: SessionSummary, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun SessionRow(s: SessionSummary, onClick: () -> Unit, onLongClick: (Float) -> Unit) {
+    var touchX by remember { mutableStateOf(0f) }
     Row(
         Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    touchX = down.position.x
+                }
+            }
+            .combinedClickable(onClick = onClick, onLongClick = { onLongClick(touchX) })
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
