@@ -3,7 +3,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, join, relative } from "node:path";
 import type { ArtifactService, PdfResult } from "../host.js";
-import { mimeFor } from "./export.js";
+import { exportHtml, mimeFor } from "./export.js";
 import { sanitizeHtml } from "./sanitize.js";
 
 /** Header CSP on every artifact response. */
@@ -40,10 +40,12 @@ export type ArtifactHandler = (req: IncomingMessage, res: ServerResponse) => Pro
 const ID = "[A-Za-z0-9_-]+";
 const SLUG = "[a-z0-9][a-z0-9-]*";
 const REV_PDF = new RegExp(`^/art/r/(${ID})\\.pdf$`);
+const REV_HTML = new RegExp(`^/art/r/(${ID})\\.html$`);
 const REV_BARE = new RegExp(`^/art/r/(${ID})$`);
 const REV_INDEX = new RegExp(`^/art/r/(${ID})/(?:index\\.html)?$`);
 const REV_ASSET = new RegExp(`^/art/r/(${ID})/(assets/.+)$`);
 const LATEST_PDF = new RegExp(`^/art/(${ID})/(${SLUG})\\.pdf$`);
+const LATEST_HTML = new RegExp(`^/art/(${ID})/(${SLUG})\\.html$`);
 const LATEST_REV = new RegExp(`^/art/(${ID})/(${SLUG})/rev$`);
 const LATEST = new RegExp(`^/art/(${ID})/(${SLUG})/?$`);
 
@@ -80,14 +82,20 @@ const escapeHtml = (text: string): string => text.replace(/&/g, "&amp;").replace
 /** Inline JSON for a `<script>`: `<` is escaped so the value cannot close the element. */
 const scriptJson = (value: unknown): string => JSON.stringify(value).replace(/</g, "\\u003c");
 
-/** Wrapper page for the durable URL: frames the current revision and swaps it when `revUrl` reports a new one. */
-function wrapperPage(title: string, rev: string, revUrl: string): string {
+const TOOLBAR_CSS =
+	".exports{position:fixed;top:8px;right:8px;z-index:10;display:flex;gap:6px}" +
+	".exports a{font:12px/1.4 system-ui,sans-serif;padding:4px 10px;border-radius:4px;background:rgba(20,20,20,.75);color:#eee;text-decoration:none;opacity:.6;cursor:pointer}" +
+	".exports a:hover,.exports a:focus-visible{opacity:1}";
+
+/** Wrapper page for the durable URL: frames the current revision and swaps it when `revUrl` reports a new one. `basePath` is `/art/<projectId>/<slug>`; it feeds the export buttons, which exist only on this page. */
+function wrapperPage(title: string, rev: string, revUrl: string, basePath: string): string {
 	return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;margin:0;width:100%;height:100%}</style>
+<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;margin:0;width:100%;height:100%}${TOOLBAR_CSS}</style>
 </head><body>
 <iframe id="art" sandbox="allow-scripts allow-popups" src="/art/r/${rev}/"></iframe>
+<div class="exports"><a href="${escapeHtml(basePath)}.html" download>Export as HTML</a><a href="${escapeHtml(basePath)}.pdf" download>Export as PDF</a></div>
 <script>
 (function () {
 	var frame = document.getElementById("art");
@@ -122,7 +130,7 @@ function wrapperPage(title: string, rev: string, revUrl: string): string {
 `;
 }
 
-/** Viewer routes: `/art/<projectId>/<slug>` (live wrapper around the latest revision), `/art/<projectId>/<slug>/rev`, `/art/r/<rev>/`, `/art/r/<rev>/assets/*`, and `.pdf` of both. */
+/** Viewer routes: `/art/<projectId>/<slug>` (live wrapper around the latest revision), `/art/<projectId>/<slug>/rev`, `/art/r/<rev>/`, `/art/r/<rev>/assets/*`, and `.pdf` / `.html` exports of both. */
 export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 	const servePdf = async (res: ServerResponse, head: boolean, rev: string, name: string): Promise<void> => {
 		const result: PdfResult = await service.pdf(rev);
@@ -143,6 +151,27 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 		});
 		if (head) res.end();
 		else createReadStream(result.path).pipe(res);
+	};
+
+	const serveHtmlExport = async (res: ServerResponse, head: boolean, rev: string, name: string): Promise<void> => {
+		const dir = await service.revisionDir(rev);
+		let body: string | undefined;
+		try {
+			body = dir ? exportHtml(dir) : undefined;
+		} catch {
+			body = undefined;
+		}
+		if (body === undefined) {
+			send(res, 404, "Not found\n");
+			return;
+		}
+		res.writeHead(200, {
+			"Content-Type": "text/html; charset=utf-8",
+			"Content-Length": Buffer.byteLength(body),
+			"Content-Disposition": `attachment; filename="${name}.html"`,
+			"Cache-Control": "private, max-age=31536000, immutable",
+		});
+		res.end(head ? undefined : body);
 	};
 
 	const serveFile = async (res: ServerResponse, head: boolean, file: string): Promise<void> => {
@@ -171,6 +200,12 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			else await servePdf(res, head, revision.rev, `${revision.slug}-r${revision.revision}`);
 			return true;
 		}
+		if ((m = REV_HTML.exec(path))) {
+			const revision = await service.revision(m[1]!);
+			if (!revision) send(res, 404, "Not found\n");
+			else await serveHtmlExport(res, head, revision.rev, `${revision.slug}-r${revision.revision}`);
+			return true;
+		}
 		if ((m = REV_BARE.exec(path))) {
 			send(res, 301, "", { Location: `/art/r/${m[1]}/` });
 			return true;
@@ -188,6 +223,12 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			else await servePdf(res, head, latest.rev, `${latest.slug}-r${latest.revision}`);
 			return true;
 		}
+		if ((m = LATEST_HTML.exec(path))) {
+			const latest = await service.latest(m[1]!, m[2]!);
+			if (!latest) send(res, 404, "Not found\n");
+			else await serveHtmlExport(res, head, latest.rev, `${latest.slug}-r${latest.revision}`);
+			return true;
+		}
 		if ((m = LATEST_REV.exec(path))) {
 			const latest = await service.latest(m[1]!, m[2]!);
 			if (!latest) send(res, 404, "Not found\n");
@@ -198,7 +239,7 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			const latest = await service.latest(m[1]!, m[2]!);
 			if (!latest) send(res, 404, "Not found\n");
 			else {
-				const body = wrapperPage(latest.title, latest.rev, `/art/${m[1]}/${m[2]}/rev`);
+				const body = wrapperPage(latest.title, latest.rev, `/art/${m[1]}/${m[2]}/rev`, `/art/${m[1]}/${m[2]}`);
 				res.writeHead(200, {
 					"Content-Type": "text/html; charset=utf-8",
 					"Content-Length": Buffer.byteLength(body),
