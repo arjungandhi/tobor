@@ -44,6 +44,7 @@ import dev.tobor.app.api.Whoami
 import dev.tobor.app.update.AppUpdater
 import dev.tobor.app.data.SettingsStore
 import dev.tobor.app.data.Workspace
+import dev.tobor.app.data.sameEndpoint
 import dev.tobor.app.ui.theme.FontFamilies
 import dev.tobor.app.ui.theme.fieldTextStyle
 import dev.tobor.app.ui.theme.Tag
@@ -177,6 +178,10 @@ fun SettingsScreen(
     var token by remember { mutableStateOf("") }
     // Connection mode: direct (plain host:port, no token) or token-gated proxy. A stored token implies token mode.
     var tokenMode by remember { mutableStateOf(false) }
+    // The workspace being edited as stored: editing its URL to another host/port drops the token (re-entry required).
+    var editOriginalUrl by remember { mutableStateOf("") }
+    var editOriginalToken by remember { mutableStateOf("") }
+    var tokenDropped by remember { mutableStateOf(false) }
     // The token actually used/saved: direct mode never carries one (the typed text is kept only so toggling is lossless).
     val effectiveToken = if (tokenMode) token else ""
     var saved by remember { mutableStateOf(false) }
@@ -196,6 +201,9 @@ fun SettingsScreen(
 
     fun resetForm() {
         editingIndex = null
+        editOriginalUrl = ""
+        editOriginalToken = ""
+        tokenDropped = false
         name = ""
         url = ""
         token = ""
@@ -282,6 +290,9 @@ fun SettingsScreen(
                                 url = workspace.baseUrl
                                 token = workspace.token
                                 tokenMode = workspace.token.isNotEmpty()
+                                editOriginalUrl = workspace.baseUrl
+                                editOriginalToken = workspace.token
+                                tokenDropped = false
                                 saved = false
                                 resultText = null
                                 resultError = null
@@ -394,6 +405,13 @@ fun SettingsScreen(
                     onValueChange = {
                         url = it
                         saved = false
+                        // The stored token belongs to the old endpoint: pointing the workspace elsewhere requires re-entry.
+                        if (editingIndex != null && !tokenDropped && editOriginalToken.isNotEmpty() &&
+                            !sameEndpoint(normalizeUrl(it), editOriginalUrl)
+                        ) {
+                            tokenDropped = true
+                            if (token == editOriginalToken) token = ""
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = fieldTextStyle(),
