@@ -182,6 +182,10 @@ describe("viewer", () => {
 			expect(body).toContain('sandbox="allow-scripts allow-popups"');
 			expect(body).toContain(`/art/${projectId}/demo/rev`);
 			expect(body).toContain("visibilitychange");
+			expect(body).toContain("Export as HTML");
+			expect(body).toContain("Export as PDF");
+			expect(body).toContain(`href="/art/${projectId}/demo.html"`);
+			expect(body).toContain(`href="/art/${projectId}/demo.pdf"`);
 		}
 		const headRes = await fetch(`${base}/art/${projectId}/demo`, { method: "HEAD" });
 		expect(headRes.status).toBe(200);

@@ -82,14 +82,20 @@ const escapeHtml = (text: string): string => text.replace(/&/g, "&amp;").replace
 /** Inline JSON for a `<script>`: `<` is escaped so the value cannot close the element. */
 const scriptJson = (value: unknown): string => JSON.stringify(value).replace(/</g, "\\u003c");
 
-/** Wrapper page for the durable URL: frames the current revision and swaps it when `revUrl` reports a new one. */
-function wrapperPage(title: string, rev: string, revUrl: string): string {
+const TOOLBAR_CSS =
+	".exports{position:fixed;top:8px;right:8px;z-index:10;display:flex;gap:6px}" +
+	".exports a{font:12px/1.4 system-ui,sans-serif;padding:4px 10px;border-radius:4px;background:rgba(20,20,20,.75);color:#eee;text-decoration:none;opacity:.6;cursor:pointer}" +
+	".exports a:hover,.exports a:focus-visible{opacity:1}";
+
+/** Wrapper page for the durable URL: frames the current revision and swaps it when `revUrl` reports a new one. `basePath` is `/art/<projectId>/<slug>`; it feeds the export buttons, which exist only on this page. */
+function wrapperPage(title: string, rev: string, revUrl: string, basePath: string): string {
 	return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;margin:0;width:100%;height:100%}</style>
+<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;border:0;margin:0;width:100%;height:100%}${TOOLBAR_CSS}</style>
 </head><body>
 <iframe id="art" sandbox="allow-scripts allow-popups" src="/art/r/${rev}/"></iframe>
+<div class="exports"><a href="${escapeHtml(basePath)}.html" download>Export as HTML</a><a href="${escapeHtml(basePath)}.pdf" download>Export as PDF</a></div>
 <script>
 (function () {
 	var frame = document.getElementById("art");
@@ -233,7 +239,7 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			const latest = await service.latest(m[1]!, m[2]!);
 			if (!latest) send(res, 404, "Not found\n");
 			else {
-				const body = wrapperPage(latest.title, latest.rev, `/art/${m[1]}/${m[2]}/rev`);
+				const body = wrapperPage(latest.title, latest.rev, `/art/${m[1]}/${m[2]}/rev`, `/art/${m[1]}/${m[2]}`);
 				res.writeHead(200, {
 					"Content-Type": "text/html; charset=utf-8",
 					"Content-Length": Buffer.byteLength(body),
