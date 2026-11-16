@@ -11,6 +11,7 @@ import {
 	DEFAULT_PORT,
 	findWorkspace,
 	formatAddress,
+	insecureTokenWarning,
 	parseAddress,
 	probe,
 	putWorkspace,
@@ -119,7 +120,8 @@ async function askAddress(app: App, title: string, initial?: Address): Promise<A
 export type TokenReason = "setup" | "required" | "rejected";
 
 /** Ask for a node's bearer token. Resolves with the validated token, or undefined on Esc. */
-export async function askToken(app: App, name: string, reason: TokenReason): Promise<string | undefined> {
+export async function askToken(app: App, name: string, reason: TokenReason, address?: Address): Promise<string | undefined> {
+	const insecure = address && insecureTokenWarning(address);
 	for (let problem = ""; ; ) {
 		const input = await app.ask(`${name} · token`, {
 			placeholder: "token",
@@ -128,6 +130,7 @@ export async function askToken(app: App, name: string, reason: TokenReason): Pro
 					? []
 					: [reason === "rejected" ? c.error(`${name} rejected the token (HTTP 401).`) : c.warning(`${name} requires a token (HTTP 401).`)]),
 				c.dim("Enter the bearer token the node's proxy expects; it is saved in config.yml (0600). Esc cancels."),
+				...(insecure ? [c.warning(insecure)] : []),
 				...(problem ? [c.error(problem)] : []),
 			],
 		});
@@ -174,7 +177,7 @@ async function chooseMode(app: App, name: string, address: Address, hadToken = f
 	);
 	if (!picked) return "cancel";
 	if (picked.value !== "token") return {};
-	const token = await askToken(app, name, "setup");
+	const token = await askToken(app, name, "setup", address);
 	return token === undefined ? "cancel" : { token };
 }
 
@@ -195,7 +198,7 @@ async function testAndSave(app: App, name: string, address: Address, token?: str
 	app.flash(`testing ${formatAddress(address)}…`);
 	let who = await reach({ ...address, ...(token ? { token } : {}) });
 	while (who === "token") {
-		const given = await askToken(app, name, token !== undefined ? "rejected" : "required");
+		const given = await askToken(app, name, token !== undefined ? "rejected" : "required", address);
 		if (given === undefined) break;
 		token = given;
 		who = await reach({ ...address, token });
@@ -231,9 +234,10 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 			return name;
 		}
 		case "token": {
+			const insecure = insecureTokenWarning(ws);
 			const input = await app.ask(`${name} · token`, {
 				placeholder: ws.token ? "(set)" : "token",
-				lines: [c.dim("Bearer token sent on every request to this node; empty clears it. Esc cancels.")],
+				lines: [c.dim("Bearer token sent on every request to this node; empty clears it. Esc cancels."), ...(insecure ? [c.warning(insecure)] : [])],
 			});
 			if (input === undefined) return name;
 			try {

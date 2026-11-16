@@ -142,6 +142,17 @@ describe("waitForNode", () => {
 		return { now: () => t, sleep: async (ms: number) => void (t += ms) };
 	}
 
+	it("reports a 401 from the restarted node instead of throwing", async () => {
+		const result = await waitForNode({
+			probe: async () => {
+				throw new ApiRequestError(401, undefined, "401");
+			},
+			before: whoami(),
+			...clock(),
+		});
+		expect(result.status).toBe("unauthorized");
+	});
+
 	it("waits for the node to go down and come back", async () => {
 		const answers = [whoami(), whoami(), undefined, undefined, whoami({ version: "0.2.0" })];
 		const result = await waitForNode({ probe: async () => answers.shift(), before: whoami(), ...clock() });
@@ -227,6 +238,7 @@ describe("upgradeNode / restartNode", () => {
 		expect(io.stderr).toContain("runs from source");
 	});
 
+
 	it("gives up waiting with a note", async () => {
 		const node = await fakeNode({ restart: () => Response.json({ status: "restarting" }) });
 		const io = capture();
@@ -245,6 +257,25 @@ describe("upgradeNode / restartNode", () => {
 		node.stop();
 		expect(code).toBe(1);
 		expect(io.stderr).toContain("no answer after 3s");
+	});
+
+	it("explains a token rejected while waiting for the restart", async () => {
+		const node = await fakeNode({ restart: () => Response.json({ status: "restarting" }) });
+		const io = capture();
+		let calls = 0;
+		const code = await restartNode({
+			address: node.address,
+			label: "work",
+			io,
+			...fast,
+			probe: async () => {
+				if (calls++ === 0) return whoami();
+				throw new ApiRequestError(401, undefined, "401");
+			},
+		});
+		node.stop();
+		expect(code).toBe(1);
+		expect(io.stderr).toContain("rejects the bearer token");
 	});
 
 	it("restarts and surfaces a build mismatch", async () => {

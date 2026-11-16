@@ -7,6 +7,7 @@ import {
 	RESTART_REMINDER,
 	upgradeErrorMessage,
 	WAIT_TIMEOUT_MS,
+	WAIT_UNAUTHORIZED_MESSAGE,
 	type WaitResult,
 	waitForNode,
 } from "../../tui/node-upgrade.js";
@@ -189,6 +190,10 @@ async function waitAndReport(options: NodeOptions & { io: Io; cli: { version: st
 		...(options.now ? { now: options.now } : {}),
 	});
 	const { io, label } = options;
+	if (result.status === "unauthorized") {
+		io.err(`${label}: ${WAIT_UNAUTHORIZED_MESSAGE}\n`);
+		return 1;
+	}
 	if (result.status === "timeout") {
 		io.err(`${label}: no answer after ${Math.round((options.timeoutMs ?? WAIT_TIMEOUT_MS) / 1000)}s; the node may still be starting (check \`tobor workspace list\`, or its logs: journalctl --user -u tobor@<name>)\n`);
 		return 1;

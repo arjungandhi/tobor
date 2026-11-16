@@ -6,6 +6,7 @@ import {
 	configPath,
 	findWorkspace,
 	formatAddress,
+	insecureTokenWarning,
 	loadClientConfig,
 	migrateLegacy,
 	parseAddress,
@@ -67,6 +68,10 @@ export async function run(args: CliArgs): Promise<number> {
 				if (token === undefined && parsed.host.startsWith("https://") && process.stdin.isTTY && process.stderr.isTTY) {
 					const typed = (await readSecret(`${name}: bearer token if ${parsed.host} is behind an auth proxy (empty: direct, no token): `)).trim();
 					if (typed !== "") token = checkToken(typed);
+				}
+				if (token !== undefined) {
+					const warning = insecureTokenWarning(parsed);
+					if (warning) process.stderr.write(`${warning}\n`);
 				}
 				config = putWorkspace(config, name, parsed, token);
 				break;

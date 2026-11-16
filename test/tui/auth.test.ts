@@ -22,6 +22,16 @@ async function proxy(token: string, seen: Seen[] = []): Promise<{ port: number; 
 			res.end("unauthorized");
 			return;
 		}
+		if (req.url?.endsWith(".pdf")) {
+			res.writeHead(200, { "content-type": "application/pdf" });
+			res.end("%PDF-1.4");
+			return;
+		}
+		if (req.url?.endsWith(".html")) {
+			res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+			res.end("<html>login</html>");
+			return;
+		}
 		res.writeHead(200, { "content-type": "application/json" });
 		res.end(JSON.stringify(req.url === "/api/sessions" ? [] : { host: "node", version: "1" }));
 	});
@@ -92,10 +102,16 @@ describe("bearer token transport", () => {
 		const client = new ApiClient(`http://127.0.0.1:${node.port}`, "tok", async () => {
 			throw new Error("must not prompt for another origin");
 		});
-		await client.download(`http://127.0.0.1:${node.port}/artifact.pdf`);
+		expect(new TextDecoder().decode(await client.download(`http://127.0.0.1:${node.port}/artifact.pdf`))).toBe("%PDF-1.4");
 		await client.download(`http://127.0.0.1:${other.port}/artifact.pdf`).catch(() => {});
 		expect(node.seen[0]?.auth).toBe("Bearer tok");
 		expect(other.seen[0]?.auth).toBeUndefined();
+	});
+
+	it("download refuses a 200 HTML response (a login page) instead of saving it as a PDF", async () => {
+		const node = await proxy("tok");
+		const client = new ApiClient(`http://127.0.0.1:${node.port}`, "tok");
+		await expect(client.download(`http://127.0.0.1:${node.port}/login.html`)).rejects.toThrow(/did not return a PDF.*open the artifact in a browser/);
 	});
 
 	it("sends the token on the WebSocket upgrade; a 401 pauses retries and asks, then reconnects with the new token", async () => {

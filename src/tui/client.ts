@@ -315,6 +315,12 @@ export class ApiClient {
 	async download(url: string): Promise<Uint8Array> {
 		const res = await this.send(url, { headers: {} }, 120_000);
 		if (!res.ok) throw new ApiRequestError(res.status, undefined, `GET ${url}: ${res.status} ${res.statusText}`);
+		// A login page (e.g. an Authelia-gated artifacts origin redirecting to its portal) answers 200 with HTML: never save it as a PDF.
+		const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+		if (type !== "application/pdf" && type !== "application/octet-stream") {
+			await res.body?.cancel();
+			throw new Error(`${url} did not return a PDF (content-type ${type || "unknown"}); it may sit behind a login, open the artifact in a browser instead`);
+		}
 		return new Uint8Array(await res.arrayBuffer());
 	}
 

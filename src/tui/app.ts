@@ -336,7 +336,7 @@ export class App {
 	private async promptToken(client: ApiClient): Promise<boolean> {
 		const workspace = this.workspace;
 		if (!workspace) return false;
-		const token = await askToken(this, workspace.name, client.token !== undefined ? "rejected" : "required");
+		const token = await askToken(this, workspace.name, client.token !== undefined ? "rejected" : "required", workspace);
 		if (token === undefined || client !== this.client) return false;
 		client.token = token;
 		this.workspace = { ...workspace, token };

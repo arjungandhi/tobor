@@ -7,6 +7,7 @@ import {
 	configPath,
 	convertLegacy,
 	findWorkspace,
+	insecureTokenWarning,
 	lastSession,
 	loadClientConfig,
 	migrateLegacy,
@@ -58,6 +59,11 @@ describe("addresses", () => {
 
 	it.each(["", "ftp://host", "host:7879/api", "http://user@host", "host:notaport"])("rejects %j", (input) => {
 		expect(() => parseAddress(input)).toThrow();
+	});
+
+	it("warns about a token over plain http only", () => {
+		expect(insecureTokenWarning({ host: "h", port: 1 })).toContain("unencrypted");
+		expect(insecureTokenWarning({ host: "https://x.org", port: 443 })).toBeUndefined();
 	});
 
 	it("baseUrl", () => {

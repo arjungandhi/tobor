@@ -98,6 +98,11 @@ export function baseUrl(a: Address): string {
 	return `http://${a.host}:${a.port}`;
 }
 
+/** One-line warning when a bearer token would travel over plain http; undefined for https addresses. */
+export function insecureTokenWarning(a: Address): string | undefined {
+	return a.host.startsWith("https://") ? undefined : `warning: ${formatAddress(a)} is plain http, so the token travels unencrypted; use an https address if you can`;
+}
+
 /** Throw unless `name` is a valid workspace name. */
 export function checkName(name: string): void {
 	if (!NAME_RE.test(name)) throw new Error(`invalid workspace name ${JSON.stringify(name)}: use [a-z0-9][a-z0-9_-]*`);
