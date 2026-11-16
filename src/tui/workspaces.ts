@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { type Document, isMap, isScalar, parseDocument, type YAMLMap } from "yaml";
 import type { WhoamiResponse } from "../api/types.js";
+import { ApiRequestError, authHeader, UNAUTHORIZED_MESSAGE } from "./client.js";
 
 // Client-side configuration of the TUI and `tobor workspace`: `$XDG_CONFIG_HOME/tobor/config.yml` (named workspaces,
 // the default one and preferences) and `$XDG_STATE_HOME/tobor/state.json` (runtime state such as the last open session
@@ -18,8 +19,11 @@ export const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 /** A node address: hostname (or an `https://` origin behind a proxy) and port. */
 export type Address = { host: string; port: number };
 
+/** An address plus the optional bearer token its proxy requires; sent only to this address's own base URL. */
+export type Endpoint = Address & { token?: string };
+
 /** One named node. */
-export type Workspace = Address & { name: string };
+export type Workspace = Endpoint & { name: string };
 
 /** Preferences, edited on the settings screen. */
 export type Prefs = {
@@ -99,6 +103,14 @@ export function checkName(name: string): void {
 	if (!NAME_RE.test(name)) throw new Error(`invalid workspace name ${JSON.stringify(name)}: use [a-z0-9][a-z0-9_-]*`);
 }
 
+/** Trim and validate a bearer token: printable ASCII without spaces, so it is safe in an HTTP header. */
+export function checkToken(raw: string, where = "token"): string {
+	const token = raw.trim();
+	if (token === "") throw new Error(`${where}: token is empty`);
+	if (!/^[\x21-\x7e]+$/.test(token)) throw new Error(`${where}: token must be printable ASCII without spaces`);
+	return token;
+}
+
 function checkPort(port: unknown, where: string): number {
 	if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${where}: port must be an integer 1-65535`);
 	return port;
@@ -112,15 +124,21 @@ export function parseClientConfig(text: string, source = "config.yml"): ClientCo
 	if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error(`${source}: expected a mapping`);
 	const record = data as Record<string, unknown>;
 	const list = record.workspaces ?? {};
-	if (typeof list !== "object" || list === null || Array.isArray(list)) throw new Error(`${source}: workspaces must be a mapping of name → { host, port }`);
+	if (typeof list !== "object" || list === null || Array.isArray(list)) throw new Error(`${source}: workspaces must be a mapping of name → { host, port, token? }`);
 	const workspaces: Workspace[] = [];
 	for (const [name, value] of Object.entries(list)) {
 		const where = `${source}: workspaces.${name}`;
 		if (!NAME_RE.test(name)) throw new Error(`${where}: invalid name (use [a-z0-9][a-z0-9_-]*)`);
-		if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${where}: expected { host, port }`);
-		const { host, port } = value as Record<string, unknown>;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${where}: expected { host, port, token? }`);
+		const { host, port, token } = value as Record<string, unknown>;
 		if (typeof host !== "string" || host.trim() === "") throw new Error(`${where}: host must be a non-empty string`);
-		workspaces.push({ name, host: host.trim(), port: port === undefined ? DEFAULT_PORT : checkPort(port, where) });
+		if (token !== undefined && token !== null && typeof token !== "string") throw new Error(`${where}: token must be a string (quote it in YAML)`);
+		workspaces.push({
+			name,
+			host: host.trim(),
+			port: port === undefined ? DEFAULT_PORT : checkPort(port, where),
+			...(typeof token === "string" && token !== "" ? { token: checkToken(token, `${where}.token`) } : {}),
+		});
 	}
 	const def = record.default;
 	if (def !== undefined && def !== null) {
@@ -187,22 +205,41 @@ export function findWorkspace(config: ClientConfig, name: string): Workspace | u
 	return config.workspaces.find((w) => w.name === name);
 }
 
-/** Add workspace `name`, or change its address; the first workspace becomes the default. */
-export function putWorkspace(config: ClientConfig, name: string, address: Address): ClientConfig {
+/**
+ * Add workspace `name`, or change its address; the first workspace becomes the default. `token` sets the bearer token;
+ * left out, an existing token is kept while the address is unchanged and dropped when it moves (a token is only valid
+ * for the base URL it was given for, so it never follows a workspace to another host).
+ */
+export function putWorkspace(config: ClientConfig, name: string, address: Address, token?: string): ClientConfig {
 	checkName(name);
 	checkPort(address.port, name);
+	const checked = token === undefined ? undefined : checkToken(token);
 	return edit(config, (doc) => {
 		const map = workspacesMap(doc);
 		const existing = map.get(name, true);
 		if (isMap(existing)) {
+			if (existing.get("host") !== address.host || existing.get("port") !== address.port) existing.delete("token");
 			existing.set("host", address.host);
 			existing.set("port", address.port);
+			if (checked !== undefined) existing.set("token", checked);
 		} else {
-			const node = doc.createNode({ host: address.host, port: address.port }) as YAMLMap;
+			const node = doc.createNode({ host: address.host, port: address.port, ...(checked === undefined ? {} : { token: checked }) }) as YAMLMap;
 			node.flow = true;
 			map.set(name, node);
 		}
 		if (config.workspaces.length === 0 && config.default === undefined) doc.set("default", name);
+	});
+}
+
+/** Set (or with `undefined`, clear) the bearer token of workspace `name`. */
+export function setToken(config: ClientConfig, name: string, token: string | undefined): ClientConfig {
+	const checked = token === undefined ? undefined : checkToken(token);
+	if (!findWorkspace(config, name)) throw new Error(`no workspace named ${name}`);
+	return edit(config, (doc) => {
+		const node = workspacesMap(doc).get(name, true);
+		if (!isMap(node)) return;
+		if (checked === undefined) node.delete("token");
+		else node.set("token", checked);
 	});
 }
 
@@ -350,13 +387,19 @@ export function migrateLegacy(env: NodeJS.ProcessEnv = process.env): string | un
 	return `migrated ${legacy} → ${target}${skipped.length ? `; skipped unparseable workspaces: ${skipped.join(", ")}` : ""}`;
 }
 
-/** `GET /api/whoami` with a timeout; undefined when unreachable. */
-export async function probe(address: Address, timeoutMs = 1500): Promise<WhoamiResponse | undefined> {
+/** `GET /api/whoami` with a timeout (sending the endpoint's token); undefined when unreachable, throws an `ApiRequestError` (401) when the node wants a token. */
+export async function probe(address: Endpoint, timeoutMs = 1500): Promise<WhoamiResponse | undefined> {
 	try {
-		const res = await fetch(`${baseUrl(address)}/api/whoami`, { signal: AbortSignal.timeout(timeoutMs) });
+		const auth = authHeader(address.token);
+		const res = await fetch(`${baseUrl(address)}/api/whoami`, {
+			...(auth ? { headers: { authorization: auth } } : {}),
+			signal: AbortSignal.timeout(timeoutMs),
+		});
+		if (res.status === 401) throw new ApiRequestError(401, undefined, UNAUTHORIZED_MESSAGE);
 		if (!res.ok) return undefined;
 		return (await res.json()) as WhoamiResponse;
-	} catch {
+	} catch (err) {
+		if (err instanceof ApiRequestError) throw err;
 		return undefined;
 	}
 }

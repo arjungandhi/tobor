@@ -54,6 +54,14 @@ export class ApiRequestError extends Error {
 	}
 }
 
+/** Why a 401 happened and how to fix it (the node itself has no auth; a reverse proxy in front of it does). */
+export const UNAUTHORIZED_MESSAGE = "401: the node requires a bearer token; set one with `tobor workspace add <name> <host:port> --token <token>` or in the TUI (Ctrl+T, e)";
+
+/** `Bearer <token>`, or undefined without a token. */
+export function authHeader(token: string | undefined): string | undefined {
+	return token ? `Bearer ${token}` : undefined;
+}
+
 /** Request timeout when the body carries image attachments (up to 8 × 5 MB). */
 const UPLOAD_TIMEOUT_MS = 120_000;
 
@@ -61,18 +69,58 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /** Typed HTTP client for one node's API. */
 export class ApiClient {
-	constructor(readonly base: string) {}
+	private readonly origin: string;
+
+	/**
+	 * `token` is sent as a bearer token on every request to `base` (and to nothing else). `onUnauthorized` is asked after
+	 * a 401 (with the token that was refused): resolve true once `token` was replaced and the request should be retried,
+	 * false to give up and surface the error.
+	 */
+	constructor(
+		readonly base: string,
+		public token?: string,
+		private readonly onUnauthorized?: (refused: string | undefined) => Promise<boolean>,
+	) {
+		this.origin = new URL(base).origin;
+	}
+
+	/** Headers for a WebSocket upgrade to this node. */
+	authHeaders(): Record<string, string> {
+		const auth = authHeader(this.token);
+		return auth ? { authorization: auth } : {};
+	}
+
+	/**
+	 * A request carrying `sent` (the Authorization header it used) was refused with 401: true when it should be retried,
+	 * because the token changed meanwhile or the user supplied a new one.
+	 */
+	async retryAfter401(sent: string | undefined): Promise<boolean> {
+		if (!this.onUnauthorized) return false;
+		if (authHeader(this.token) !== sent) return true;
+		return this.onUnauthorized(this.token);
+	}
+
+	/** `fetch` that adds the bearer token (same origin as the node only) and, on 401, asks `onUnauthorized` and retries. */
+	private async send(url: string, init: RequestInit & { headers: Record<string, string> }, timeoutMs: number): Promise<Response> {
+		const ours = new URL(url).origin === this.origin;
+		for (;;) {
+			const auth = ours ? authHeader(this.token) : undefined;
+			const res = await fetch(url, {
+				...init,
+				headers: auth ? { ...init.headers, authorization: auth } : init.headers,
+				signal: AbortSignal.timeout(timeoutMs),
+			});
+			if (res.status !== 401 || !ours) return res;
+			if (!(await this.retryAfter401(auth))) return res;
+			await res.body?.cancel();
+		}
+	}
 
 	private async request<T>(method: Method, path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
 		const headers: Record<string, string> = { accept: "application/json" };
 		const payload = body === undefined ? (method === "GET" ? undefined : "{}") : JSON.stringify(body);
 		if (payload !== undefined) headers["content-type"] = "application/json";
-		const res = await fetch(`${this.base}${path}`, {
-			method,
-			headers,
-			body: payload,
-			signal: AbortSignal.timeout(timeoutMs),
-		});
+		const res = await this.send(`${this.base}${path}`, { method, headers, body: payload }, timeoutMs);
 		const text = await res.text();
 		let data: unknown;
 		let parseFailed = false;
@@ -88,7 +136,8 @@ export class ApiClient {
 		if (!res.ok) {
 			const err = data && typeof data === "object" && "error" in data ? (data as ApiError) : undefined;
 			const detail = err?.errors?.map((e) => `${e.path}: ${e.message}`).join("; ");
-			const message = `${method} ${path}: ${res.status} ${err?.error ?? (text.slice(0, 200) || res.statusText)}`;
+			const message =
+				res.status === 401 ? `${method} ${path}: ${UNAUTHORIZED_MESSAGE}` : `${method} ${path}: ${res.status} ${err?.error ?? (text.slice(0, 200) || res.statusText)}`;
 			throw new ApiRequestError(res.status, err, detail ? `${message} (${detail})` : message);
 		}
 		return data as T;
@@ -262,9 +311,9 @@ export class ApiClient {
 		return this.request("PUT", `/api/tobor/files/${encodePath(path)}`, req);
 	}
 
-	/** Fetch an absolute URL (artifacts origin) as bytes. */
+	/** Fetch an absolute URL (artifacts origin) as bytes; the token goes along only when the URL is on the node's own origin. */
 	async download(url: string): Promise<Uint8Array> {
-		const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+		const res = await this.send(url, { headers: {} }, 120_000);
 		if (!res.ok) throw new ApiRequestError(res.status, undefined, `GET ${url}: ${res.status} ${res.statusText}`);
 		return new Uint8Array(await res.arrayBuffer());
 	}
@@ -304,6 +353,13 @@ export type ReconnectingSocketOptions<In> = {
 	/** Called after each successful connect; `reconnect` is false the first time. */
 	onOpen?: (reconnect: boolean) => void;
 	onState?: (state: SocketState, detail?: string) => void;
+	/** Headers of the upgrade request, evaluated on every (re)connect (so a new token applies). */
+	headers?: () => Record<string, string>;
+	/**
+	 * The upgrade was refused with 401 (`sent` is the Authorization header that was sent). Retrying stops until this
+	 * resolves: true reconnects at once (the token changed), false leaves the socket waiting.
+	 */
+	onUnauthorized?: (sent: string | undefined) => Promise<boolean>;
 	minDelayMs?: number;
 	maxDelayMs?: number;
 	pingMs?: number;
@@ -323,6 +379,9 @@ export class ReconnectingSocket<In> {
 	private openedAt = 0;
 	/** Most recent socket/handler error for the current attempt, shown in the retry detail. */
 	private lastError: string | undefined;
+	/** The current attempt's upgrade was refused with 401; the Authorization header it sent. */
+	private refused = false;
+	private sentAuth: string | undefined;
 
 	constructor(private readonly options: ReconnectingSocketOptions<In>) {}
 
@@ -353,7 +412,10 @@ export class ReconnectingSocket<In> {
 		if (this.stopped) return;
 		this.options.onState?.("connecting");
 		this.lastError = undefined;
-		const ws = new WebSocket(this.options.url(), { handshakeTimeout: 10_000 });
+		const headers = this.options.headers?.() ?? {};
+		this.refused = false;
+		this.sentAuth = headers.authorization;
+		const ws = new WebSocket(this.options.url(), { handshakeTimeout: 10_000, ...(this.options.headers ? { headers } : {}) });
 		this.ws = ws;
 		const pingMs = this.options.pingMs ?? 20_000;
 		ws.on("open", () => {
@@ -396,12 +458,29 @@ export class ReconnectingSocket<In> {
 		});
 		ws.on("error", (err) => {
 			this.lastError = err instanceof Error ? err.message : String(err);
+			if (/\b401\b/.test(this.lastError)) this.refused = true;
 		});
 		ws.on("close", (code, reason) => {
 			if (this.ws !== ws) return;
 			clearInterval(this.ping);
 			this.ws = undefined;
 			if (this.stopped) return;
+			if (this.refused && this.options.onUnauthorized) {
+				// Retrying with the same token cannot help: wait for a new one instead of backing off in a loop.
+				this.refused = false;
+				this.openedAt = 0;
+				this.options.onState?.("waiting", "401: the node requires a token");
+				void this.options.onUnauthorized(this.sentAuth).then(
+					(retry) => {
+						if (retry && !this.stopped && !this.ws) {
+							this.attempt = 0;
+							this.connect();
+						}
+					},
+					() => {},
+				);
+				return;
+			}
 			if (this.openedAt > 0 && Date.now() - this.openedAt >= STABLE_MS) this.attempt = 0;
 			this.openedAt = 0;
 			const delay = Math.min(this.options.maxDelayMs ?? 15_000, (this.options.minDelayMs ?? 500) * 2 ** this.attempt);
