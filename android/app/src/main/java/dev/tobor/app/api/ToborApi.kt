@@ -1,5 +1,8 @@
 package dev.tobor.app.api
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
@@ -13,6 +16,8 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -34,18 +39,74 @@ class ToborApiException(
 ) : IOException(message)
 
 /**
- * REST + socket factory for one tobor node. [baseUrl] may be changed at runtime (e.g. from settings); every call reads
- * it fresh. Mutations send `Content-Type: application/json`; no `Origin` header is ever added (OkHttp adds none).
+ * REST + socket factory for one tobor node. [baseUrl] and [token] may be changed at runtime (e.g. from settings); every
+ * call reads them fresh. Mutations send `Content-Type: application/json`; no `Origin` header is ever added (OkHttp adds
+ * none). A non-empty [token] is sent as `Authorization: Bearer …` on every REST call and WebSocket upgrade to the node
+ * (one application interceptor, inherited by all derived clients) and never to any other host.
  */
-class ToborApi(baseUrl: String) {
+class ToborApi(baseUrl: String, token: String = "") {
     @Volatile
     var baseUrl: String = normalize(baseUrl)
         set(value) {
-            field = normalize(value)
+            val v = normalize(value)
+            if (v != field) resetAuthPrompt()
+            field = v
         }
+
+    @Volatile
+    var token: String = normalizeToken(token)
+        set(value) {
+            val v = normalizeToken(value)
+            if (v != field) resetAuthPrompt()
+            field = v
+        }
+
+    /** Points the api at one workspace's node. */
+    fun configure(baseUrl: String, token: String) {
+        this.baseUrl = baseUrl
+        this.token = token
+    }
+
+    private val _authRequired = MutableStateFlow(false)
+
+    /** True once the node answered 401 (missing/wrong [token]) and the user has not dismissed the prompt for it. */
+    val authRequired: StateFlow<Boolean> = _authRequired.asStateFlow()
+
+    @Volatile
+    private var authPromptMuted = false
+
+    /** User declined to enter a token: stay quiet (no re-prompt from polling/reconnects) until the node/token changes or a call succeeds. */
+    fun dismissAuthPrompt() {
+        authPromptMuted = true
+        _authRequired.value = false
+    }
+
+    private fun resetAuthPrompt() {
+        authPromptMuted = false
+        _authRequired.value = false
+    }
+
+    private val authInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        val node = baseUrl.toHttpUrlOrNull()
+        val toNode = node != null && request.url.scheme == node.scheme &&
+            request.url.host == node.host && request.url.port == node.port
+        val t = token
+        val outgoing = if (toNode && t.isNotEmpty()) request.newBuilder().header("Authorization", "Bearer $t").build() else request
+        val response = chain.proceed(outgoing)
+        if (toNode) {
+            if (response.code == 401) {
+                if (!authPromptMuted) _authRequired.value = true
+            } else if (response.code < 400) {
+                authPromptMuted = false
+            }
+        }
+        response
+    }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .callTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(authInterceptor)
         .build()
 
     /** Same pool/dispatcher, but no read/call timeouts: sockets are long-lived and we send our own pings. */
@@ -269,6 +330,9 @@ class ToborApi(baseUrl: String) {
     companion object {
         /** Trim whitespace and trailing slashes. */
         fun normalize(url: String): String = url.trim().trimEnd('/')
+
+        /** Bearer tokens are visible ASCII; dropping everything else (spaces, newlines from a paste) keeps the header valid. */
+        fun normalizeToken(token: String): String = token.filter { it.code in 33..126 }
 
         internal fun parseModelIds(raw: JsonObject): Pair<List<String>, String?> {
             val ids = (raw["models"] as? JsonArray).orEmpty().mapNotNull { e ->
