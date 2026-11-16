@@ -1,10 +1,13 @@
 import type { WhoamiResponse } from "../../api/types.js";
 import type { App } from "../app.js";
 import { showSessions } from "./sessions.js";
+import { ApiRequestError } from "../client.js";
 import { c } from "../theme.js";
 import {
 	type Address,
 	checkName,
+	checkToken,
+	type Endpoint,
 	DEFAULT_PORT,
 	findWorkspace,
 	formatAddress,
@@ -14,10 +17,24 @@ import {
 	removeWorkspace,
 	renameWorkspace,
 	setDefault,
+	setToken,
 	type Workspace,
 } from "../workspaces.js";
 
-function reachability(who: WhoamiResponse | undefined): string {
+/** `probe` result for display: the node's whoami, `"token"` when it answered 401, undefined when unreachable. */
+type Reach = WhoamiResponse | "token" | undefined;
+
+async function reach(target: Endpoint): Promise<Reach> {
+	try {
+		return await probe(target);
+	} catch (err) {
+		if (err instanceof ApiRequestError && err.status === 401) return "token";
+		throw err;
+	}
+}
+
+function reachability(who: Reach): string {
+	if (who === "token") return c.warning("○ needs a token");
 	return who ? c.success(`● reachable · ${who.host}`) : c.warning("○ unreachable");
 }
 
@@ -43,7 +60,7 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 		return added ? showWorkspaces(app, mode, added.name, hierarchy) : undefined;
 	}
 	app.flash("probing workspaces…");
-	const probes = await Promise.all(config.workspaces.map((ws) => probe(ws)));
+	const probes = await Promise.all(config.workspaces.map((ws) => reach(ws)));
 	const current = app.workspace;
 	const items = config.workspaces.map((ws, i) => ({
 		value: ws.name,
@@ -98,6 +115,29 @@ async function askAddress(app: App, title: string, initial?: Address): Promise<A
 	}
 }
 
+/**
+ * Ask for a node's bearer token (the node answered 401; `rejected`: the token it was given was refused). Resolves with the
+ * validated token, or undefined on Esc.
+ */
+export async function askToken(app: App, name: string, rejected: boolean): Promise<string | undefined> {
+	for (let problem = ""; ; ) {
+		const input = await app.ask(`${name} · token`, {
+			placeholder: "token",
+			lines: [
+				rejected ? c.error(`${name} rejected the token (HTTP 401).`) : c.warning(`${name} requires a token (HTTP 401).`),
+				c.dim("Enter the bearer token the node's proxy expects; it is saved in config.yml (0600). Esc cancels."),
+				...(problem ? [c.error(problem)] : []),
+			],
+		});
+		if (input === undefined) return undefined;
+		try {
+			return checkToken(input);
+		} catch (err) {
+			problem = (err as Error).message;
+		}
+	}
+}
+
 /** Ask for a valid, unused workspace name; an empty answer keeps `current` (when renaming). */
 async function askName(app: App, title: string, current = ""): Promise<string | undefined> {
 	for (let problem = ""; ; ) {
@@ -127,12 +167,19 @@ export async function addWorkspace(app: App, address?: Address): Promise<Workspa
 	return testAndSave(app, name, addr);
 }
 
-async function testAndSave(app: App, name: string, address: Address): Promise<Workspace | undefined> {
+/** Probe `address` (asking for a token if the node wants one), confirm, save. `token`: the workspace's current one, if any. */
+async function testAndSave(app: App, name: string, address: Address, token?: string): Promise<Workspace | undefined> {
 	app.flash(`testing ${formatAddress(address)}…`);
-	const who = await probe(address);
+	let who = await reach({ ...address, ...(token ? { token } : {}) });
+	while (who === "token") {
+		const given = await askToken(app, name, token !== undefined);
+		if (given === undefined) break;
+		token = given;
+		who = await reach({ ...address, token });
+	}
 	const save = await app.confirm(`save ${name}?`, [`${name}  ${formatAddress(address)}  ${reachability(who)}`]);
 	if (!save) return undefined;
-	app.updateConfig(putWorkspace(app.config, name, address));
+	app.updateConfig(putWorkspace(app.config, name, address, token));
 	app.flash(`saved workspace ${name} · ${app.configPath}`);
 	return findWorkspace(app.config, name);
 }
@@ -144,6 +191,7 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 	const isDefault = app.config.default === name;
 	const action = await app.pick(`${name} · ${formatAddress(ws)}`, [
 		{ value: "address", label: "change host/port" },
+		{ value: "token", label: "set token", description: ws.token ? "bearer token for this node's proxy (one is set; empty clears it)" : "bearer token for this node's proxy" },
 		{ value: "rename", label: "rename" },
 		{ value: "default", label: isDefault ? "unset default" : "set as default", description: "preselected in the picker" },
 		{ value: "remove", label: "remove", description: "forget it; the node is not touched" },
@@ -151,9 +199,25 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 	switch (action?.value) {
 		case "address": {
 			const address = await askAddress(app, `${name} · host:port`, ws);
-			const saved = address ? await testAndSave(app, name, address) : undefined;
+			const saved = address ? await testAndSave(app, name, address, ws.token) : undefined;
 			// Reconnect only when a new address was actually saved; Esc or declining keeps the open session.
 			if (saved && app.workspace?.name === name) app.connect(saved);
+			return name;
+		}
+		case "token": {
+			const input = await app.ask(`${name} · token`, {
+				placeholder: ws.token ? "(set)" : "token",
+				lines: [c.dim("Bearer token sent on every request to this node; empty clears it. Esc cancels.")],
+			});
+			if (input === undefined) return name;
+			try {
+				app.updateConfig(setToken(app.config, name, input.trim() === "" ? undefined : input));
+			} catch (err) {
+				app.flash(`✗ ${(err as Error).message}`);
+				return name;
+			}
+			const updated = findWorkspace(app.config, name);
+			if (updated && app.workspace?.name === name) app.connect(updated);
 			return name;
 		}
 		case "rename": {
@@ -185,7 +249,7 @@ export async function offerSave(app: App, address: Address): Promise<void> {
 	// updateConfig relabels the connection, so capture the old (address-derived) name and its last session first.
 	const from = app.workspace?.name ?? "";
 	const hadLast = from !== "" && app.lastSessionId() !== undefined;
-	app.updateConfig(putWorkspace(app.config, name, address));
+	app.updateConfig(putWorkspace(app.config, name, address, app.workspace?.token));
 	if (hadLast && from !== name) app.renamedWorkspace(from, name);
 	app.flash(`saved workspace ${name}`);
 }
