@@ -44,6 +44,7 @@ import dev.tobor.app.api.Whoami
 import dev.tobor.app.update.AppUpdater
 import dev.tobor.app.data.SettingsStore
 import dev.tobor.app.data.Workspace
+import dev.tobor.app.data.sameEndpoint
 import dev.tobor.app.ui.theme.FontFamilies
 import dev.tobor.app.ui.theme.fieldTextStyle
 import dev.tobor.app.ui.theme.Tag
@@ -85,7 +86,7 @@ fun SettingsScreen(
 
     // Reload when the active workspace changes (api.baseUrl is updated by AppNav's own effect, so re-point it here too).
     LaunchedEffect(activeIdx) {
-        api.baseUrl = store.baseUrl
+        api.configure(store.baseUrl, store.active.token)
         node = null
         nodeNote = null
         refreshNode()
@@ -174,6 +175,15 @@ fun SettingsScreen(
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+    // Connection mode: direct (plain host:port, no token) or token-gated proxy. A stored token implies token mode.
+    var tokenMode by remember { mutableStateOf(false) }
+    // The workspace being edited as stored: editing its URL to another host/port drops the token (re-entry required).
+    var editOriginalUrl by remember { mutableStateOf("") }
+    var editOriginalToken by remember { mutableStateOf("") }
+    var tokenDropped by remember { mutableStateOf(false) }
+    // The token actually used/saved: direct mode never carries one (the typed text is kept only so toggling is lossless).
+    val effectiveToken = if (tokenMode) token else ""
     var saved by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var resultText by remember { mutableStateOf<String?>(null) }
@@ -182,7 +192,8 @@ fun SettingsScreen(
     fun normalizeUrl(u: String): String {
         val trimmed = u.trim().trimEnd('/')
         return if (trimmed.isNotEmpty() && !trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-            "http://$trimmed"
+            // A bare host behind an auth proxy is https; a bare host:port on the LAN/tailnet is plain http.
+            (if (tokenMode) "https://" else "http://") + trimmed
         } else {
             trimmed
         }
@@ -190,8 +201,13 @@ fun SettingsScreen(
 
     fun resetForm() {
         editingIndex = null
+        editOriginalUrl = ""
+        editOriginalToken = ""
+        tokenDropped = false
         name = ""
         url = ""
+        token = ""
+        tokenMode = false
         saved = false
         resultText = null
         resultError = null
@@ -272,6 +288,11 @@ fun SettingsScreen(
                                 editingIndex = index
                                 name = workspace.name
                                 url = workspace.baseUrl
+                                token = workspace.token
+                                tokenMode = workspace.token.isNotEmpty()
+                                editOriginalUrl = workspace.baseUrl
+                                editOriginalToken = workspace.token
+                                tokenDropped = false
                                 saved = false
                                 resultText = null
                                 resultError = null
@@ -352,16 +373,52 @@ fun SettingsScreen(
                     ),
                 )
 
+                Text(
+                    "connection",
+                    fontFamily = FontFamilies.CourierPrime,
+                    fontSize = 12.sp,
+                    color = ToborColors.muted,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ModeChoice("direct", selected = !tokenMode) {
+                        tokenMode = false
+                        saved = false
+                    }
+                    ModeChoice("token proxy", selected = tokenMode) {
+                        tokenMode = true
+                        saved = false
+                    }
+                }
+                Text(
+                    if (tokenMode) {
+                        "https endpoint behind an auth proxy; requests carry Authorization: Bearer <token>."
+                    } else {
+                        "plain host:port, no authentication."
+                    },
+                    fontFamily = FontFamilies.CourierPrime,
+                    fontSize = 11.sp,
+                    color = ToborColors.subtle,
+                )
+
                 OutlinedTextField(
                     value = url,
                     onValueChange = {
                         url = it
                         saved = false
+                        // The stored token belongs to the old endpoint: pointing the workspace elsewhere requires re-entry.
+                        if (editingIndex != null && !tokenDropped && editOriginalToken.isNotEmpty() &&
+                            !sameEndpoint(normalizeUrl(it), editOriginalUrl)
+                        ) {
+                            tokenDropped = true
+                            if (token == editOriginalToken) token = ""
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = fieldTextStyle(),
                     singleLine = true,
-                    placeholder = { Text("http://127.0.0.1:7879", style = fieldTextStyle()) },
+                    placeholder = {
+                        Text(if (tokenMode) "https://tobor.example.com" else "http://127.0.0.1:7879", style = fieldTextStyle())
+                    },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = ToborColors.fg,
                         unfocusedTextColor = ToborColors.fg,
@@ -375,6 +432,45 @@ fun SettingsScreen(
                     ),
                 )
 
+                // An https URL in direct mode usually means an auth proxy: nudge towards token mode.
+                if (!tokenMode && url.trim().startsWith("https://")) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "https endpoint: behind an auth proxy?",
+                            fontFamily = FontFamilies.CourierPrime,
+                            fontSize = 12.sp,
+                            color = ToborColors.gold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedAction("use token") {
+                            tokenMode = true
+                            saved = false
+                        }
+                    }
+                }
+
+                if (tokenMode) {
+                    TokenField(
+                        value = token,
+                        onValueChange = {
+                            token = it
+                            saved = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (normalizeUrl(url).startsWith("http://")) {
+                        Text(
+                            "warning: http:// sends the token unencrypted.",
+                            fontFamily = FontFamilies.CourierPrime,
+                            fontSize = 12.sp,
+                            color = ToborColors.error,
+                        )
+                    }
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
@@ -383,11 +479,17 @@ fun SettingsScreen(
                             resultError = null
                             scope.launch {
                                 try {
-                                    val testApi = ToborApi(normalizeUrl(url))
+                                    val testApi = ToborApi(normalizeUrl(url), effectiveToken)
                                     val w = testApi.whoami()
                                     resultText = "host · ${w.host}\nversion · ${w.version}"
                                 } catch (e: CancellationException) {
                                     throw e
+                                } catch (e: ToborApiException) {
+                                    resultError = if (e.status == 401) {
+                                        "401 unauthorized: the node needs a valid bearer token"
+                                    } else {
+                                        e.message ?: e.toString()
+                                    }
                                 } catch (e: Exception) {
                                     resultError = e.message ?: e.toString()
                                 }
@@ -408,7 +510,7 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             val normalizedUrl = normalizeUrl(url)
-                            val workspace = Workspace(name, normalizedUrl)
+                            val workspace = Workspace(name, normalizedUrl, effectiveToken)
                             val idx = editingIndex
                             if (idx != null) {
                                 store.update(idx, workspace)
@@ -418,7 +520,7 @@ fun SettingsScreen(
                             saved = true
                             resetForm()
                         },
-                        enabled = name.isNotBlank() && url.isNotBlank(),
+                        enabled = name.isNotBlank() && url.isNotBlank() && (!tokenMode || token.isNotEmpty()),
                         shape = RoundedCornerShape(4.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = ToborColors.gold,
@@ -485,5 +587,21 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+}
+
+/** One side of the direct / token-proxy switch: filled gold when selected. */
+@Composable
+private fun ModeChoice(label: String, selected: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(4.dp),
+        border = BorderStroke(1.dp, if (selected) ToborColors.gold else ToborColors.muted),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = if (selected) ToborColors.gold else androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = if (selected) ToborColors.bg else ToborColors.fg,
+        ),
+    ) {
+        Text(label, fontFamily = FontFamilies.Righteous, fontSize = 14.sp)
     }
 }

@@ -41,6 +41,7 @@ import dev.tobor.app.ui.screens.SchedulesScreen
 import dev.tobor.app.ui.screens.SessionScreen
 import dev.tobor.app.ui.screens.SessionsScreen
 import dev.tobor.app.ui.screens.SettingsScreen
+import dev.tobor.app.ui.screens.TokenPromptDialog
 import dev.tobor.app.ui.theme.ToborColors
 import dev.tobor.app.ui.theme.ToborTheme
 import dev.tobor.app.update.AppUpdater
@@ -63,7 +64,7 @@ class MainActivity : ComponentActivity() {
 fun AppNav() {
     val context = LocalContext.current
     val store = remember { SettingsStore(context) }
-    val api = remember { ToborApi(store.baseUrl) }
+    val api = remember { ToborApi(store.baseUrl, store.active.token) }
     val nav = rememberNavController()
     val updater = remember { AppUpdater(context) }
     val scope = rememberCoroutineScope()
@@ -102,101 +103,129 @@ fun AppNav() {
     }
 
     val activeBaseUrl by store.activeIndexFlow.collectAsState()
+    store.workspacesFlow.collectAsState().value // recompose when the active workspace is edited
+    val activeWorkspace = store.active
 
-    LaunchedEffect(activeBaseUrl) {
-        api.baseUrl = store.baseUrl
+    // Bumped after a token is saved from the 401 prompt: re-creates the screens so they reload with the new token.
+    var retryNonce by remember { mutableStateOf(0) }
+
+    // Keyed on the workspace itself (not just the index) so editing the active node's URL or token takes effect.
+    LaunchedEffect(activeWorkspace) {
+        api.configure(activeWorkspace.baseUrl, activeWorkspace.token)
         advertisedHosts = emptySet()
         refreshAdvertisedHosts()
     }
 
+    val authRequired by api.authRequired.collectAsState()
+    if (authRequired) {
+        TokenPromptDialog(
+            workspaceName = activeWorkspace.name,
+            hadToken = activeWorkspace.token.isNotEmpty(),
+            onSave = { token ->
+                store.update(activeBaseUrl, activeWorkspace.copy(token = token))
+                api.token = token
+                api.resetAuthPrompt()
+                retryNonce++
+            },
+            onDismiss = { api.dismissAuthPrompt() },
+        )
+    }
+
     val platformUriHandler = LocalUriHandler.current
     val uriHandler = remember(platformUriHandler) {
-        ServerHostUriHandler(platformUriHandler, baseUrl = { api.baseUrl }, advertisedHosts = { advertisedHosts })
+        ServerHostUriHandler(
+            platformUriHandler,
+            baseUrl = { api.baseUrl },
+            advertisedHosts = { advertisedHosts },
+            tokenMode = { api.token.isNotEmpty() },
+        )
     }
 
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
         Box(Modifier.fillMaxSize().background(ToborColors.bg)) {
-            NavHost(
-                navController = nav,
-                startDestination = "sessions",
-                enterTransition = { fadeIn(animationSpec = tween(200)) },
-                exitTransition = { fadeOut(animationSpec = tween(200)) },
-                popEnterTransition = { fadeIn(animationSpec = tween(200)) },
-                popExitTransition = { fadeOut(animationSpec = tween(200)) },
-            ) {
-                composable("sessions") {
-                    // Key on activeBaseUrl so the screen fully restarts on workspace switch
-                    androidx.compose.runtime.key(activeBaseUrl) {
-                        SessionsScreen(
+            androidx.compose.runtime.key(retryNonce) {
+                NavHost(
+                    navController = nav,
+                    startDestination = "sessions",
+                    enterTransition = { fadeIn(animationSpec = tween(200)) },
+                    exitTransition = { fadeOut(animationSpec = tween(200)) },
+                    popEnterTransition = { fadeIn(animationSpec = tween(200)) },
+                    popExitTransition = { fadeOut(animationSpec = tween(200)) },
+                ) {
+                    composable("sessions") {
+                        // Key on activeBaseUrl so the screen fully restarts on workspace switch
+                        androidx.compose.runtime.key(activeBaseUrl) {
+                            SessionsScreen(
+                                api = api,
+                                store = store,
+                                onOpen = { id -> nav.navigate("session/$id") },
+                                onNew = { nav.navigate("new") },
+                                onSettings = { nav.navigate("settings") },
+                                onSchedules = { nav.navigate("schedules") },
+                                onArtifacts = { nav.navigate("artifacts") },
+                            )
+                        }
+                    }
+                    composable("new") {
+                        NewSessionScreen(
                             api = api,
-                            store = store,
-                            onOpen = { id -> nav.navigate("session/$id") },
-                            onNew = { nav.navigate("new") },
-                            onSettings = { nav.navigate("settings") },
-                            onSchedules = { nav.navigate("schedules") },
-                            onArtifacts = { nav.navigate("artifacts") },
+                            onCreated = { id -> nav.navigate("session/$id") { popUpTo("sessions") } },
+                            onBack = { nav.popBackStack() },
                         )
                     }
-                }
-                composable("new") {
-                    NewSessionScreen(
-                        api = api,
-                        onCreated = { id -> nav.navigate("session/$id") { popUpTo("sessions") } },
-                        onBack = { nav.popBackStack() },
-                    )
-                }
-                composable(
-                    "session/{id}",
-                    arguments = listOf(navArgument("id") { type = NavType.LongType }),
-                ) { entry ->
-                    val id = entry.arguments?.getLong("id") ?: 0L
-                    SessionScreen(
-                        api = api,
-                        sessionId = id,
-                        onBack = { nav.popBackStack() },
-                        onOpenConversation = { cid -> nav.navigate("session/$cid") },
-                    )
-                }
-                composable("schedules") {
-                    SchedulesScreen(
-                        api = api,
-                        onOpenSession = { id -> nav.navigate("session/$id") },
-                        onNew = { nav.navigate("schedules/new") },
-                        onEdit = { id -> nav.navigate("schedules/edit/$id") },
-                        onBack = { nav.popBackStack() },
-                    )
-                }
-                composable("schedules/new") {
-                    ScheduleFormScreen(
-                        api = api,
-                        onDone = { nav.popBackStack() },
-                        onBack = { nav.popBackStack() },
-                    )
-                }
-                composable(
-                    "schedules/edit/{id}",
-                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
-                ) { entry ->
-                    ScheduleFormScreen(
-                        api = api,
-                        editId = entry.arguments?.getString("id"),
-                        onDone = { nav.popBackStack() },
-                        onBack = { nav.popBackStack() },
-                    )
-                }
-                composable("artifacts") {
-                    ArtifactsScreen(
-                        api = api,
-                        onBack = { nav.popBackStack() },
-                    )
-                }
-                composable("settings") {
-                    SettingsScreen(
-                        api = api,
-                        store = store,
-                        updater = updater,
-                        onBack = { nav.popBackStack() },
-                    )
+                    composable(
+                        "session/{id}",
+                        arguments = listOf(navArgument("id") { type = NavType.LongType }),
+                    ) { entry ->
+                        val id = entry.arguments?.getLong("id") ?: 0L
+                        SessionScreen(
+                            api = api,
+                            sessionId = id,
+                            onBack = { nav.popBackStack() },
+                            onOpenConversation = { cid -> nav.navigate("session/$cid") },
+                        )
+                    }
+                    composable("schedules") {
+                        SchedulesScreen(
+                            api = api,
+                            onOpenSession = { id -> nav.navigate("session/$id") },
+                            onNew = { nav.navigate("schedules/new") },
+                            onEdit = { id -> nav.navigate("schedules/edit/$id") },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
+                    composable("schedules/new") {
+                        ScheduleFormScreen(
+                            api = api,
+                            onDone = { nav.popBackStack() },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
+                    composable(
+                        "schedules/edit/{id}",
+                        arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                    ) { entry ->
+                        ScheduleFormScreen(
+                            api = api,
+                            editId = entry.arguments?.getString("id"),
+                            onDone = { nav.popBackStack() },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
+                    composable("artifacts") {
+                        ArtifactsScreen(
+                            api = api,
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
+                    composable("settings") {
+                        SettingsScreen(
+                            api = api,
+                            store = store,
+                            updater = updater,
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
                 }
             }
         }
