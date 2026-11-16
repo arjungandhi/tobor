@@ -68,6 +68,12 @@ default. `tobor workspace list|add <name> <host:port> [--token <token>]|remove <
 the shell (`use` sets `default`). Runtime state (last open session per workspace) lives in `$XDG_STATE_HOME/tobor/state.json`. An old
 `tui.json` is migrated once and renamed `tui.json.migrated`.
 
+Connection modes are chosen when a workspace is added (first-run wizard, picker `a`, `tobor workspace add`): *direct*
+(plain `host:port`, no token; the default) or *token-gated proxy* (asks for the bearer token right away and stores it). The
+mode is not a config field: a workspace with a `token` is in token mode. An `https://` address preselects token mode in the
+TUI; `tobor workspace add` takes `--token`, or on a terminal asks for one (input hidden, empty = direct) when the address is
+https. Re-addressing a workspace asks again, since the token is dropped when the host or port changes.
+
 A workspace behind a reverse proxy that demands `Authorization: Bearer <token>` takes an optional `token`: it is sent on
 every request to that workspace's own base URL (REST, WebSockets, the reachability probe) and nowhere else. When a node
 answers 401 the TUI asks for the token, saves it in `config.yml` and retries; a wrong token is asked for again. Settings

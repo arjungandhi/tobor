@@ -115,16 +115,18 @@ async function askAddress(app: App, title: string, initial?: Address): Promise<A
 	}
 }
 
-/**
- * Ask for a node's bearer token (the node answered 401; `rejected`: the token it was given was refused). Resolves with the
- * validated token, or undefined on Esc.
- */
-export async function askToken(app: App, name: string, rejected: boolean): Promise<string | undefined> {
+/** Why a token is asked for: chosen at setup, the node answered 401, or the token it was given was refused. */
+export type TokenReason = "setup" | "required" | "rejected";
+
+/** Ask for a node's bearer token. Resolves with the validated token, or undefined on Esc. */
+export async function askToken(app: App, name: string, reason: TokenReason): Promise<string | undefined> {
 	for (let problem = ""; ; ) {
 		const input = await app.ask(`${name} · token`, {
 			placeholder: "token",
 			lines: [
-				rejected ? c.error(`${name} rejected the token (HTTP 401).`) : c.warning(`${name} requires a token (HTTP 401).`),
+				...(reason === "setup"
+					? []
+					: [reason === "rejected" ? c.error(`${name} rejected the token (HTTP 401).`) : c.warning(`${name} requires a token (HTTP 401).`)]),
 				c.dim("Enter the bearer token the node's proxy expects; it is saved in config.yml (0600). Esc cancels."),
 				...(problem ? [c.error(problem)] : []),
 			],
@@ -157,14 +159,35 @@ async function askName(app: App, title: string, current = ""): Promise<string | 
 	}
 }
 
-/** Wizard: name, address, connection test, save. Resolves with the saved workspace. */
+/**
+ * How to connect: direct (plain host:port, no token) or through a token-gated auth proxy (asks for the bearer token now).
+ * An https address preselects the proxy mode. Resolves with the token (undefined: direct), or `"cancel"` on Esc.
+ */
+async function chooseMode(app: App, name: string, address: Address, hadToken = false): Promise<{ token?: string } | "cancel"> {
+	const picked = await app.pick(
+		`${name} · how to connect`,
+		[
+			{ value: "direct", label: "direct", description: "plain host:port, no token (default)" },
+			{ value: "token", label: "token-gated proxy", description: "the node sits behind an auth proxy that wants Authorization: Bearer <token>" },
+		],
+		{ lines: [c.dim(formatAddress(address))], hint: "Enter choose · Esc cancel", selected: hadToken || address.host.startsWith("https://") ? 1 : 0 },
+	);
+	if (!picked) return "cancel";
+	if (picked.value !== "token") return {};
+	const token = await askToken(app, name, "setup");
+	return token === undefined ? "cancel" : { token };
+}
+
+/** Wizard: name, address, connection mode (direct or token), connection test, save. Resolves with the saved workspace. */
 export async function addWorkspace(app: App, address?: Address): Promise<Workspace | undefined> {
 	const first = app.config.workspaces.length === 0;
 	const name = await askName(app, first ? "new workspace · name" : "add workspace · name");
 	if (name === undefined) return undefined;
 	const addr = address ?? (await askAddress(app, `${name} · host:port`));
 	if (addr === undefined) return undefined;
-	return testAndSave(app, name, addr);
+	const mode = await chooseMode(app, name, addr);
+	if (mode === "cancel") return undefined;
+	return testAndSave(app, name, addr, mode.token);
 }
 
 /** Probe `address` (asking for a token if the node wants one), confirm, save. `token`: the workspace's current one, if any. */
@@ -172,7 +195,7 @@ async function testAndSave(app: App, name: string, address: Address, token?: str
 	app.flash(`testing ${formatAddress(address)}…`);
 	let who = await reach({ ...address, ...(token ? { token } : {}) });
 	while (who === "token") {
-		const given = await askToken(app, name, token !== undefined);
+		const given = await askToken(app, name, token !== undefined ? "rejected" : "required");
 		if (given === undefined) break;
 		token = given;
 		who = await reach({ ...address, token });
@@ -199,7 +222,10 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 	switch (action?.value) {
 		case "address": {
 			const address = await askAddress(app, `${name} · host:port`, ws);
-			const saved = address ? await testAndSave(app, name, address, ws.token) : undefined;
+			// A moved address drops the token (see putWorkspace), so ask for the connection mode again; the same address keeps it.
+			const moved = address !== undefined && (address.host !== ws.host || address.port !== ws.port);
+			const mode = address && moved ? await chooseMode(app, name, address, ws.token !== undefined) : { ...(ws.token ? { token: ws.token } : {}) };
+			const saved = address && mode !== "cancel" ? await testAndSave(app, name, address, mode.token) : undefined;
 			// Reconnect only when a new address was actually saved; Esc or declining keeps the open session.
 			if (saved && app.workspace?.name === name) app.connect(saved);
 			return name;
