@@ -81,7 +81,8 @@ class ToborApi(baseUrl: String, token: String = "") {
         _authRequired.value = false
     }
 
-    private fun resetAuthPrompt() {
+    /** Clears the 401 state and un-mutes the prompt (call after the user saved a token, even an unchanged one, so a retry can re-prompt). */
+    fun resetAuthPrompt() {
         authPromptMuted = false
         _authRequired.value = false
     }

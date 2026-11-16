@@ -85,7 +85,7 @@ fun SettingsScreen(
 
     // Reload when the active workspace changes (api.baseUrl is updated by AppNav's own effect, so re-point it here too).
     LaunchedEffect(activeIdx) {
-        api.baseUrl = store.baseUrl
+        api.configure(store.baseUrl, store.active.token)
         node = null
         nodeNote = null
         refreshNode()
@@ -174,6 +174,7 @@ fun SettingsScreen(
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var resultText by remember { mutableStateOf<String?>(null) }
@@ -192,6 +193,7 @@ fun SettingsScreen(
         editingIndex = null
         name = ""
         url = ""
+        token = ""
         saved = false
         resultText = null
         resultError = null
@@ -272,6 +274,7 @@ fun SettingsScreen(
                                 editingIndex = index
                                 name = workspace.name
                                 url = workspace.baseUrl
+                                token = workspace.token
                                 saved = false
                                 resultText = null
                                 resultError = null
@@ -375,6 +378,15 @@ fun SettingsScreen(
                     ),
                 )
 
+                TokenField(
+                    value = token,
+                    onValueChange = {
+                        token = it
+                        saved = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
@@ -383,11 +395,17 @@ fun SettingsScreen(
                             resultError = null
                             scope.launch {
                                 try {
-                                    val testApi = ToborApi(normalizeUrl(url))
+                                    val testApi = ToborApi(normalizeUrl(url), token)
                                     val w = testApi.whoami()
                                     resultText = "host · ${w.host}\nversion · ${w.version}"
                                 } catch (e: CancellationException) {
                                     throw e
+                                } catch (e: ToborApiException) {
+                                    resultError = if (e.status == 401) {
+                                        "401 unauthorized: the node needs a valid bearer token"
+                                    } else {
+                                        e.message ?: e.toString()
+                                    }
                                 } catch (e: Exception) {
                                     resultError = e.message ?: e.toString()
                                 }
@@ -408,7 +426,7 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             val normalizedUrl = normalizeUrl(url)
-                            val workspace = Workspace(name, normalizedUrl)
+                            val workspace = Workspace(name, normalizedUrl, token)
                             val idx = editingIndex
                             if (idx != null) {
                                 store.update(idx, workspace)
