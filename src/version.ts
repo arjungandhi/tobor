@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { assetPath } from "./assets.js";
 
 /** The pinned pi-durable version (package.json pins it exactly). */
-export const PI_DURABLE_VERSION = "1.5.1";
+export const PI_DURABLE_VERSION = "1.5.2";
 
 /** Minimum Bun version (package.json `engines.bun`). */
 export const MIN_BUN = "1.4.4";
