@@ -232,6 +232,34 @@ describe("viewer", () => {
 		expect((await fetch(`${base}/art/r/${rev}/`, { method: "POST" })).status).toBe(405);
 	});
 
+	it("exports a self-contained HTML attachment without the wrapper", async () => {
+		for (const path of [`/art/r/${rev}.html`, `/art/${projectId}/demo.html`]) {
+			const res = await fetch(base + path);
+			expect(res.status, path).toBe(200);
+			expect(res.headers.get("content-type"), path).toContain("text/html");
+			expect(res.headers.get("content-disposition"), path).toBe('attachment; filename="demo-r1.html"');
+			expect(res.headers.get("cache-control"), path).toBe("private, max-age=31536000, immutable");
+			const body = await res.text();
+			expect(res.headers.get("content-length"), path).toBe(String(Buffer.byteLength(body)));
+			expect(body, path).toContain("hi");
+			expect(body, path).toContain("print-color-adjust");
+			expect(body, path).toContain("data:image/svg+xml;base64,");
+			expect(body, path).not.toContain("Export as HTML");
+			expect(body, path).not.toContain("Export as PDF");
+			expect(body, path).not.toContain("<iframe");
+			expect(body, path).not.toContain("<base");
+		}
+		for (const path of [`/art/${projectId}/nope.html`, "/art/r/rev_000000000000.html"]) {
+			expect((await fetch(base + path)).status, path).toBe(404);
+		}
+		for (const path of [`/art/r/${rev}.html`, `/art/${projectId}/demo.html`]) {
+			const head = await fetch(base + path, { method: "HEAD" });
+			expect(head.status, path).toBe(200);
+			expect(head.headers.get("content-disposition"), path).toBe('attachment; filename="demo-r1.html"');
+			expect(await head.text(), path).toBe("");
+		}
+	});
+
 	it("renders, caches and streams the PDF (skipped without Chromium)", async (ctx) => {
 		if (!(await probeChrome()).found) ctx.skip();
 		const first = await fetch(`${base}/art/r/${rev}.pdf`);

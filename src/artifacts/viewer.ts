@@ -3,7 +3,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, join, relative } from "node:path";
 import type { ArtifactService, PdfResult } from "../host.js";
-import { mimeFor } from "./export.js";
+import { exportHtml, mimeFor } from "./export.js";
 import { sanitizeHtml } from "./sanitize.js";
 
 /** Header CSP on every artifact response. */
@@ -40,10 +40,12 @@ export type ArtifactHandler = (req: IncomingMessage, res: ServerResponse) => Pro
 const ID = "[A-Za-z0-9_-]+";
 const SLUG = "[a-z0-9][a-z0-9-]*";
 const REV_PDF = new RegExp(`^/art/r/(${ID})\\.pdf$`);
+const REV_HTML = new RegExp(`^/art/r/(${ID})\\.html$`);
 const REV_BARE = new RegExp(`^/art/r/(${ID})$`);
 const REV_INDEX = new RegExp(`^/art/r/(${ID})/(?:index\\.html)?$`);
 const REV_ASSET = new RegExp(`^/art/r/(${ID})/(assets/.+)$`);
 const LATEST_PDF = new RegExp(`^/art/(${ID})/(${SLUG})\\.pdf$`);
+const LATEST_HTML = new RegExp(`^/art/(${ID})/(${SLUG})\\.html$`);
 const LATEST_REV = new RegExp(`^/art/(${ID})/(${SLUG})/rev$`);
 const LATEST = new RegExp(`^/art/(${ID})/(${SLUG})/?$`);
 
@@ -122,7 +124,7 @@ function wrapperPage(title: string, rev: string, revUrl: string): string {
 `;
 }
 
-/** Viewer routes: `/art/<projectId>/<slug>` (live wrapper around the latest revision), `/art/<projectId>/<slug>/rev`, `/art/r/<rev>/`, `/art/r/<rev>/assets/*`, and `.pdf` of both. */
+/** Viewer routes: `/art/<projectId>/<slug>` (live wrapper around the latest revision), `/art/<projectId>/<slug>/rev`, `/art/r/<rev>/`, `/art/r/<rev>/assets/*`, and `.pdf` / `.html` exports of both. */
 export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 	const servePdf = async (res: ServerResponse, head: boolean, rev: string, name: string): Promise<void> => {
 		const result: PdfResult = await service.pdf(rev);
@@ -143,6 +145,27 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 		});
 		if (head) res.end();
 		else createReadStream(result.path).pipe(res);
+	};
+
+	const serveHtmlExport = async (res: ServerResponse, head: boolean, rev: string, name: string): Promise<void> => {
+		const dir = await service.revisionDir(rev);
+		let body: string | undefined;
+		try {
+			body = dir ? exportHtml(dir) : undefined;
+		} catch {
+			body = undefined;
+		}
+		if (body === undefined) {
+			send(res, 404, "Not found\n");
+			return;
+		}
+		res.writeHead(200, {
+			"Content-Type": "text/html; charset=utf-8",
+			"Content-Length": Buffer.byteLength(body),
+			"Content-Disposition": `attachment; filename="${name}.html"`,
+			"Cache-Control": "private, max-age=31536000, immutable",
+		});
+		res.end(head ? undefined : body);
 	};
 
 	const serveFile = async (res: ServerResponse, head: boolean, file: string): Promise<void> => {
@@ -171,6 +194,12 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			else await servePdf(res, head, revision.rev, `${revision.slug}-r${revision.revision}`);
 			return true;
 		}
+		if ((m = REV_HTML.exec(path))) {
+			const revision = await service.revision(m[1]!);
+			if (!revision) send(res, 404, "Not found\n");
+			else await serveHtmlExport(res, head, revision.rev, `${revision.slug}-r${revision.revision}`);
+			return true;
+		}
 		if ((m = REV_BARE.exec(path))) {
 			send(res, 301, "", { Location: `/art/r/${m[1]}/` });
 			return true;
@@ -186,6 +215,12 @@ export function createArtifactHandler(service: ViewerService): ArtifactHandler {
 			const latest = await service.latest(m[1]!, m[2]!);
 			if (!latest) send(res, 404, "Not found\n");
 			else await servePdf(res, head, latest.rev, `${latest.slug}-r${latest.revision}`);
+			return true;
+		}
+		if ((m = LATEST_HTML.exec(path))) {
+			const latest = await service.latest(m[1]!, m[2]!);
+			if (!latest) send(res, 404, "Not found\n");
+			else await serveHtmlExport(res, head, latest.rev, `${latest.slug}-r${latest.revision}`);
 			return true;
 		}
 		if ((m = LATEST_REV.exec(path))) {
