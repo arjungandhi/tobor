@@ -45,26 +45,27 @@ class ToborApiException(
  * (one application interceptor, inherited by all derived clients) and never to any other host.
  */
 class ToborApi(baseUrl: String, token: String = "") {
-    @Volatile
-    var baseUrl: String = normalize(baseUrl)
-        set(value) {
-            val v = normalize(value)
-            if (v != field) resetAuthPrompt()
-            field = v
-        }
+    /** Node address and its token as one immutable value, so readers never see a new host with the old token. */
+    private class Config(val baseUrl: String, val token: String)
 
     @Volatile
-    var token: String = normalizeToken(token)
-        set(value) {
-            val v = normalizeToken(value)
-            if (v != field) resetAuthPrompt()
-            field = v
-        }
+    private var config = Config(normalize(baseUrl), normalizeToken(token))
 
-    /** Points the api at one workspace's node. */
+    var baseUrl: String
+        get() = config.baseUrl
+        set(value) = configure(value, config.token)
+
+    var token: String
+        get() = config.token
+        set(value) = configure(config.baseUrl, value)
+
+    /** Points the api at one workspace's node; host and token switch together in a single reference swap. */
+    @Synchronized
     fun configure(baseUrl: String, token: String) {
-        this.baseUrl = baseUrl
-        this.token = token
+        val next = Config(normalize(baseUrl), normalizeToken(token))
+        val prev = config
+        config = next
+        if (next.baseUrl != prev.baseUrl || next.token != prev.token) resetAuthPrompt()
     }
 
     private val _authRequired = MutableStateFlow(false)
@@ -89,10 +90,11 @@ class ToborApi(baseUrl: String, token: String = "") {
 
     private val authInterceptor = Interceptor { chain ->
         val request = chain.request()
-        val node = baseUrl.toHttpUrlOrNull()
+        val cfg = config // one read: host and token always belong together
+        val node = cfg.baseUrl.toHttpUrlOrNull()
         val toNode = node != null && request.url.scheme == node.scheme &&
             request.url.host == node.host && request.url.port == node.port
-        val t = token
+        val t = cfg.token
         val outgoing = if (toNode && t.isNotEmpty()) request.newBuilder().header("Authorization", "Bearer $t").build() else request
         val response = chain.proceed(outgoing)
         if (toNode) {
@@ -269,7 +271,7 @@ class ToborApi(baseUrl: String, token: String = "") {
     // ─── Internals ───────────────────────────────────────────────────────────────────────────────────────────────
 
     private fun urlFor(path: String, query: Map<String, String>): HttpUrl {
-        val builder = (baseUrl + path).toHttpUrl().newBuilder()
+        val builder = (config.baseUrl + path).toHttpUrl().newBuilder()
         for ((k, v) in query) builder.addQueryParameter(k, v)
         return builder.build()
     }

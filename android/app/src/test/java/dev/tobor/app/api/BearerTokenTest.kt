@@ -68,6 +68,17 @@ class BearerTokenTest {
     }
 
     @Test
+    fun configureSwitchesHostAndTokenTogether() = withServer(200) { port, seen ->
+        // Old workspace: localhost + "old"; new workspace: 127.0.0.1 + "new".
+        val api = ToborApi("http://localhost:$port", "old")
+        api.configure("http://127.0.0.1:$port", "new")
+        // A request still aimed at the old host never carries a token; the new host gets only the new token.
+        api.wsClient.newCall(okhttp3.Request.Builder().url("http://localhost:$port/api/whoami").build()).execute().close()
+        api.callQuietly()
+        assertEquals(listOf<String?>(null, "Bearer new"), seen)
+    }
+
+    @Test
     fun unauthorizedRaisesPromptOnceUntilDismissed() = withServer(401) { port, _ ->
         val api = ToborApi("http://127.0.0.1:$port")
         assertFalse(api.authRequired.value)
