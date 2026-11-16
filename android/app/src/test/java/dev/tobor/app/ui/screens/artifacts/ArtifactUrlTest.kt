@@ -61,6 +61,23 @@ class ArtifactUrlTest {
         assertEquals(u, rewriteServerHost(u, "http://127.0.0.1:7879", setOf(fqdn)))
     }
 
+    @Test fun tokenModeOpensAdvertisedArtifactUrlAsIs() {
+        val art = "https://tobor-artifacts.hospital.monky.cloud/art/p/slug?x=1"
+        val ws = "https://tobor.hospital.monky.cloud"
+        val advertised = setOf("tobor-artifacts.hospital.monky.cloud", "tobor.hospital.monky.cloud")
+        assertEquals(art, rewriteServerHost(art, ws, advertised, tokenMode = true))
+        // Direct mode (same inputs) still rewrites to the workspace host.
+        assertEquals(
+            "https://tobor.hospital.monky.cloud/art/p/slug?x=1",
+            rewriteServerHost(art, ws, advertised, tokenMode = false),
+        )
+    }
+
+    @Test fun tokenModeLeavesLoopbackAlone() {
+        val u = "http://127.0.0.1:7880/art/a/b"
+        assertEquals(u, rewriteServerHost(u, base, tokenMode = true))
+    }
+
     @Test fun advertisedHostsOfParsesHostsAndSkipsBlanks() {
         assertEquals(
             setOf(fqdn),

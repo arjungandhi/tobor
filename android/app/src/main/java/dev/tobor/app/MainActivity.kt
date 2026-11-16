@@ -133,7 +133,12 @@ fun AppNav() {
 
     val platformUriHandler = LocalUriHandler.current
     val uriHandler = remember(platformUriHandler) {
-        ServerHostUriHandler(platformUriHandler, baseUrl = { api.baseUrl }, advertisedHosts = { advertisedHosts })
+        ServerHostUriHandler(
+            platformUriHandler,
+            baseUrl = { api.baseUrl },
+            advertisedHosts = { advertisedHosts },
+            tokenMode = { api.token.isNotEmpty() },
+        )
     }
 
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
