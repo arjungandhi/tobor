@@ -7,12 +7,13 @@ import {
 	RESTART_REMINDER,
 	upgradeErrorMessage,
 	WAIT_TIMEOUT_MS,
+	WAIT_UNAUTHORIZED_MESSAGE,
 	type WaitResult,
 	waitForNode,
 } from "../../tui/node-upgrade.js";
 import {
-	type Address,
 	baseUrl,
+	type Endpoint,
 	configPath,
 	formatAddress,
 	loadClientConfig,
@@ -42,7 +43,7 @@ export async function run(args: CliArgs): Promise<number> {
 }
 
 /** A workspace name or `host:port` resolved with the client config, as the TUI does; a string is the error. */
-export function resolveNode(name: string): { address: Address; label: string } | string {
+export function resolveNode(name: string): { address: Endpoint; label: string } | string {
 	const notice = migrateLegacy();
 	if (notice) process.stderr.write(`${notice}\n`);
 	const start = resolveStart(loadClientConfig(configPath()), name);
@@ -109,12 +110,13 @@ export async function upgradeLocal(options: {
 
 /** Everything `upgradeNode`/`restartNode` take besides the action. */
 export type NodeOptions = {
-	address: Address;
+	/** The node; its `token`, if any, is sent as a bearer token. */
+	address: Endpoint;
 	/** Workspace name (or `host:port`) for messages. */
 	label: string;
 	io?: Io;
 	/** Whoami of the node; undefined when it does not answer. Default `probe`. */
-	probe?: (address: Address) => Promise<WhoamiResponse | undefined>;
+	probe?: (address: Endpoint) => Promise<WhoamiResponse | undefined>;
 	sleep?: (ms: number) => Promise<void>;
 	now?: () => number;
 	timeoutMs?: number;
@@ -126,11 +128,8 @@ export type NodeOptions = {
 export async function upgradeNode(options: NodeOptions & { check: boolean }): Promise<number> {
 	const io = options.io ?? stdio;
 	const cli = options.cli ?? { version: VERSION, build: BUILD };
-	const who = await (options.probe ?? ((a) => probe(a, 5000)))(options.address);
-	if (!who) {
-		io.err(`tobor upgrade: cannot reach ${options.label} (${formatAddress(options.address)})\n`);
-		return 1;
-	}
+	const who = await reach("upgrade", options, io);
+	if (!who) return 1;
 	if (options.check) {
 		const latest = who.latest_version;
 		io.out(
@@ -140,7 +139,7 @@ export async function upgradeNode(options: NodeOptions & { check: boolean }): Pr
 	}
 	let res;
 	try {
-		res = await new ApiClient(baseUrl(options.address)).upgrade();
+		res = await new ApiClient(baseUrl(options.address), options.address.token).upgrade();
 	} catch (err) {
 		io.err(`tobor upgrade: ${options.label}: ${upgradeErrorMessage(err)}\n`);
 		return 1;
@@ -157,13 +156,10 @@ export async function upgradeNode(options: NodeOptions & { check: boolean }): Pr
 export async function restartNode(options: NodeOptions): Promise<number> {
 	const io = options.io ?? stdio;
 	const cli = options.cli ?? { version: VERSION, build: BUILD };
-	const who = await (options.probe ?? ((a) => probe(a, 5000)))(options.address);
-	if (!who) {
-		io.err(`tobor restart: cannot reach ${options.label} (${formatAddress(options.address)})\n`);
-		return 1;
-	}
+	const who = await reach("restart", options, io);
+	if (!who) return 1;
 	try {
-		await new ApiClient(baseUrl(options.address)).restart();
+		await new ApiClient(baseUrl(options.address), options.address.token).restart();
 	} catch (err) {
 		io.err(`tobor restart: ${options.label}: ${upgradeErrorMessage(err)}\n`);
 		return 1;
@@ -172,8 +168,20 @@ export async function restartNode(options: NodeOptions): Promise<number> {
 	return waitAndReport({ ...options, io, cli }, who, "restarted, now");
 }
 
+/** The node's whoami; when there is none the reason (unreachable, or it needs a token) is printed to `io.err`. */
+async function reach(command: string, options: NodeOptions, io: Io): Promise<WhoamiResponse | undefined> {
+	try {
+		const who = await (options.probe ?? ((a) => probe(a, 5000)))(options.address);
+		if (who) return who;
+		io.err(`tobor ${command}: cannot reach ${options.label} (${formatAddress(options.address)})\n`);
+	} catch (err) {
+		io.err(`tobor ${command}: ${options.label}: ${upgradeErrorMessage(err)}\n`);
+	}
+	return undefined;
+}
+
 async function waitAndReport(options: NodeOptions & { io: Io; cli: { version: string; build: string } }, before: WhoamiResponse, verb: string): Promise<number> {
-	const probeFn = options.probe ?? ((a: Address) => probe(a, 1500));
+	const probeFn = options.probe ?? ((a: Endpoint) => probe(a, 1500));
 	const result: WaitResult = await waitForNode({
 		probe: () => probeFn(options.address),
 		before,
@@ -182,6 +190,10 @@ async function waitAndReport(options: NodeOptions & { io: Io; cli: { version: st
 		...(options.now ? { now: options.now } : {}),
 	});
 	const { io, label } = options;
+	if (result.status === "unauthorized") {
+		io.err(`${label}: ${WAIT_UNAUTHORIZED_MESSAGE}\n`);
+		return 1;
+	}
 	if (result.status === "timeout") {
 		io.err(`${label}: no answer after ${Math.round((options.timeoutMs ?? WAIT_TIMEOUT_MS) / 1000)}s; the node may still be starting (check \`tobor workspace list\`, or its logs: journalctl --user -u tobor@<name>)\n`);
 		return 1;

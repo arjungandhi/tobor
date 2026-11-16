@@ -52,6 +52,7 @@ export function upgradeErrorMessage(err: unknown): string {
 			case "unavailable":
 				return "the node's update checker is not running";
 		}
+		if (err.status === 401) return err.message.replace(/^[A-Z]+ \S+: /, "");
 		if (err.status === 404) return "the node does not support upgrades (it predates this feature; update it by hand once)";
 		return err.message;
 	}
@@ -64,7 +65,12 @@ export function upgradeErrorMessage(err: unknown): string {
 export type WaitResult =
 	| { status: "back"; whoami: WhoamiResponse }
 	| { status: "unconfirmed"; whoami: WhoamiResponse }
-	| { status: "timeout" };
+	| { status: "timeout" }
+	/** The restarted node answers 401: it rejects the token (the proxy's token may have rotated). */
+	| { status: "unauthorized" };
+
+/** Readable form of the `unauthorized` wait outcome. */
+export const WAIT_UNAUTHORIZED_MESSAGE = "the node restarted but rejects the bearer token (it may have rotated); set a new one with `tobor workspace add <name> <host:port> --token <token>` or in the TUI (Ctrl+T, e)";
 
 /**
  * Poll `probe` (a whoami that resolves undefined when the node does not answer) with a growing delay until the node
@@ -85,7 +91,13 @@ export async function waitForNode(options: {
 	let seenDown = false;
 	let delay = 250;
 	for (;;) {
-		const who = await options.probe();
+		let who: WhoamiResponse | undefined;
+		try {
+			who = await options.probe();
+		} catch (err) {
+			if (err instanceof ApiRequestError && err.status === 401) return { status: "unauthorized" };
+			throw err;
+		}
 		if (!who) seenDown = true;
 		else {
 			const changed = options.before !== undefined && (who.version !== options.before.version || (who.build ?? "") !== (options.before.build ?? ""));
