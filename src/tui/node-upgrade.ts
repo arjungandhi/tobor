@@ -52,6 +52,7 @@ export function upgradeErrorMessage(err: unknown): string {
 			case "unavailable":
 				return "the node's update checker is not running";
 		}
+		if (err.status === 401) return err.message.replace(/^[A-Z]+ \S+: /, "");
 		if (err.status === 404) return "the node does not support upgrades (it predates this feature; update it by hand once)";
 		return err.message;
 	}

@@ -1,5 +1,6 @@
 import type { CliArgs } from "../cli.js";
 import {
+	checkToken,
 	configPath,
 	findWorkspace,
 	formatAddress,
@@ -12,7 +13,7 @@ import {
 	setDefault,
 } from "./workspaces.js";
 
-/** `tobor workspace list|add <name> <host:port>|remove <name>|use <name>` on the client config.yml. */
+/** `tobor workspace list|add <name> <host:port> [--token T]|remove <name>|use <name>` on the client config.yml. */
 export async function run(args: CliArgs): Promise<number> {
 	const notice = migrateLegacy();
 	if (notice) process.stderr.write(`${notice}\n`);
@@ -21,7 +22,11 @@ export async function run(args: CliArgs): Promise<number> {
 	const [action, ...rest] = args.positionals;
 	const arity: Record<string, number> = { list: 0, add: 2, remove: 1, use: 1 };
 	if (action === undefined || arity[action] === undefined || rest.length !== arity[action]) {
-		process.stderr.write("usage: tobor workspace list | add <name> <host:port> | remove <name> | use <name>\n");
+		process.stderr.write("usage: tobor workspace list | add <name> <host:port> [--token <token>] | remove <name> | use <name>\n");
+		return 2;
+	}
+	if (args.flags.token !== undefined && action !== "add") {
+		process.stderr.write("tobor workspace: --token only applies to add\n");
 		return 2;
 	}
 	const [name, address] = rest as [string, string];
@@ -34,13 +39,13 @@ export async function run(args: CliArgs): Promise<number> {
 				}
 				const width = Math.max(...config.workspaces.map((w) => w.name.length));
 				for (const w of config.workspaces) {
-					process.stdout.write(`${w.name === config.default ? "*" : " "} ${w.name.padEnd(width)}  ${formatAddress(w)}\n`);
+					process.stdout.write(`${w.name === config.default ? "*" : " "} ${w.name.padEnd(width)}  ${formatAddress(w)}${w.token ? "  (token)" : ""}\n`);
 				}
 				return 0;
 			}
 			case "add":
 				if (findWorkspace(config, name)) throw new Error(`workspace ${name} already exists`);
-				config = putWorkspace(config, name, parseAddress(address));
+				config = putWorkspace(config, name, parseAddress(address), typeof args.flags.token === "string" ? checkToken(args.flags.token) : undefined);
 				break;
 			case "remove":
 				config = removeWorkspace(config, name);
@@ -55,7 +60,7 @@ export async function run(args: CliArgs): Promise<number> {
 		return 1;
 	}
 	const ws = findWorkspace(config, name);
-	const done = { add: `added ${name} (${ws ? formatAddress(ws) : ""})`, remove: `removed ${name}`, use: `default workspace: ${name}` }[action as "add" | "remove" | "use"];
+	const done = { add: `added ${name} (${ws ? formatAddress(ws) : ""}${ws?.token ? ", with token" : ""})`, remove: `removed ${name}`, use: `default workspace: ${name}` }[action as "add" | "remove" | "use"];
 	process.stdout.write(`${done}\n`);
 	return 0;
 }
