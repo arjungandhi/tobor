@@ -1,5 +1,6 @@
 import type { ApprovalDecision, PendingApproval } from "../../api/types.js";
 import type { App } from "../app.js";
+import { ApiRequestError } from "../client.js";
 import { argsSummary } from "../components/tool-slot.js";
 import { c } from "../theme.js";
 
@@ -71,8 +72,14 @@ export async function showApprovals(app: App, selected = 0): Promise<void> {
 		decision = SHORTCUTS[picked.key] ?? picked.value;
 	}
 	if (!decision) return;
-	await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
-	app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
+	try {
+		await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
+		app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
+	} catch (err) {
+		// Expired or decided elsewhere (404/409): drop the stale row and stay in the list instead of falling out to the transcript.
+		const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
+		app.flash(gone ? `already resolved: ${chosen.tool}` : err instanceof Error ? err.message : String(err));
+	}
 	await app.refreshApprovals();
 	// The decided row is gone, so the same index is the next pending item (clamped to the end).
 	if (app.approvals.length > 0) await showApprovals(app, at);
