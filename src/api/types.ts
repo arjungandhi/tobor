@@ -636,7 +636,11 @@ export type NodeEvent =
 export type NodeEventType = NodeEvent["type"];
 
 /** Node → client frames on `/api/events`. */
-export type EventsFrame = { t: "event"; event: NodeEvent } | { t: "pong" };
+export type EventsFrame =
+	| { t: "event"; event: NodeEvent }
+	| { t: "pong" }
+	/** Sent after the socket dropped events under backpressure; the client must refetch sessions/approvals/questions. */
+	| { t: "resync" };
 
 /** Client → node frames on `/api/events`. */
 export type EventsClientFrame = { t: "ping" };
