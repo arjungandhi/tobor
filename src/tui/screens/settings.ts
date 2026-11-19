@@ -1,4 +1,4 @@
-import { type Component, Input, matchesKey, type SettingItem, SettingsList, SelectList } from "@earendil-works/pi-tui";
+import { type Component, getKeybindings, Input, matchesKey, type SettingItem, SettingsList, SelectList } from "@earendil-works/pi-tui";
 import type { Document } from "yaml";
 import type { ModelInfo } from "../../api/types.js";
 import type { App } from "../app.js";
@@ -11,6 +11,8 @@ import { c, selectListTheme } from "../theme.js";
 
 const UNSET = "(unset)";
 const CONFIG = "config.yml";
+/** Ids of the section-header rows. SettingsList has no non-interactive item type (pi-tui 1.5.2), so selection skips them. */
+const HEADERS = new Set(["§node", "§ws", "§tui"]);
 
 /** How a node setting is edited. */
 type Kind = { type: "model"; unset: string } | { type: "enum"; values: string[] } | { type: "int" } | { type: "text" };
@@ -320,9 +322,20 @@ export async function showSettings(app: App): Promise<void> {
 	list.selectItem("defaults.model");
 	// SettingsList always appends its own hint line ("Type to search · Enter/Space to change · Esc to cancel") and has no option to
 	// hide it; drop it so the Panel hint is the single hint line.
+	const internals = list as unknown as { selectedIndex: number; getDisplayItems(): SettingItem[] };
+	/** After a key moved the selection onto a section header, keep going the same way (bounded; stops when only headers match). */
+	const skipHeaders = (step: 1 | -1): void => {
+		const shown = internals.getDisplayItems();
+		for (let i = 0; i < shown.length && HEADERS.has(shown[internals.selectedIndex]?.id ?? ""); i++) {
+			internals.selectedIndex = (internals.selectedIndex + step + shown.length) % shown.length;
+		}
+	};
 	const body: Component = {
 		capturesViewportInput: list.capturesViewportInput,
-		handleInput: (data) => list.handleInput(data),
+		handleInput: (data) => {
+			list.handleInput(data);
+			skipHeaders(getKeybindings().matches(data, "tui.select.up") ? -1 : 1);
+		},
 		invalidate: () => list.invalidate(),
 		render: (width) => {
 			const lines = list.render(width);
