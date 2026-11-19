@@ -109,6 +109,30 @@ describe("StatusLine", () => {
 		expect(strip(row ?? "")).not.toContain("help");
 	});
 
+	it("truncates the message, never the pinned connection/count segments", () => {
+		const line = new StatusLine();
+		const segs = [{ text: "● connected", pinned: true as const }, "running", "model", "$0.0000 · 1k tok", { text: "⚠ 2 approvals · ^A", pinned: true as const }];
+		line.set(segs, "? help", { message: { text: "y".repeat(200), severity: "info" } });
+		for (const width of [120, 80, 60, 45]) {
+			const row = strip(line.render(width)[0] ?? "");
+			expect(row.length).toBeLessThanOrEqual(width);
+			expect(row).toContain("● connected");
+			expect(row).toContain("⚠ 2 approvals · ^A");
+		}
+		const row = strip(line.render(60)[0] ?? "");
+		expect(row).toContain("...");
+		expect(row).not.toContain("running"); // unpinned segments go before the pinned ones
+	});
+
+	it("keeps the pinned segments even when there is no room for any message", () => {
+		const line = new StatusLine();
+		line.set([{ text: "● connected", pinned: true }, { text: "⚠ 2 approvals · ^A", pinned: true }], "", { progress: "restarting the node and everything", message: { text: "✗ oops", severity: "error" } });
+		const row = strip(line.render(34)[0] ?? "");
+		expect(row.length).toBeLessThanOrEqual(34);
+		expect(row).toContain("● connected");
+		expect(row).toContain("⚠ 2 approvals");
+	});
+
 	it("repaints when only the slot changes", () => {
 		const line = new StatusLine();
 		line.set(["a"], "", { message: { text: "one", severity: "info" } });

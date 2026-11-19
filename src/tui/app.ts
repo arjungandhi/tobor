@@ -36,7 +36,7 @@ import type {
 import { ApiClient, ApiRequestError, ReconnectingSocket, type SocketState } from "./client.js";
 import { commandRows } from "./command-rows.js";
 import { Band } from "./components/band.js";
-import { FLASH_MS, type Progress, type Severity, severityOf, StatusLine, StatusSlot } from "./components/status.js";
+import { FLASH_MS, type Progress, type Segment, type Severity, severityOf, StatusLine, StatusSlot } from "./components/status.js";
 import {
 	baseUrl,
 	type ClientConfig,
@@ -789,7 +789,7 @@ export class App {
 		this.band.setHeader(`${c.bold(c.accent("tobor"))} ${c.dim("▸")} ${host} ${c.dim("▸")} ${where}`, c.dim(cwd));
 
 		const conn = this.eventsState === "open" && !this.eventsStale && (s.target === undefined || s.watchState === "open");
-		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.connectionText(s.watchState)}`)];
+		const segments: Segment[] = [{ text: conn ? c.success("● connected") : c.warning(`○ ${this.connectionText(s.watchState)}`), pinned: true }];
 		if (s.target) {
 			const state = s.state();
 			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : state === "working" ? c.tool : c.dim;
@@ -799,9 +799,9 @@ export class App {
 			segments.push(c.dim(`$${usage.cost.toFixed(4)} · ${formatTokens(usage.tokens)} tok`));
 		}
 		const pending = this.approvals.length;
-		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · ${keyLabel("approvals")}`));
+		if (pending > 0) segments.push({ text: c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · ${keyLabel("approvals")}`), pinned: true });
 		const asked = this.questions.length;
-		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · ${keyLabel("questions")}`));
+		if (asked > 0) segments.push({ text: c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · ${keyLabel("questions")}`), pinned: true });
 		if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
 		this.status.set(segments, `${hotkeyHint("help")} · / commands`, this.slot.view());
 		s.updateLabel();
