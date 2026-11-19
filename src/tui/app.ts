@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import {
 	type Component,
 	decodeKittyPrintable,
+	Editor,
 	type Focusable,
 	Input,
 	isFocusable,
@@ -61,7 +62,7 @@ import { showSessions } from "./screens/sessions.js";
 import { showSettings } from "./screens/settings.js";
 import { restartNode, upgradeNode } from "./screens/upgrade.js";
 import { openWorkerTranscript, showWorkers } from "./screens/workers.js";
-import { c, selectListTheme } from "./theme.js";
+import { c, editorTheme, selectListTheme } from "./theme.js";
 
 /** A bordered modal: title, body lines, an optional interactive child, and a key-hint footer. */
 export class Panel implements Component, Focusable {
@@ -962,6 +963,31 @@ export class App {
 			lines: options.lines ?? [],
 			child: input,
 			hint: options.hint ?? "Enter confirm · Esc cancel",
+		});
+		close = this.openModal(panel, () => finish(undefined));
+		return promise;
+	}
+
+	/** A multi-line text prompt. Enter saves, Shift+Enter inserts a newline; resolves with the text (possibly empty), or undefined on Esc. */
+	askMultiline(title: string, options: { lines?: string[]; initial?: string; hint?: string } = {}): Promise<string | undefined> {
+		const { promise, resolve } = Promise.withResolvers<string | undefined>();
+		const editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
+		if (options.initial) editor.setText(options.initial);
+		let close = (): void => {};
+		const finish = (value: string | undefined): void => {
+			close();
+			resolve(value);
+		};
+		editor.onSubmit = (value) => finish(value);
+		const panel = new Panel(title, {
+			lines: options.lines ?? [],
+			child: editor,
+			hint: options.hint ?? "Enter save · Shift+Enter newline · Esc cancel",
+			onKey: (data) => {
+				if (!matchesKey(data, "escape")) return false;
+				finish(undefined);
+				return true;
+			},
 		});
 		close = this.openModal(panel, () => finish(undefined));
 		return promise;

@@ -130,7 +130,8 @@ async function promptField(app: App, s: Schedule, field: ScheduleField): Promise
 		return { model: answer.trim() };
 	}
 	const initial = field === "name" ? s.name : field === "tz" ? s.tz : field === "cwd" ? s.cwd : field === "prompt" ? s.prompt : (s.misfire_grace ?? "");
-	const answer = await app.ask(`${s.name} · ${field.replace("_", " ")}`, { initial });
+	const title = `${s.name} · ${field.replace("_", " ")}`;
+	const answer = field === "prompt" ? await app.askMultiline(title, { initial }) : await app.ask(title, { initial });
 	return answer?.trim() ? { [field]: answer.trim() } : undefined;
 }
 
@@ -175,7 +176,7 @@ async function createSchedule(app: App): Promise<void> {
 	}
 	const cwd = await app.ask("new schedule · working directory", { initial: app.session.detail?.cwd ?? (await app.api().cwds()).roots[0] ?? "" });
 	if (!cwd?.trim()) return;
-	const prompt = await app.ask("new schedule · prompt");
+	const prompt = await app.askMultiline("new schedule · prompt");
 	if (!prompt?.trim()) return;
 	const { id } = await app.api().createSchedule({ name: name.trim(), ...when, cwd: cwd.trim(), prompt: prompt.trim() });
 	app.flash(`schedule ${name.trim()} created (${id})`);
