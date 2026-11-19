@@ -52,7 +52,7 @@ export class QuitGate {
 export const HELP: readonly (readonly [string, string])[] = [
 	["Enter", "send prompt (while a run is going: steer the running agent)"],
 	["Ctrl+Q / Ctrl+Enter", "queue a follow-up for after the current turn"],
-	["Esc", "clear the composer; when empty: abort the run · worker view: back · idle: sessions list (then workspaces)"],
+	["Esc", "clear the composer; when empty: abort the run · worker view: back · idle: up a tier (sessions list; Esc there: workspaces)"],
 	["Shift+Enter / Alt+Enter", "new line in the composer"],
 	["Alt+Shift+A", "pending approvals: approve / approve for session / deny"],
 	["Alt+Shift+U", "pending questions from the agent (ask_user): answer or pick an option"],
@@ -62,7 +62,8 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["Ctrl+P", "cycle to the next model"],
 	["Ctrl+N", "new session"],
 	["Ctrl+L", "sessions"],
-	["←← (empty composer)", "sessions list"],
+	["←← (empty composer)", "up a tier: sessions list"],
+	["←/→ (in pickers)", "up / down a tier: workspaces ↔ sessions ↔ session"],
 	["Ctrl+T", "switch workspace (saved nodes, with reachability)"],
 	["Ctrl+,", "settings: node defaults, workspaces and TUI preferences"],
 	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],

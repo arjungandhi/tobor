@@ -50,15 +50,15 @@ function whoamiLines(w: WhoamiResponse | undefined, ws: Workspace): string[] {
 
 /**
  * The workspace list with reachability (each probed via `/api/whoami`, 1.5 s timeout). `switch` (startup picker,
- * Ctrl+T): Enter connects. `manage` (settings): Enter opens the edit menu. Both: a add, e edit.
- * `hierarchy` (startup, or one level up from the sessions list): Enter goes on to that workspace's sessions list, and Esc
- * leaves the workspace level with no session open.
+ * Ctrl+T): Enter/→ opens the workspace. `manage` (settings): Enter opens the edit menu. Both: a add, e edit.
+ * `switch` is the top tier of the hierarchy workspaces → sessions → session: Enter/→ goes down to that workspace's
+ * sessions list (connecting first when it is not the connected one), Esc/← closes the picker (back to the open session, if any).
  */
-export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string, hierarchy = false): Promise<void> {
+export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string): Promise<void> {
 	const config = app.config;
 	if (config.workspaces.length === 0) {
 		const added = await addWorkspace(app);
-		return added ? showWorkspaces(app, mode, added.name, hierarchy) : undefined;
+		return added ? showWorkspaces(app, mode, added.name) : undefined;
 	}
 	app.flash("probing workspaces…");
 	const probes = await Promise.all(config.workspaces.map((ws) => reach(ws)));
@@ -72,31 +72,25 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 	const lines = mode === "switch" && current ? whoamiLines(app.whoami, current) : [c.dim(`${config.workspaces.length} workspace(s) · ${app.configPath}`)];
 	const picked = await app.pick(mode === "switch" ? "workspaces" : "manage workspaces", items, {
 		lines,
-		hint: mode === "switch" ? "Enter open · a add · e edit · Esc close" : "Enter edit · a add · Esc back",
-		keys: ["a", "e"],
+		hint: mode === "switch" ? "→/Enter sessions · a add · e edit · ←/Esc back" : "Enter edit · a add · Esc back",
+		keys: mode === "switch" ? ["a", "e", "left", "right"] : ["a", "e"],
 		selected: Math.max(0, config.workspaces.findIndex((w) => w.name === preselect)),
 	});
-	if (!picked) {
-		if (hierarchy && app.session.target) {
-			app.session.close();
-			app.changed();
-		}
-		return;
-	}
+	if (!picked || picked.key === "left") return;
 	if (picked.key === "a") {
 		const added = await addWorkspace(app);
-		return showWorkspaces(app, mode, added?.name, hierarchy);
+		return showWorkspaces(app, mode, added?.name);
 	}
 	const name = picked.value;
 	if (!name) return;
 	if (picked.key === "e" || mode === "manage") {
 		const next = await editWorkspace(app, name);
-		return showWorkspaces(app, mode, next, hierarchy);
+		return showWorkspaces(app, mode, next);
 	}
 	const ws = findWorkspace(config, name);
 	if (!ws) return;
-	if (ws.name !== current?.name || (hierarchy && !app.whoami)) app.connect(ws);
-	else if (hierarchy) return showSessions(app, false, undefined, "up");
+	if (ws.name === current?.name && app.whoami) return showSessions(app);
+	app.connect(ws);
 }
 
 /** Ask for a host:port; an empty answer keeps `initial` (default 127.0.0.1:7879). */

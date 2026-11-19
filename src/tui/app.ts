@@ -7,6 +7,7 @@ import {
 	isFocusable,
 	isKeyRelease,
 	isKeyRepeat,
+	type KeyId,
 	matchesKey,
 	type OverlayHandle,
 	ProcessTerminal,
@@ -242,7 +243,7 @@ export class App {
 					this.openInitial();
 				});
 			}
-		} else this.guard(() => showWorkspaces(this, "switch", undefined, true));
+		} else this.guard(() => showWorkspaces(this));
 		const flash = [notice, start.kind === "picker" ? start.reason : undefined].filter(Boolean).join(" · ");
 		if (flash) this.flash(flash);
 		this.changed();
@@ -378,12 +379,12 @@ export class App {
 		this.changed();
 	}
 
-	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc walks back up to the workspace picker); once per connection, never over a modal. */
+	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc/← walks back up to the workspace picker); once per connection, never over a modal. */
 	openInitial(): void {
 		if (this.initialOpened === this.generation || this.session.target || this.modals.length > 0) return;
 		if (!this.client || !this.whoami || !this.workspace) return;
 		this.initialOpened = this.generation;
-		this.guard(() => showSessions(this, false, undefined, "up"));
+		this.guard(() => showSessions(this));
 	}
 
 	/** The session last opened on the connected workspace (state.json), for default cursors. */
@@ -692,7 +693,7 @@ export class App {
 				this.guard(() => s.abort());
 				return true;
 			case "showSessions":
-				return this.do(() => (action.up ? showSessions(this, false, undefined, "up") : showSessions(this)));
+				return this.do(() => showSessions(this));
 			case "hotkey":
 				return this.do(() => this.hotkey(action.name));
 			case "busyFlash":
@@ -859,7 +860,10 @@ export class App {
 		return Math.max(3, this.terminal.rows - 4 - extra);
 	}
 
-	/** A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value. */
+	/**
+	 * A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value.
+	 * `keys` entries are a single character (matched literally) or a named key id such as "left" / "right" (matched with `matchesKey`).
+	 */
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
@@ -962,7 +966,7 @@ export class App {
 					refilter();
 					return true;
 				}
-				const key = options.keys?.find((k) => data === k);
+				const key = options.keys?.find((k) => (k.length === 1 ? data === k : matchesKey(data, k as KeyId)));
 				if (key === undefined) return items.length === 0;
 				chosen(key);
 				return true;

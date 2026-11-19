@@ -68,7 +68,7 @@ describe("routeKey: Esc priority", () => {
 	it("staged images alone do not count as composer text: Esc aborts / goes up and the images stay", () => {
 		// Current behavior: `composerEmpty` ignores attachments, and no action touches them.
 		expect(route(ESC, { hasStagedImages: true, state: "running" })).toEqual({ type: "abort" });
-		expect(route(ESC, { hasStagedImages: true })).toEqual({ type: "showSessions", up: true });
+		expect(route(ESC, { hasStagedImages: true })).toEqual({ type: "showSessions" });
 	});
 
 	it("clears text on an idle session too", () => {
@@ -81,8 +81,8 @@ describe("routeKey: Esc priority", () => {
 	});
 
 	it("opens the sessions list from an idle session with an empty composer", () => {
-		expect(route(ESC)).toEqual({ type: "showSessions", up: true });
-		expect(route(ESC, { state: "failed" })).toEqual({ type: "showSessions", up: true });
+		expect(route(ESC)).toEqual({ type: "showSessions" });
+		expect(route(ESC, { state: "failed" })).toEqual({ type: "showSessions" });
 	});
 
 	it("passes with nothing to do", () => {
@@ -189,7 +189,7 @@ describe("routeKey: transcript selection", () => {
 describe("routeKey: ←← gesture and question panel", () => {
 	it("arms on the first Left and opens the sessions list on the second", () => {
 		expect(route(LEFT)).toEqual({ type: "armLeft" });
-		expect(route(LEFT, { lastLeft: 9_700 })).toEqual({ type: "showSessions", up: false });
+		expect(route(LEFT, { lastLeft: 9_700 })).toEqual({ type: "showSessions" });
 		expect(route(LEFT, { lastLeft: 9_000 })).toEqual({ type: "armLeft" });
 	});
 

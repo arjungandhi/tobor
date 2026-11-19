@@ -41,8 +41,8 @@ export type KeyAction =
 	| { type: "backToParent" }
 	/** Abort the running session (never gated by flows). */
 	| { type: "abort" }
-	/** Open the sessions list; `up` makes Esc there continue to the workspaces. */
-	| { type: "showSessions"; up: boolean }
+	/** Open the sessions list (Esc/← there continues up to the workspaces). */
+	| { type: "showSessions" }
 	| { type: "hotkey"; name: HotkeyName }
 	/** A flow-opening key while another flow runs: tell the user instead of dropping it silently. */
 	| { type: "busyFlash" }
@@ -108,7 +108,7 @@ function routeEscape(ctx: RouteContext): KeyAction {
 	if (ctx.autocompleteOpen) return { type: "pass" };
 	if (!ctx.composerEmpty) return { type: "clearComposer" };
 	if (ctx.state === "running" || ctx.state === "waiting") return { type: "abort" };
-	if (ctx.hasTarget) return flow(ctx, { type: "showSessions", up: true });
+	if (ctx.hasTarget) return flow(ctx, { type: "showSessions" });
 	return { type: "pass" };
 }
 
@@ -132,7 +132,7 @@ export function routeKey(data: string, ctx: RouteContext): KeyAction {
 	}
 	if (empty && matchesKey(data, "left")) {
 		if (ctx.repeating) return { type: "passLeft" };
-		if (ctx.lastLeft > 0 && ctx.now - ctx.lastLeft <= DOUBLE_LEFT_WINDOW_MS) return flow(ctx, { type: "showSessions", up: false });
+		if (ctx.lastLeft > 0 && ctx.now - ctx.lastLeft <= DOUBLE_LEFT_WINDOW_MS) return flow(ctx, { type: "showSessions" });
 		return { type: "armLeft" };
 	}
 	if (empty && matchesKey(data, KEYS.navigate)) return { type: "moveSelection", delta: 0 };

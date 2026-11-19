@@ -108,9 +108,9 @@ describe("/artifacts scope", () => {
 });
 
 describe("slash command chosen from the sessions list", () => {
-	/** A fake App whose sessions picker answers with `/model`, then closes. */
+	/** A fake App whose sessions picker answers with `/model`, then opens session #7 (Esc would now go up to the workspaces). */
 	function fake(flowActive: boolean) {
-		const picks = [{ command: "model" }, undefined];
+		const picks = [{ command: "model" }, { key: "enter", value: { id: 7 } }];
 		const calls: string[] = [];
 		const app = {
 			session: { target: undefined },
@@ -120,6 +120,7 @@ describe("slash command chosen from the sessions list", () => {
 			now: () => 0,
 			lastSessionId: () => undefined,
 			flash: vi.fn(),
+			openSession: vi.fn(),
 			pick: vi.fn(async () => picks.shift()),
 			flowActive,
 			runCommand: async (line: string) => void calls.push(`run ${line}`),

@@ -22,12 +22,11 @@ function when(ms: number, now: number): string {
 }
 
 /**
- * Ctrl+L: sessions with state tag and cost; Enter opens, n new, r rename, a archive/unarchive, x delete, h archived, s schedules.
- * `nav` is the Esc meaning: "close" (mid-session: back to where you were) or "up" (the hierarchy workspace → sessions →
- * session: startup, or Esc from an idle session; Esc goes back to the workspace picker, from the archived view to the
- * active list).
+ * Ctrl+L: sessions with state tag and cost; Enter/→ opens, n new, r rename, a archive/unarchive, x delete, h archived, s schedules.
+ * One tier of the hierarchy workspaces → sessions → session: Esc/← always goes up (to the workspace picker, from the
+ * archived view to the active list), however the list was opened.
  */
-export async function showSessions(app: App, archived = false, focus?: { id: number; index: number }, nav: "close" | "up" = "close"): Promise<void> {
+export async function showSessions(app: App, archived = false, focus?: { id: number; index: number }): Promise<void> {
 	const client = app.api();
 	const sessions = archived ? (await client.sessions(true)).filter((s) => s.archived) : await client.sessions();
 	if (!archived) app.sessions = sessions;
@@ -39,16 +38,13 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 	}));
 	const current = app.session.target?.id;
 	const picked = await app.pick(archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`, items, {
-		hint: `Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · s schedules · h ${archived ? "active" : "archived"} · Esc ${nav === "up" ? "back" : "close"}`,
-		keys: ["n", "r", "a", "x", "s", "h"],
+		hint: `→/Enter open · n new · r rename · a ${archived ? "unarchive" : "archive"} · x delete · s schedules · h ${archived ? "active" : "archived"} · ←/Esc ${archived ? "back" : "workspaces"}`,
+		keys: ["n", "r", "a", "x", "s", "h", "left", "right"],
 		commands: true,
 		selected: initialIndex(sessions, current ?? app.lastSessionId(), focus),
 	});
-	if (!picked) {
-		if (nav !== "up") return;
-		return archived ? showSessions(app, false, undefined, nav) : showWorkspaces(app, "switch", undefined, true);
-	}
-	if (picked.command === "sessions") return showSessions(app, false, undefined, nav);
+	if (!picked || picked.key === "left") return archived ? showSessions(app, false) : showWorkspaces(app);
+	if (picked.command === "sessions") return showSessions(app, false);
 	if (picked.command && picked.command !== "new") {
 		// Like a composer command run through `app.guard`: an error flashes, and the list comes back. The list is
 		// opened inside an exclusive flow (hotkey, Esc or /sessions), so the command continues that flow.
@@ -57,26 +53,27 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 		} catch (err) {
 			app.flash(`✗ ${(err as Error).message ?? String(err)}`);
 		}
-		return showSessions(app, archived, undefined, nav);
+		return showSessions(app, archived);
 	}
 	const s = picked.value;
 	switch (picked.command ? "n" : picked.key) {
 		case "n": {
 			const started = await startSession(app);
 			// Cancelled the cwd fallback picker with nothing started: stay on this level of the hierarchy.
-			if (!started && nav === "up" && app.session.target?.id === current) return showSessions(app, archived, undefined, nav);
+			if (!started && app.session.target?.id === current) return showSessions(app, archived);
 			return;
 		}
 		case "s":
 			await showSchedules(app);
-			return showSessions(app, archived, undefined, nav);
+			return showSessions(app, archived);
 		case "h":
-			return showSessions(app, !archived, undefined, nav);
+			return showSessions(app, !archived);
 		case "enter":
+		case "right":
 			if (s) app.openSession(s.id);
 			return;
 	}
-	if (!s) return showSessions(app, archived, undefined, nav);
+	if (!s) return showSessions(app, archived);
 	const at = { id: s.id, index: sessions.findIndex((x) => x.id === s.id) };
 	if (picked.key === "r") {
 		const title = await app.ask(`rename #${s.id}`, { initial: s.title });
@@ -91,7 +88,7 @@ export async function showSessions(app: App, archived = false, focus?: { id: num
 		}
 	}
 	await app.refreshSessions();
-	return showSessions(app, archived, at, nav);
+	return showSessions(app, archived, at);
 }
 
 /** Cursor row: the row just acted on (or its nearest successor once it is gone), else the open (or last opened) session, else the top. */
