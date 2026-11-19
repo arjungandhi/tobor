@@ -165,6 +165,15 @@ export async function showSettings(app: App): Promise<void> {
 		app.tui.requestRender();
 	};
 
+	/** The client text/sha were loaded from; editing a workspace in here can swap app's client under us, and then config.yml would go to another node. */
+	const stale = (): boolean => {
+		if (client === app.api()) return false;
+		problems = [`the connection changed to ${app.workspace?.name ?? "another node"}; these settings belong to the previous node, close and reopen settings`];
+		app.flash("✗ settings not saved: connection changed, reopen settings");
+		refresh();
+		return true;
+	};
+
 	const reload = async (): Promise<void> => {
 		const fresh = await client.file(CONFIG);
 		if (fresh.type !== "file") throw new Error(`${CONFIG} is a directory`);
@@ -179,6 +188,7 @@ export async function showSettings(app: App): Promise<void> {
 			note = "nothing to save";
 			return refresh();
 		}
+		if (stale()) return;
 		try {
 			const keys = [...pending.keys()].join(", ");
 			const { commit } = await client.putFile(CONFIG, { content: text, ...(sha ? { sha } : {}), message: `operator: settings (${keys})` });
@@ -198,6 +208,7 @@ export async function showSettings(app: App): Promise<void> {
 				problems = err.body?.errors?.map((e) => `${e.path}: ${e.message}`) ?? [err.body?.error ?? err.message];
 				return refresh();
 			}
+			if (stale()) return;
 			await reload();
 			problems = [];
 			refresh();
