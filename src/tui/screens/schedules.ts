@@ -1,5 +1,6 @@
 import type { CreateScheduleRequest, Schedule, UpdateScheduleRequest } from "../../api/types.js";
 import type { App } from "../app.js";
+import { navigate } from "../nav.js";
 import { c } from "../theme.js";
 
 function describe(s: Schedule): string {
@@ -18,32 +19,43 @@ export function parseTiming(input: string): Pick<CreateScheduleRequest, "cron" |
 	return { at: at.toISOString() };
 }
 
-/** Schedules: list, n create, d delete, e enable/disable, Enter edit. */
-export async function showSchedules(app: App, focus?: { id: string; index: number }): Promise<void> {
+/** Schedules: list, Enter/e edit, n new, t enable/disable, d delete. Every action comes back to the list with the cursor on the same schedule. `focus` is the id the cursor starts on. */
+export async function showSchedules(app: App, focus?: string): Promise<void> {
 	const client = app.api();
-	const schedules = await client.schedules();
-	const picked = await app.pick(
-		"schedules",
-		schedules.map((s) => ({ value: s, label: `${s.enabled ? c.success("●") : c.dim("○")} ${s.name}`, description: describe(s) })),
-		{ hint: "Enter edit · n new · e enable/disable · d delete · Esc close", keys: ["n", "e", "d"], selected: initialIndex(schedules, focus) },
-	);
-	if (!picked) return;
-	const s = picked.value;
-	if (picked.key === "n") {
-		await createSchedule(app);
-		return showSchedules(app);
-	}
-	if (!s) return;
-	const at = { id: s.id, index: schedules.findIndex((x) => x.id === s.id) };
-	if (picked.key === "e") {
-		await client.updateSchedule(s.id, { enabled: !s.enabled });
-		return showSchedules(app, at);
-	}
-	if (picked.key === "d") {
-		if (await app.confirm(`delete ${s.name}`, [`Delete schedule “${s.name}”? Its pending fire is cancelled.`])) await client.deleteSchedule(s.id);
-		return showSchedules(app, at);
-	}
-	return editSchedule(app, s.id);
+	await navigate<Schedule>(app, {
+		view: async () => ({
+			title: "schedules",
+			items: (await client.schedules()).map((s) => ({ value: s, label: `${s.enabled ? c.success("●") : c.dim("○")} ${s.name}`, description: describe(s) })),
+			hint: "Enter/e edit · n new · t enable/disable · d delete · Esc back",
+			emptyHint: "n new · Esc back",
+			keys: ["n", "e", "t", "d"],
+			initial: focus,
+		}),
+		key: (s) => s.id,
+		onPick: async (picked) => {
+			if (picked.key === "n") {
+				await createSchedule(app);
+				return "refresh";
+			}
+			const s = picked.value;
+			if (!s) return "stay";
+			if (picked.key === "t") {
+				await client.updateSchedule(s.id, { enabled: !s.enabled });
+				return "refresh";
+			}
+			if (picked.key === "d") {
+				if (!(await app.confirm(`delete ${s.name}`, [`Delete schedule “${s.name}”? Its pending fire is cancelled.`]))) return "stay";
+				await client.deleteSchedule(s.id);
+				return "refresh";
+			}
+			try {
+				await editSchedule(app, s.id);
+			} catch (err) {
+				app.flash(`✗ ${(err as Error).message}`); // the schedule vanished before the editor could open
+			}
+			return "refresh";
+		},
+	});
 }
 
 export type ScheduleField = "name" | "timing" | "tz" | "cwd" | "prompt" | "model" | "approval_mode" | "misfire_grace";
@@ -65,42 +77,51 @@ export function fieldRows(s: Schedule): { field: ScheduleField; label: string; d
 	];
 }
 
-/** Field editor for one schedule: Enter edits the selected field, r runs, e enable/disable, d delete, Esc back to the list. */
-async function editSchedule(app: App, id: string, selected = 0): Promise<void> {
+/** Field editor for one schedule: Enter/e edits the selected field, t enable/disable, h run history, d delete, Esc back to the list. */
+async function editSchedule(app: App, id: string): Promise<void> {
 	const client = app.api();
-	const s = (await client.schedules()).find((x) => x.id === id);
-	if (!s) return showSchedules(app);
-	const rows = fieldRows(s);
-	const picked = await app.pick(
-		s.name,
-		rows.map((r) => ({ value: r.field, label: r.label, description: r.description })),
-		{
-			lines: [c.dim(`${s.enabled ? "enabled" : "disabled"} · ${describe(s)}`)],
-			hint: "Enter edit · r runs · e enable/disable · d delete · Esc back",
-			keys: ["r", "e", "d"],
-			selected,
+	let current: Schedule;
+	await navigate<ScheduleField>(app, {
+		view: async () => {
+			const s = (await client.schedules()).find((x) => x.id === id);
+			if (!s) throw new Error("schedule no longer exists");
+			current = s;
+			return {
+				title: s.name,
+				items: fieldRows(s).map((r) => ({ value: r.field, label: r.label, description: r.description })),
+				lines: [c.dim(`${s.enabled ? "enabled" : "disabled"} · ${describe(s)}`)],
+				hint: "Enter/e edit · t enable/disable · h history · d delete · Esc back",
+				keys: ["e", "t", "h", "d"],
+			};
 		},
-	);
-	if (!picked) return showSchedules(app, { id, index: 0 });
-	if (picked.key === "r") {
-		await showRuns(app, s);
-		return editSchedule(app, id, selected);
-	}
-	if (picked.key === "e") {
-		await client.updateSchedule(s.id, { enabled: !s.enabled });
-		return editSchedule(app, id, selected);
-	}
-	if (picked.key === "d") {
-		if (await app.confirm(`delete ${s.name}`, [`Delete schedule “${s.name}”? Its pending fire is cancelled.`])) {
-			await client.deleteSchedule(s.id);
-			return showSchedules(app);
-		}
-		return editSchedule(app, id, selected);
-	}
-	if (!picked.value) return editSchedule(app, id, selected);
-	const update = await promptField(app, s, picked.value);
-	if (update) await client.updateSchedule(s.id, update);
-	return editSchedule(app, id, rows.findIndex((r) => r.field === picked.value));
+		key: (field) => field,
+		onPick: async (picked) => {
+			const s = current;
+			if (picked.key === "h") {
+				await showRuns(app, s);
+				return "stay";
+			}
+			if (picked.key === "t") {
+				await client.updateSchedule(s.id, { enabled: !s.enabled });
+				return "refresh";
+			}
+			if (picked.key === "d") {
+				if (!(await app.confirm(`delete ${s.name}`, [`Delete schedule “${s.name}”? Its pending fire is cancelled.`]))) return "stay";
+				await client.deleteSchedule(s.id);
+				return "close";
+			}
+			if (!picked.value) return "stay";
+			return (await editField(app, s, picked.value)) ? "refresh" : "stay";
+		},
+	});
+}
+
+/** Edit one field; resolves true when the schedule changed. */
+async function editField(app: App, s: Schedule, field: ScheduleField): Promise<boolean> {
+	const update = await promptField(app, s, field);
+	if (!update) return false;
+	await app.api().updateSchedule(s.id, update);
+	return true;
 }
 
 /** Ask for a new value for one field; undefined means leave it unchanged. */
@@ -146,13 +167,6 @@ async function showRuns(app: App, s: Schedule): Promise<void> {
 					.reverse()
 					.map((r) => `${new Date(r.fireAt).toLocaleString()}  ${r.status}${r.conversationId ? ` #${r.conversationId}` : ""}${r.notice ? c.dim(` ${r.notice}`) : ""}`)),
 	]);
-}
-
-/** Cursor row: the schedule just acted on (or its nearest successor once it is gone), else the top. */
-function initialIndex(schedules: Schedule[], focus?: { id: string; index: number }): number {
-	if (!focus) return 0;
-	const i = schedules.findIndex((s) => s.id === focus.id);
-	return i >= 0 ? i : Math.max(0, Math.min(focus.index, schedules.length - 1));
 }
 
 async function createSchedule(app: App): Promise<void> {
