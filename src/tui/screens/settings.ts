@@ -178,6 +178,8 @@ export async function showSettings(app: App): Promise<void> {
 		const fresh = await client.file(CONFIG);
 		if (fresh.type !== "file") throw new Error(`${CONFIG} is a directory`);
 		load(fresh.content, fresh.sha);
+		// Changes the node now already has are no longer changes.
+		for (const [id, value] of pending) if (String(value ?? "") === (baseline.get(id) ?? "")) pending.delete(id);
 		for (const [id, value] of pending) text = editConfig(text, byId.get(id)!.path, value);
 		doc = parseNodeConfig(text);
 		for (const f of fields) list.updateValue(f.path.join("."), display(f));
@@ -211,6 +213,10 @@ export async function showSettings(app: App): Promise<void> {
 			if (stale()) return;
 			await reload();
 			problems = [];
+			if (pending.size === 0) {
+				note = "reloaded · the node already has your changes";
+				return refresh();
+			}
 			refresh();
 			const again = await app.confirm(`${CONFIG} changed on the node`, [
 				"Someone committed config.yml since it was loaded. Reloaded it and re-applied your changes:",
