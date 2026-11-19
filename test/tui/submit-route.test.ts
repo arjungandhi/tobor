@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeSubmit } from "../../src/tui/screens/session.js";
+import { RequestIds, routeSubmit } from "../../src/tui/screens/session.js";
 
 describe("routeSubmit", () => {
 	it("sends plain text as a prompt and slash text as a command when no question is pending", () => {
@@ -30,5 +30,23 @@ describe("routeSubmit", () => {
 
 	it("falls through to a prompt for empty text with a question pending", () => {
 		expect(routeSubmit("", true)).toBe("prompt");
+	});
+});
+
+describe("RequestIds", () => {
+	it("reuses the id for the same text until it succeeds", () => {
+		const ids = new RequestIds();
+		const first = ids.for("hello");
+		expect(ids.for("hello")).toBe(first);
+		ids.done();
+		expect(ids.for("hello")).not.toBe(first);
+	});
+
+	it("issues a fresh id when the text diverges", () => {
+		const ids = new RequestIds();
+		const first = ids.for("hello");
+		const other = ids.for("hello world");
+		expect(other).not.toBe(first);
+		expect(ids.for("hello")).not.toBe(first);
 	});
 });

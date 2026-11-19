@@ -60,6 +60,25 @@ export function routeSubmit(text: string, questionPending: boolean): SubmitRoute
 	return text.startsWith("/") ? "command" : "prompt";
 }
 
+/**
+ * Idempotency key for a submission that may be retried: a failed send restores its text to the composer, so
+ * resubmitting the same text must reuse the requestId (the server dedupes on it); other text gets a fresh one.
+ */
+export class RequestIds {
+	private last: { text: string; id: string } | undefined;
+
+	/** The id for sending `text`: the previous one when it is the same text still awaiting success, else a new one. */
+	for(text: string): string {
+		if (this.last?.text !== text) this.last = { text, id: randomUUID() };
+		return this.last.id;
+	}
+
+	/** The send succeeded: the next submission is a new message. */
+	done(): void {
+		this.last = undefined;
+	}
+}
+
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
 export type SessionTarget = {
 	id: SessionId;
@@ -89,6 +108,7 @@ export class SessionScreen {
 	private eventSeq = 0;
 	/** Numbers the images pasted with Ctrl+V (`pasted-1.png`). */
 	private pasteSeq = 0;
+	private readonly requestIds = new RequestIds();
 	private workerStamp = new Map<string, number>();
 
 	constructor(private readonly app: App) {
@@ -426,9 +446,10 @@ export class SessionScreen {
 		await this.app.api().input(target.id, {
 			content,
 			mode,
-			requestId: randomUUID(),
+			requestId: this.requestIds.for(content),
 			...(images.length > 0 ? { attachments: images.map((i) => i.attachment) } : {}),
 		});
+		this.requestIds.done();
 		this.composer.unstage(images);
 		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
 		this.scroll.scrollToEnd();
