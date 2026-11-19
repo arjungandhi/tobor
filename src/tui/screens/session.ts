@@ -14,7 +14,7 @@ import type {
 import type { App } from "../app.js";
 import { clipboardImage, loadImage, MAX_ATTACHMENTS } from "../attachments.js";
 import { ReconnectingSocket, type SocketState } from "../client.js";
-import { readClipboard } from "../clipboard.js";
+import { readClipboard, stripPasteMarkers, WL_CLIPBOARD_HINT } from "../clipboard.js";
 import { Composer } from "../components/composer.js";
 import { QuestionPanel } from "../components/question-panel.js";
 import { Transcript } from "../components/transcript.js";
@@ -377,7 +377,7 @@ export class SessionScreen {
 	/** Ctrl+V: stage the system clipboard's image; with no image, paste its text into the composer. */
 	async pasteClipboard(): Promise<void> {
 		if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
-		const { available, image: data, text } = await readClipboard();
+		const { available, image: data, text, wlPasteMissing } = await readClipboard();
 		if (data) {
 			const image = clipboardImage(data, this.pasteSeq + 1);
 			if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
@@ -387,9 +387,13 @@ export class SessionScreen {
 			this.app.tui.requestRender();
 			return;
 		}
-		if (!text) throw new Error(available ? "clipboard: no image or text" : "clipboard: unavailable (on Wayland install wl-clipboard)");
-		// The same bracketed paste the terminal layer sends, so the Editor's paste handling applies.
-		this.composer.handleInput(`\x1b[200~${text}\x1b[201~`);
+		const pasted = text ? stripPasteMarkers(text) : "";
+		if (!pasted) {
+			if (!available) throw new Error(`clipboard: unavailable (no display · ${WL_CLIPBOARD_HINT})`);
+			throw new Error(wlPasteMissing ? `clipboard: no image or text (${WL_CLIPBOARD_HINT} to read the Wayland clipboard)` : "clipboard: no image or text");
+		}
+		// The same bracketed paste the terminal layer sends, so the Editor's paste handling applies (markers stripped so the text cannot end it early).
+		this.composer.handleInput(`\x1b[200~${pasted}\x1b[201~`);
 		this.app.tui.requestRender();
 	}
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { offersText, pickImageType } from "../../src/tui/clipboard.js";
+import { offersText, pickImageType, stripPasteMarkers } from "../../src/tui/clipboard.js";
 
 describe("pickImageType", () => {
 	it("prefers PNG over the other accepted image types", () => {
@@ -28,5 +28,19 @@ describe("offersText", () => {
 	it("is false for images and rich text only", () => {
 		expect(offersText("image/png\n")).toBe(false);
 		expect(offersText("text/html\n")).toBe(false);
+	});
+});
+
+describe("stripPasteMarkers", () => {
+	it("removes both bracketed-paste markers", () => {
+		expect(stripPasteMarkers("a\x1b[201~b\x1b[200~c")).toBe("abc");
+	});
+
+	it("removes markers spliced together by an earlier removal", () => {
+		expect(stripPasteMarkers("\x1b[2\x1b[201~01~x")).toBe("x");
+	});
+
+	it("leaves ordinary text and other escapes alone", () => {
+		expect(stripPasteMarkers("plain \x1b[31mred\x1b[0m")).toBe("plain \x1b[31mred\x1b[0m");
 	});
 });
