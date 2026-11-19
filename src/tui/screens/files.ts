@@ -26,8 +26,9 @@ export async function showFiles(app: App, dir = ""): Promise<void> {
 
 async function editFile(app: App, path: string): Promise<void> {
 	const client = app.api();
-	let file = await client.file(path);
-	if (file.type !== "file") throw new Error(`${path} is a directory`);
+	const opened = await client.file(path);
+	if (opened.type !== "file") throw new Error(`${path} is a directory`);
+	let file: typeof opened = opened;
 	const tmp = await mkdtemp(join(tmpdir(), "tobor-edit-"));
 	const local = join(tmp, basename(path));
 	// The temp copy holds the user's edits: only a confirmed save (or no changes) may delete it.
