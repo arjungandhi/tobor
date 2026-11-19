@@ -69,7 +69,7 @@ async function review(app: App, chosen: PendingApproval, listKey: string): Promi
 	} catch (err) {
 		// Expired or decided elsewhere (404/409): drop the stale row and stay in the list instead of falling out to the transcript.
 		const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
-		app.flash(gone ? `already resolved: ${chosen.tool}` : err instanceof Error ? err.message : String(err));
+		app.flash(gone ? `already resolved: ${chosen.tool}` : `✗ ${err instanceof Error ? err.message : String(err)}`);
 	}
 	return true;
 }
