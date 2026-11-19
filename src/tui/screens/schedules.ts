@@ -172,29 +172,42 @@ async function showRuns(app: App, s: Schedule): Promise<void> {
 	]);
 }
 
-async function createSchedule(app: App): Promise<void> {
-	const name = await app.ask("new schedule · name");
-	if (!name?.trim()) return;
-	let when: Pick<CreateScheduleRequest, "cron" | "at">;
-	for (let problem = "", initial = ""; ; ) {
-		const timing = await app.ask("new schedule · when", {
-			initial,
-			lines: [c.dim("a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)"), ...(problem ? [c.error(problem)] : [])],
-		});
-		if (!timing?.trim()) return;
+type CreateDraft = { name: string; timing: string; cwd: string; prompt: string };
+
+/** New-schedule wizard. A server rejection keeps every answer: the wizard re-opens pre-filled with the error shown. Resolves true when created. */
+async function createSchedule(app: App): Promise<boolean> {
+	const draft: CreateDraft = { name: "", timing: "", cwd: app.session.detail?.cwd ?? (await app.api().cwds()).roots[0] ?? "", prompt: "" };
+	for (let problem = ""; ; ) {
+		const error = problem ? [c.error(problem)] : [];
+		const name = await app.ask("new schedule · name", { initial: draft.name, lines: error });
+		if (!name?.trim()) return false;
+		draft.name = name.trim();
+		let when: Pick<CreateScheduleRequest, "cron" | "at">;
+		for (let timingProblem = ""; ; ) {
+			const timing = await app.ask("new schedule · when", { initial: draft.timing, lines: [c.dim(TIMING_HELP), ...(timingProblem ? [c.error(timingProblem)] : error)] });
+			if (!timing?.trim()) return false;
+			draft.timing = timing.trim();
+			try {
+				when = parseTiming(timing);
+				break;
+			} catch (err) {
+				timingProblem = (err as Error).message;
+				app.flash(timingProblem);
+			}
+		}
+		const cwd = await app.ask("new schedule · working directory", { initial: draft.cwd, lines: error });
+		if (!cwd?.trim()) return false;
+		draft.cwd = cwd.trim();
+		const prompt = await app.askMultiline("new schedule · prompt", { initial: draft.prompt, lines: error });
+		if (!prompt?.trim()) return false;
+		draft.prompt = prompt.trim();
 		try {
-			when = parseTiming(timing);
-			break;
+			const { id } = await app.api().createSchedule({ name: draft.name, ...when, cwd: draft.cwd, prompt: draft.prompt });
+			app.flash(`schedule ${draft.name} created (${id})`);
+			return true;
 		} catch (err) {
 			problem = (err as Error).message;
-			initial = timing;
-			app.flash(problem);
+			app.flash(`✗ ${problem}`);
 		}
 	}
-	const cwd = await app.ask("new schedule · working directory", { initial: app.session.detail?.cwd ?? (await app.api().cwds()).roots[0] ?? "" });
-	if (!cwd?.trim()) return;
-	const prompt = await app.askMultiline("new schedule · prompt");
-	if (!prompt?.trim()) return;
-	const { id } = await app.api().createSchedule({ name: name.trim(), ...when, cwd: cwd.trim(), prompt: prompt.trim() });
-	app.flash(`schedule ${name.trim()} created (${id})`);
 }
