@@ -336,6 +336,8 @@ export type ReconnectingSocketOptions<In> = {
 	/** Called after each successful connect; `reconnect` is false the first time. */
 	onOpen?: (reconnect: boolean) => void;
 	onState?: (state: SocketState, detail?: string) => void;
+	/** Protocol or frame-handler failures (malformed frame, handler threw); the socket is dropped and reconnects right after. */
+	onError?: (message: string) => void;
 	minDelayMs?: number;
 	maxDelayMs?: number;
 	pingMs?: number;
@@ -381,6 +383,16 @@ export class ReconnectingSocket<In> {
 		this.ws?.terminate();
 	}
 
+	/** Report a protocol/handler failure and drop the link; the close handler runs the reconnect path. */
+	private fail(ws: WebSocket, message: string): void {
+		this.lastError = message;
+		try {
+			this.options.onError?.(message);
+		} finally {
+			ws.terminate();
+		}
+	}
+
 	private connect(): void {
 		if (this.stopped) return;
 		this.options.onState?.("connecting");
@@ -415,15 +427,16 @@ export class ReconnectingSocket<In> {
 			let frame: In;
 			try {
 				frame = JSON.parse(data.toString()) as In;
-			} catch {
+			} catch (err) {
+				// A dropped frame (possibly an ops frame) would leave the replica diverged; resync via reconnect.
+				this.fail(ws, `protocol error: malformed frame (${err instanceof Error ? err.message : String(err)})`);
 				return;
 			}
 			try {
 				this.options.onFrame(frame);
 			} catch (err) {
 				// Never let a frame handler crash the process; reconnect to resync instead.
-				this.lastError = `frame handler failed: ${err instanceof Error ? err.message : String(err)}`;
-				ws.terminate();
+				this.fail(ws, `frame handler failed: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		});
 		ws.on("error", (err) => {
