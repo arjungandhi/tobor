@@ -215,7 +215,17 @@ data class PendingApproval(
     val expiresAt: Long = 0,
 )
 
-/** An `ask_user` question the agent is waiting on (`GET /api/questions`). [options] are suggestions; free text is always allowed. */
+/** One input of a multi-field `ask_user` form. [options] are suggestions for this field; free text is always allowed. */
+@Serializable
+data class QuestionField(
+    val prompt: String,
+    val options: List<String>? = null,
+)
+
+/**
+ * An `ask_user` question the agent is waiting on (`GET /api/questions`). [options] are suggestions; free text is always allowed.
+ * When [fields] is non-empty this is a form: [question] is the header and each field gets its own input.
+ */
 @Serializable
 data class PendingQuestion(
     val conversationId: Long = 0,
@@ -226,12 +236,15 @@ data class PendingQuestion(
     val options: List<String>? = null,
     val createdAt: Long = 0,
     val expiresAt: Long = 0,
+    val fields: List<QuestionField>? = null,
 )
 
+/** Single question: [answer]. Form question: [answers] (one per field, same order, blank = skipped). Absent keys are not encoded. */
 @Serializable
 data class AnswerQuestionRequest(
-    val answer: String,
+    val answer: String? = null,
     val conversationId: Long? = null,
+    val answers: List<String>? = null,
 )
 
 @Serializable

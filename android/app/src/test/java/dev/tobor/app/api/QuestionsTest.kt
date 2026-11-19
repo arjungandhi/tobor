@@ -27,4 +27,34 @@ class QuestionsTest {
             toborJson.encodeToString(AnswerQuestionRequest("pg", 7)),
         )
     }
+
+    @Test fun parsesFormQuestion() {
+        val raw = """{"conversationId":7,"sessionId":3,"callId":"f1","question":"Setup","createdAt":1,"expiresAt":2,
+            "fields":[{"prompt":"Name?"},{"prompt":"DB?","options":["pg","sqlite"]}]}"""
+        val q = toborJson.decodeFromString(PendingQuestion.serializer(), raw)
+        assertEquals(
+            listOf(QuestionField("Name?"), QuestionField("DB?", listOf("pg", "sqlite"))),
+            q.fields,
+        )
+        assertEquals("Setup", q.question)
+    }
+
+    @Test fun singleQuestionHasNoFields() {
+        val q = toborJson.decodeFromString(
+            PendingQuestion.serializer(),
+            """{"callId":"c","question":"Name?"}""",
+        )
+        assertNull(q.fields)
+    }
+
+    @Test fun answersRequestEncodesAnswersOnly() {
+        assertEquals(
+            """{"answers":["a","","c"]}""",
+            toborJson.encodeToString(AnswerQuestionRequest(answers = listOf("a", "", "c"))),
+        )
+        assertEquals(
+            """{"conversationId":7,"answers":["x"]}""",
+            toborJson.encodeToString(AnswerQuestionRequest(conversationId = 7, answers = listOf("x"))),
+        )
+    }
 }

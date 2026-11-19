@@ -160,6 +160,12 @@ class ToborApi(baseUrl: String) {
         send("POST", "/api/questions/${encodeSegment(callId)}", body)
     }
 
+    /** Form variant: [answers] has one entry per field in order, empty = skipped (at least one non-empty). */
+    suspend fun answerQuestion(callId: String, answers: List<String>, conversationId: Long? = null) {
+        val body = toborJson.encodeToString(AnswerQuestionRequest(conversationId = conversationId, answers = answers))
+        send("POST", "/api/questions/${encodeSegment(callId)}", body)
+    }
+
     /** Raw `{models, providers, defaults}`. */
     suspend fun models(): JsonObject = get("/api/models").decode<JsonElement>().jsonObject
 

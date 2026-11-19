@@ -393,12 +393,15 @@ private fun QuestionCards(api: ToborApi, scope: CoroutineScope, pending: Pending
             busy = q.callId in pending.busyQuestions,
             error = pending.questionErrors[q.callId],
             showSession = false,
-            onAnswer = { text ->
+            onAnswer = { answer ->
                 pending.busyQuestions = pending.busyQuestions + q.callId
                 pending.questionErrors = pending.questionErrors - q.callId
                 scope.launch {
                     try {
-                        api.answerQuestion(q.callId, text, q.conversationId)
+                        when (answer) {
+                            is QuestionAnswer.Text -> api.answerQuestion(q.callId, answer.text, q.conversationId)
+                            is QuestionAnswer.Form -> api.answerQuestion(q.callId, answer.answers, q.conversationId)
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {

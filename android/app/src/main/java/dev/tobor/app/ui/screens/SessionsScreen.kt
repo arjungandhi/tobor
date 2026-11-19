@@ -252,13 +252,16 @@ fun SessionsScreen(
         )
     }
 
-    fun answer(q: PendingQuestion, text: String) {
+    fun answer(q: PendingQuestion, a: QuestionAnswer) {
         if (q.callId in busyCalls) return
         busyCalls = busyCalls + q.callId
         questionErrors = questionErrors - q.callId
         scope.launch {
             try {
-                api.answerQuestion(q.callId, text, q.conversationId)
+                when (a) {
+                    is QuestionAnswer.Text -> api.answerQuestion(q.callId, a.text, q.conversationId)
+                    is QuestionAnswer.Form -> api.answerQuestion(q.callId, a.answers, q.conversationId)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ToborApiException) {
