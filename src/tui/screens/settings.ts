@@ -336,12 +336,19 @@ export async function showSettings(app: App): Promise<void> {
 	// SettingsList always appends a blank line and its own hint ("Type to search · Enter/Space to change · Esc to cancel") and has no
 	// option to hide it (pi-tui 1.5.2). Its theme.hint() sees that text before truncation, so tag it there and drop the tagged line
 	// (plus the blank above it) here; the Panel hint is the single hint line.
-	const internals = list as unknown as { selectedIndex: number; getDisplayItems(): SettingItem[] };
+	// If a pi-tui upgrade removes or renames these privates, the guards below turn header-skipping into a no-op: headers become
+	// selectable again (the cursor may rest on one) instead of throwing on every keypress.
+	const internals = list as unknown as { selectedIndex?: unknown; getDisplayItems?: unknown };
 	/** After a key moved the selection onto a section header, keep going the same way (bounded; stops when only headers match). */
 	const skipHeaders = (step: 1 | -1): void => {
-		const shown = internals.getDisplayItems();
-		for (let i = 0; i < shown.length && HEADERS.has(shown[internals.selectedIndex]?.id ?? ""); i++) {
-			internals.selectedIndex = (internals.selectedIndex + step + shown.length) % shown.length;
+		if (typeof internals.getDisplayItems !== "function" || typeof internals.selectedIndex !== "number") return;
+		try {
+			const shown = (internals.getDisplayItems as () => SettingItem[])();
+			for (let i = 0; i < shown.length && HEADERS.has(shown[internals.selectedIndex as number]?.id ?? ""); i++) {
+				internals.selectedIndex = ((internals.selectedIndex as number) + step + shown.length) % shown.length;
+			}
+		} catch {
+			// pi-tui internals changed shape: leave the selection where the list put it.
 		}
 	};
 	const body: Component = {
