@@ -9,8 +9,8 @@ const STRING_SEQUENCE = /\x1b[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)/g;
 const CSI = /\x1b\[[0-?]*[ -/]*(?:[@-~]|$)/g;
 /** Two-byte (and nF) ESC sequences such as ESC ( B or ESC =. */
 const ESCAPE = /\x1b[ -/]*[0-~]/g;
-/** C0 controls except \n (tabs and \r are handled before this runs), DEL and C1. */
-const CONTROL = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/g;
+/** C0 controls except \n (tabs and \r are handled before this runs), DEL, C1, and the bidi overrides/isolates (U+202A-202E, U+2066-2069) that can reorder text on screen. */
+const CONTROL = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g;
 
 /** Spaces per tab; a fixed width keeps the row layout predictable. */
 const TAB = "    ";
