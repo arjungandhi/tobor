@@ -11,6 +11,8 @@ import { c, selectListTheme } from "../theme.js";
 
 const UNSET = "(unset)";
 const CONFIG = "config.yml";
+/** Invisible tag on the library's own hint line (see `body`). */
+const HINT_MARK = "\u2063";
 /** Ids of the section-header rows. SettingsList has no non-interactive item type (pi-tui 1.5.2), so selection skips them. */
 const HEADERS = new Set(["§node", "§ws", "§tui"]);
 
@@ -308,7 +310,7 @@ export async function showSettings(app: App): Promise<void> {
 			value: (text, selected) => (selected ? c.accent(text) : c.dim(text)),
 			description: c.dim,
 			cursor: c.accent("› "),
-			hint: c.dim,
+			hint: (text) => (/Esc to cancel$/.test(text) ? HINT_MARK : c.dim(text)),
 		},
 		onChange,
 		() => {
@@ -320,8 +322,9 @@ export async function showSettings(app: App): Promise<void> {
 		{ enableSearch: true },
 	);
 	list.selectItem("defaults.model");
-	// SettingsList always appends its own hint line ("Type to search · Enter/Space to change · Esc to cancel") and has no option to
-	// hide it; drop it so the Panel hint is the single hint line.
+	// SettingsList always appends a blank line and its own hint ("Type to search · Enter/Space to change · Esc to cancel") and has no
+	// option to hide it (pi-tui 1.5.2). Its theme.hint() sees that text before truncation, so tag it there and drop the tagged line
+	// (plus the blank above it) here; the Panel hint is the single hint line.
 	const internals = list as unknown as { selectedIndex: number; getDisplayItems(): SettingItem[] };
 	/** After a key moved the selection onto a section header, keep going the same way (bounded; stops when only headers match). */
 	const skipHeaders = (step: 1 | -1): void => {
@@ -339,7 +342,7 @@ export async function showSettings(app: App): Promise<void> {
 		invalidate: () => list.invalidate(),
 		render: (width) => {
 			const lines = list.render(width);
-			if (lines.at(-1)?.includes("Esc to cancel")) lines.splice(-2, 2);
+			if (lines.some((line) => line.includes(HINT_MARK))) lines.splice(-2, 2);
 			return lines;
 		},
 	};
