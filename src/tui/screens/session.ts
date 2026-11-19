@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Component, ScrollView } from "@earendil-works/pi-tui";
 import type {
 	InputMode,
+	PendingApproval,
 	PendingQuestion,
 	PatchSessionRequest,
 	SessionDetail,
@@ -432,10 +433,19 @@ export class SessionScreen {
 		return { done, total: items.length };
 	}
 
+	/** Whether a pending approval is this session's: its own conversation, or one of its workers' (they carry the worker's conversation id). */
+	private ownsApproval(approval: PendingApproval): boolean {
+		const target = this.target;
+		if (!target) return false;
+		if (approval.conversationId === target.id) return true;
+		if (target.worker) return false;
+		return approval.sessionId === target.id || this.workers.some((w) => w.conversationId === approval.conversationId);
+	}
+
 	/** Session state as derived from the replica, pending approvals and live workers. */
 	state(): SessionState {
 		if (!this.target || !this.replica) return "idle";
-		if (this.app.approvals.some((a) => a.conversationId === this.target?.id)) return "waiting";
+		if (this.app.approvals.some((a) => this.ownsApproval(a))) return "waiting";
 		if (this.replica.running) return "running";
 		if (liveOf(this.replica.view?.docs).runFailure) return "failed";
 		return this.workers.some((w) => w.state === "starting" || w.state === "running") ? "working" : "idle";
