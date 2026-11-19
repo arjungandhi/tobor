@@ -1,6 +1,7 @@
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import type { WorkerState, WorkerSummary } from "../../api/types.js";
 import type { App } from "../app.js";
+import { type NavOutcome, navigate } from "../nav.js";
 import { c } from "../theme.js";
 
 const MAX_ROWS = 3;
@@ -63,22 +64,40 @@ function workerItems(workers: WorkerSummary[]): { value: WorkerSummary; label: s
 	}));
 }
 
-/** Alt+A: the workers of the open session; Enter opens a worker's transcript. */
+/** Alt+A: the workers of the open session (of the parent, from a worker's transcript); Enter opens a worker's transcript, `g` refreshes. */
 export async function showWorkers(app: App): Promise<void> {
 	const s = app.session;
 	const parent = s.target?.worker?.parent ?? s.target;
 	if (!parent) throw new Error("open a session first");
-	if (s.target?.worker) {
-		app.openSession(parent.id);
-	}
-	await app.session.refreshWorkers();
-	const picked = await app.pick(`workers of #${parent.id}`, workerItems(app.session.workers), {
-		hint: "Enter open transcript · r refresh · Esc close",
-		keys: ["r"],
+	await navigate<WorkerSummary>(app, {
+		view: async () => {
+			// A worker's own transcript tracks no workers: ask the node for the parent's.
+			let workers: WorkerSummary[];
+			if (s.target?.worker) workers = await app.api().workers(parent.id);
+			else {
+				await s.refreshWorkers();
+				workers = s.workers;
+			}
+			return {
+				title: `workers of #${parent.id}`,
+				items: workerItems(workers),
+				hint: "Enter open transcript · g refresh · Esc back",
+				keys: ["g"],
+			};
+		},
+		key: (w) => w.id,
+		onPick: (picked): NavOutcome => {
+			if (picked.key === "g") return "refresh";
+			const worker = picked.value;
+			if (!worker) return "stay";
+			if (worker.conversationId === undefined) {
+				app.flash("worker has not started yet");
+				return "stay";
+			}
+			openWorker(app, worker);
+			return "close";
+		},
 	});
-	if (!picked) return;
-	if (picked.key === "r") return showWorkers(app);
-	if (picked.value) openWorker(app, picked.value);
 }
 
 function openWorker(app: App, worker: WorkerSummary): void {
