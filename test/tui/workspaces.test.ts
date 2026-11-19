@@ -174,6 +174,45 @@ describe("state.json", () => {
 		expect(lastSession(path, "work")).toBeUndefined();
 		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ workspaces: { work: {}, personal: { last_session: 9 } } });
 	});
+
+	it("keys the last session by node address", () => {
+		const path = statePath({ XDG_STATE_HOME: join(tempDir(), "state") });
+		const a = { host: "box", port: 7879 };
+		const b = { host: "other", port: 7879 };
+		setLastSession(path, "work", 4, a);
+		expect(JSON.parse(readFileSync(path, "utf8")).workspaces.work.last_session).toEqual({ id: 4, address: "box:7879" });
+		expect(lastSession(path, "work", a)).toBe(4);
+		// Repointed workspace: the stored session belongs to another node.
+		expect(lastSession(path, "work", b)).toBeUndefined();
+		expect(lastSession(path, "work", { host: "box", port: 7880 })).toBeUndefined();
+		// Recording on the new node replaces it; clearing keeps the entry.
+		setLastSession(path, "work", 7, b);
+		expect(lastSession(path, "work", b)).toBe(7);
+		expect(lastSession(path, "work", a)).toBeUndefined();
+		setLastSession(path, "work", undefined, b);
+		expect(lastSession(path, "work", b)).toBeUndefined();
+	});
+
+	it("loads old plain-id state and stamps it with the first address that asks", () => {
+		const path = statePath({ XDG_STATE_HOME: join(tempDir(), "state") });
+		mkdirSync(join(path, ".."), { recursive: true });
+		writeFileSync(path, JSON.stringify({ workspaces: { work: { last_session: 9 } } }));
+		expect(lastSession(path, "work")).toBe(9);
+		expect(lastSession(path, "work", { host: "box", port: 7879 })).toBe(9);
+		expect(JSON.parse(readFileSync(path, "utf8")).workspaces.work.last_session).toEqual({ id: 9, address: "box:7879" });
+		// Once stamped, a different address no longer sees it.
+		expect(lastSession(path, "work", { host: "other", port: 7879 })).toBeUndefined();
+	});
+
+	it("migration stamps last sessions with the workspace address", () => {
+		const root = tempDir();
+		const env = { XDG_CONFIG_HOME: join(root, "c"), XDG_STATE_HOME: join(root, "s") };
+		mkdirSync(join(root, "c", "tobor"), { recursive: true });
+		writeFileSync(join(root, "c", "tobor", "tui.json"), JSON.stringify({ contexts: [{ name: "personal", host: "127.0.0.1:7879", lastSession: 9 }] }));
+		migrateLegacy(env);
+		expect(lastSession(statePath(env), "personal", { host: "127.0.0.1", port: 7879 })).toBe(9);
+		expect(lastSession(statePath(env), "personal", { host: "elsewhere", port: 7879 })).toBeUndefined();
+	});
 });
 
 describe("tui.json migration", () => {

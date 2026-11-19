@@ -269,8 +269,11 @@ export function workspaceAt(config: ClientConfig, address: Address): Workspace |
 	return config.workspaces.find((w) => w.host === address.host && w.port === address.port);
 }
 
+/** Last session of a workspace: a plain id (old state.json, address unknown) or the id with the node it belongs to. */
+type StoredSession = number | { id: number; address: string };
+
 /** Runtime state in state.json. */
-export type State = { workspaces: Record<string, { last_session?: number }> };
+export type State = { workspaces: Record<string, { last_session?: StoredSession }> };
 
 /** Read state.json; missing or unreadable state is empty. */
 export function loadState(path: string): State {
@@ -282,17 +285,42 @@ export function loadState(path: string): State {
 	}
 }
 
-/** Session last opened in workspace `name`. */
-export function lastSession(path: string, name: string): number | undefined {
-	const id = loadState(path).workspaces[name]?.last_session;
-	return typeof id === "number" ? id : undefined;
+function parseStored(value: unknown): { id: number; address?: string } | undefined {
+	if (typeof value === "number") return { id: value };
+	if (typeof value !== "object" || value === null) return undefined;
+	const { id, address } = value as { id?: unknown; address?: unknown };
+	if (typeof id !== "number") return undefined;
+	return typeof address === "string" ? { id, address } : { id };
 }
 
-/** Record (or with `undefined`, clear) the session last opened in workspace `name`. */
-export function setLastSession(path: string, name: string, id: number | undefined): void {
+/**
+ * Session last opened in workspace `name`. With `address` (the workspace's current node) a session recorded for a
+ * different node is ignored; an old-format value without an address is adopted for `address` and stamped with it.
+ */
+export function lastSession(path: string, name: string, address?: Address): number | undefined {
+	const stored = parseStored(loadState(path).workspaces[name]?.last_session);
+	if (!stored) return undefined;
+	if (address === undefined) return stored.id;
+	const current = formatAddress(address);
+	if (stored.address === undefined) {
+		try {
+			setLastSession(path, name, stored.id, address);
+		} catch {
+			// Best effort: the value is still usable this time.
+		}
+		return stored.id;
+	}
+	return stored.address === current ? stored.id : undefined;
+}
+
+/**
+ * Record (or with `undefined`, clear) the session last opened in workspace `name`, tied to the node `address` it was
+ * opened on (without one the old plain-id format is written).
+ */
+export function setLastSession(path: string, name: string, id: number | undefined, address?: Address): void {
 	const state = loadState(path);
 	const { last_session: _, ...rest } = state.workspaces[name] ?? {};
-	state.workspaces[name] = id === undefined ? rest : { ...rest, last_session: id };
+	state.workspaces[name] = id === undefined ? rest : { ...rest, last_session: address ? { id, address: formatAddress(address) } : id };
 	writeAtomic(path, `${JSON.stringify(state, null, "\t")}\n`);
 }
 
@@ -345,7 +373,8 @@ export function migrateLegacy(env: NodeJS.ProcessEnv = process.env): string | un
 	if (!existsSync(legacy) || existsSync(target)) return undefined;
 	const { yaml, lastSessions, skipped } = convertLegacy(readFileSync(legacy, "utf8"));
 	writeAtomic(target, yaml);
-	for (const [name, id] of Object.entries(lastSessions)) setLastSession(statePath(env), name, id);
+	const migrated = parseClientConfig(yaml, target);
+	for (const [name, id] of Object.entries(lastSessions)) setLastSession(statePath(env), name, id, findWorkspace(migrated, name));
 	renameSync(legacy, `${legacy}.migrated`);
 	return `migrated ${legacy} → ${target}${skipped.length ? `; skipped unparseable workspaces: ${skipped.join(", ")}` : ""}`;
 }
