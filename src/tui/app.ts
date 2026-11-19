@@ -47,7 +47,7 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { BUSY_MESSAGE, COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
+import { BUSY_MESSAGE, COMMANDS, HELP, KEYS, QUIT_WINDOW_MS, QuitGate } from "./keys.js";
 import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
@@ -530,9 +530,9 @@ export class App {
 	}
 
 	/** A transient message over the transcript. */
-	flash(message: string): void {
+	flash(message: string, durationMs = 4000): void {
 		const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
-		this.tui.flash(Array.from(text).slice(0, 300).join(""), 4000);
+		this.tui.flash(Array.from(text).slice(0, 300).join(""), durationMs);
 		this.tui.requestRender();
 	}
 
@@ -590,15 +590,16 @@ export class App {
 		}
 	}
 
-	/** `Ctrl+C`: the second press within the window quits from any screen; the first closes the top dialog or clears the composer (only a press with nothing to do arms the gate). */
+	/** `Ctrl+C`: closes the top dialog or clears the composer (and disarms the quit gate); only a press with nothing to do arms it, and a second such press within the window quits. */
 	private interrupt(): void {
 		const composer = this.session.composer;
 		const top = this.modals.at(-1);
 		const action = routeInterrupt({ modalOpen: top !== undefined, composerEmpty: composer.getText() === "" });
-		if (this.quitGate.press(Date.now(), action.arm)) return this.quit();
+		const quit = this.quitGate.press(Date.now(), action.arm);
 		if (action.type === "closeModal") top?.cancel();
 		else if (action.type === "clearComposer") composer.setText("");
-		if (action.arm) this.flash("Ctrl+C again to quit");
+		else if (quit) this.quit();
+		else this.flash("Ctrl+C again to quit", QUIT_WINDOW_MS);
 	}
 
 	/** Thin interpreter: snapshot the state, let the router decide (`router.ts`), run the action. True when the key is consumed. */
