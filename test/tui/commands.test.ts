@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ArtifactSummary } from "../../src/api/types.js";
-import { App as AppClass, type App, type Picked } from "../../src/tui/app.js";
+import type { ArtifactSummary, SessionSummary } from "../../src/api/types.js";
+import { type CommandFrom, App as AppClass, type App, type Picked } from "../../src/tui/app.js";
 import { ApiClient } from "../../src/tui/client.js";
 import { COMMANDS } from "../../src/tui/keys.js";
 import { showArtifacts } from "../../src/tui/screens/artifacts.js";
@@ -112,6 +112,7 @@ describe("slash command chosen from the sessions list", () => {
 	function fake(flowActive: boolean) {
 		const picks = [{ command: "model" }, { key: "enter", value: { id: 7 } }];
 		const calls: string[] = [];
+		const froms: (CommandFrom | undefined)[] = [];
 		const app = {
 			session: { target: undefined },
 			sessions: [],
@@ -123,25 +124,126 @@ describe("slash command chosen from the sessions list", () => {
 			openSession: vi.fn(),
 			pick: vi.fn(async () => picks.shift()),
 			flowActive,
-			runCommand: async (line: string) => void calls.push(`run ${line}`),
-			command: async (line: string) => void calls.push(`command ${line}`),
+			runCommand: async (line: string, from?: CommandFrom) => void (calls.push(`run ${line}`), froms.push(from)),
+			command: async (line: string, from?: CommandFrom) => void (calls.push(`command ${line}`), froms.push(from)),
 		};
-		return { app, calls };
+		return { app, calls, froms };
 	}
+
+	/** The real `continueCommand`, forwarding the line and the list's `from` target like the bound method does. */
+	const bindContinue = (app: object): void => {
+		(app as { continueCommand: unknown }).continueCommand = (line: string, from?: CommandFrom) => AppClass.prototype.continueCommand.call(app, line, from);
+	};
 
 	it("runs inside the open flow instead of being dropped by command()", async () => {
 		const { app, calls } = fake(true);
 		// Same body as the real `command`: exclusive() returns early while a flow is active.
 		app.command = async (line) => void (app.flowActive || calls.push(`command ${line}`));
-		(app as unknown as { continueCommand: unknown }).continueCommand = (line: string) => AppClass.prototype.continueCommand.call(app, line);
+		bindContinue(app);
 		await showSessions(app as unknown as App);
 		expect(calls).toEqual(["run /model"]);
 	});
 
 	it("falls back to the guarded command() when no flow is active", async () => {
-		const { app, calls } = fake(false);
-		(app as unknown as { continueCommand: unknown }).continueCommand = (line: string) => AppClass.prototype.continueCommand.call(app, line);
+		const { app, calls, froms } = fake(false);
+		bindContinue(app);
 		await showSessions(app as unknown as App);
 		expect(calls).toEqual(["command /model"]);
+		expect(froms).toEqual([{ sessionId: undefined }]); // the list's target survives the fallback
+	});
+});
+
+describe("session-scoped commands from the sessions list", () => {
+	const row = (id: number, title: string, approval_mode = "ask") => ({ id, title, approval_mode, state: "idle", cwd: "/w", mode: "chat", kind: "session", usage: { cost: 0 }, updatedAt: 0 }) as unknown as SessionSummary;
+
+	/**
+	 * A fake App running the real command path over a sessions list of #3 and #5, with #3 open. Each `steps` entry answers one
+	 * sessions picker: a slash command chosen on `rowIndex` (-1: no row, as on an empty list). When steps run out the list opens session #7 (Esc would go up to the workspaces).
+	 */
+	function fake(steps: { command: string; rowIndex: number }[], rows = [row(3, "three"), row(5, "five", "auto")], answers: { ask?: string; pick?: string } = {}) {
+		const flashes: string[] = [];
+		const patched: { id: number; req: unknown }[] = [];
+		const asked: { title: string; initial: string | undefined }[] = [];
+		const picked: string[] = [];
+		const closed = vi.fn();
+		const proto = AppClass.prototype as unknown as Record<string, unknown>;
+		const app = {
+			session: { target: { id: 3, title: "three" }, close: closed },
+			sessions: [] as SessionSummary[],
+			workspace: undefined,
+			api: () => ({
+				sessions: async () => rows,
+				patchSession: async (id: number, req: unknown) => void patched.push({ id, req }),
+			}),
+			now: () => 0,
+			lastSessionId: () => undefined,
+			flash: (text: string) => void flashes.push(text),
+			refreshSessions: async () => {},
+			openSession: vi.fn(),
+			flowActive: true,
+			config: { prefs: { confirm_auto: false } },
+			confirmAuto: async () => true,
+			ask: async (title: string, options: { initial?: string } = {}) => {
+				asked.push({ title, initial: options.initial });
+				return answers.ask;
+			},
+			pick: vi.fn(async (title: string, items: { value: unknown }[]) => {
+				const step = steps.shift();
+				if (title.startsWith("sessions")) return step ? { key: "enter", command: step.command, value: items[step.rowIndex]?.value } : { key: "enter", value: { id: 7 } };
+				picked.push(title);
+				return answers.pick === undefined ? undefined : { key: "enter", value: answers.pick };
+			}),
+			continueCommand: undefined as unknown,
+		};
+		for (const name of ["continueCommand", "runCommand", "commandOnListed", "editSession"]) {
+			(app as Record<string, unknown>)[name] = (...args: unknown[]) => (proto[name] as (...a: unknown[]) => unknown).apply(app, args);
+		}
+		const show = () => showSessions(app as unknown as App);
+		return { show, flashes, patched, asked, picked, closed };
+	}
+
+	it("/archive patches the highlighted session, not the open one", async () => {
+		const { show, patched, closed } = fake([{ command: "archive", rowIndex: 1 }]);
+		await show();
+		expect(patched).toEqual([{ id: 5, req: { archived: true } }]);
+		expect(closed).not.toHaveBeenCalled(); // #3 stays open
+	});
+
+	it("/model and /workers are rejected: they work on the open session", async () => {
+		const { show, flashes, patched } = fake([
+			{ command: "model", rowIndex: 1 },
+			{ command: "workers", rowIndex: 1 },
+		]);
+		await show();
+		expect(flashes).toEqual(["✗ /model works on the open session: open the session first", "✗ /workers works on the open session: open the session first"]);
+		expect(patched).toEqual([]);
+	});
+
+	it("a command from an empty list flashes 'no session highlighted'", async () => {
+		const { show, flashes, patched } = fake([{ command: "archive", rowIndex: -1 }], []);
+		await show();
+		expect(flashes).toEqual(["✗ /archive: no session highlighted"]);
+		expect(patched).toEqual([]);
+	});
+
+	it("/title with no argument prompts, pre-filled with the highlighted title, and patches that session", async () => {
+		const { show, asked, patched } = fake([{ command: "title", rowIndex: 1 }], undefined, { ask: " renamed " });
+		await show();
+		expect(asked).toEqual([{ title: "rename #5", initial: "five" }]);
+		expect(patched).toEqual([{ id: 5, req: { title: "renamed" } }]);
+	});
+
+	it("/title cancelled in the prompt patches nothing", async () => {
+		const { show, patched, flashes } = fake([{ command: "title", rowIndex: 1 }]);
+		await show();
+		expect(patched).toEqual([]);
+		expect(flashes).toEqual([]);
+	});
+
+	it("/approval with no argument picks the mode and patches the highlighted session", async () => {
+		const { show, picked, patched } = fake([{ command: "approval", rowIndex: 0 }], undefined, { pick: "auto" });
+		await show();
+		expect(picked).toEqual(["#3 · approval mode"]);
+		expect(patched).toEqual([{ id: 3, req: { approval_mode: "auto" } }]);
 	});
 });
