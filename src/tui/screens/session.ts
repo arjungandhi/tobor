@@ -44,6 +44,11 @@ export class TranscriptScroll extends ScrollView {
 		return remaining;
 	}
 
+	/** Forget a pending `keepPosition` (the content it was measured against is gone). */
+	clearKeep(): void {
+		this.shift = 0;
+	}
+
 	/** `rows` were added above the current content: keep the visible lines where they are (applied on the next layout, when the new height is known). */
 	keepPosition(rows: number): void {
 		this.shift = rows;
@@ -237,8 +242,10 @@ export class SessionScreen {
 	/** Why the server ended the watch (terminal: no reconnect); cleared when the session is reopened or closed. */
 	watchEnded: string | undefined;
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
-	private loadingEarlier = false;
-	private answering = false;
+	/** The replica whose earlier-history load is in flight (keyed by replica so a stale load never blocks another session). */
+	private loadingEarlier: ConversationReplica | undefined;
+	/** The in-flight answer (per target, so an answer pending in a closed session never blocks another). */
+	private answering: { target: SessionTarget | undefined } | undefined;
 	/** Stale guard for `refreshDetail`/`patch`: the latest detail fetch wins. */
 	private detailFetch = 0;
 	/** Stale guards for `refreshWorkers`: the latest fetch wins, and events newer than a fetch's start win over its result. */
@@ -251,7 +258,7 @@ export class SessionScreen {
 	private workerStamp = new Map<string, number>();
 	/** Sent messages the watch has not delivered yet (shown as local echoes at the transcript end). */
 	private echoes: PendingEcho[] = [];
-	private readonly earlierRetry = new RetryGate();
+	private earlierRetry = new RetryGate();
 	private readonly abortWatch = new AbortWatch();
 	/** Output arrived while the view was scrolled up (cleared on return to the end). */
 	private newOutput = false;
@@ -355,6 +362,12 @@ export class SessionScreen {
 		this.workerStamp.clear();
 		this.echoes = [];
 		this.newOutput = false;
+		this.followBeforeSelect = true;
+		this.loadingEarlier = undefined;
+		this.answering = undefined;
+		this.earlierRetry = new RetryGate();
+		this.abortWatch.disarm();
+		this.scroll.clearKeep();
 		this.strip.update([], undefined);
 		this.watchState = "closed";
 		this.watchEnded = undefined;
@@ -573,9 +586,11 @@ export class SessionScreen {
 	/** Answer an inline question (highlighted option or typed text), then refresh so the panel moves on or collapses. */
 	async answerQuestion(question: PendingQuestion, answer: string): Promise<void> {
 		// Throw (not flash+return) so `keepOnFail` puts the submitted text back instead of silently dropping it.
-		if (this.answering) throw new Error("still answering\u2026");
+		const target = this.target;
+		if (this.answering && this.answering.target === target) throw new Error("still answering\u2026");
 		const following = this.scroll.isFollowingEnd;
-		this.answering = true;
+		const mine = { target };
+		this.answering = mine;
 		try {
 			if (question.fields?.length) {
 				// A form: collect this field; send everything only after the last one.
@@ -588,7 +603,7 @@ export class SessionScreen {
 				this.app.flash(`answered: ${shorten(answer, 40)}`);
 			}
 		} finally {
-			this.answering = false;
+			if (this.answering === mine) this.answering = undefined;
 			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.
 			await this.app.refreshQuestions();
 		}
@@ -761,6 +776,7 @@ export class SessionScreen {
 			const replica = this.replica;
 			this.app.guard(async () => {
 				await replica?.fillGap(action.after, action.upTo);
+				if (replica !== this.replica) return;
 				this.rebuild();
 				this.app.changed();
 			});
@@ -771,17 +787,20 @@ export class SessionScreen {
 	/** Load the page before the oldest entry held. */
 	async loadEarlier(): Promise<void> {
 		const replica = this.replica;
-		if (!replica || this.loadingEarlier) return;
-		this.loadingEarlier = true;
+		if (!replica || this.loadingEarlier === replica) return;
+		this.loadingEarlier = replica;
+		const retry = this.earlierRetry;
 		try {
 			await replica.loadEarlier();
 		} catch (err) {
-			this.earlierRetry.failed(Date.now());
+			retry.failed(Date.now());
 			throw err;
 		} finally {
-			this.loadingEarlier = false;
+			if (this.loadingEarlier === replica) this.loadingEarlier = undefined;
 		}
-		this.earlierRetry.ok();
+		retry.ok();
+		// The session was closed or switched while the page loaded: nothing of it is on screen any more.
+		if (replica !== this.replica) return;
 		// The page lands above the viewport: remember how tall the content was so the view can stay on the same lines.
 		const before = this.transcript.lineCount();
 		this.rebuild();
