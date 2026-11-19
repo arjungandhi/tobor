@@ -3,7 +3,7 @@ import type { PendingApproval, WatchValue, WorkerSummary } from "../../src/api/t
 import type { App } from "../../src/tui/app.js";
 import { ConversationReplica } from "../../src/tui/replica.js";
 import { initialView, streamingOps } from "./scenario.js";
-import { SessionScreen, type SessionTarget } from "../../src/tui/screens/session.js";
+import { isTerminalEnd, SessionScreen, type SessionTarget } from "../../src/tui/screens/session.js";
 
 const emptyView = { conversation: 1, docs: {}, entries: [] } as unknown as WatchValue;
 const worker = (id: string, conversationId: number): WorkerSummary => ({ id, name: id, agent: "a", conversationId, state: "idle", lastText: "", createdAt: 0 }) as unknown as WorkerSummary;
@@ -86,15 +86,30 @@ describe("session state: worker approvals", () => {
 });
 
 describe("watch end frame", () => {
-	it("is terminal for any reason: closes the watch once, keeps the target and notes it", () => {
+	it("is terminal for deleted/not-found/ended: closes the watch once, keeps the target and notes it", () => {
 		const { screen, internals, replica, flashes, closed } = setup();
-		internals.onFrame(replica, { t: "end", reason: "server restarting" });
+		internals.onFrame(replica, { t: "end", reason: "not_found" });
 		expect(closed).toHaveBeenCalledTimes(1);
 		expect(internals.watch).toBeUndefined();
-		expect(flashes).toEqual(["watch ended: server restarting"]);
-		expect(screen.watchEnded).toBe("server restarting");
+		expect(flashes).toEqual(["watch ended: not_found"]);
+		expect(screen.watchEnded).toBe("not_found");
 		expect(screen.target?.id).toBe(1);
-		expect(screen.transcript.render(80).join("\n")).toContain("watch ended: server restarting · Enter to reopen");
+		expect(screen.transcript.render(80).join("\n")).toContain("watch ended: not_found");
+	});
+
+	it("classifies reasons: only deleted/not-found/ended are final", () => {
+		for (const reason of ["not_found", "ended", "session deleted", "Not Found"]) expect(isTerminalEnd(reason), reason).toBe(true);
+		for (const reason of ["closed", "stopped", "aborted", "failed: boom", "failed: file not found", "listener_error: x", "server restarting"])
+			expect(isTerminalEnd(reason), reason).toBe(false);
+	});
+
+	it("leaves the socket running for a non-fatal reason, so it reconnects", () => {
+		const { screen, internals, replica, flashes, closed } = setup();
+		internals.onFrame(replica, { t: "end", reason: "failed: boom" });
+		expect(closed).not.toHaveBeenCalled();
+		expect(internals.watch).toBeDefined();
+		expect(screen.watchEnded).toBeUndefined();
+		expect(flashes).toEqual(["watch ended: failed: boom"]);
 	});
 });
 

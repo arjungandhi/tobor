@@ -227,6 +227,15 @@ export function echoBlock(echo: PendingEcho): PendingBlock {
 	return { kind: "pending", key: `p:${echo.requestId}`, text: echo.text, ...(echo.images.length > 0 ? { images: echo.images } : {}) };
 }
 
+/**
+ * Whether a watch `end` reason is final: the session is deleted/not found or its source ended. Anything else (`closed`,
+ * `failed: …`, `listener_error: …`, `stopped`, `aborted`) leaves the session alive, so the socket reconnects.
+ */
+export function isTerminalEnd(reason: string): boolean {
+	if (/^(failed|listener_error):/.test(reason)) return false;
+	return /^ended$|delet|not[ _.-]?found/i.test(reason);
+}
+
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
 export type SessionTarget = {
 	id: SessionId;
@@ -246,7 +255,7 @@ export class SessionScreen {
 	replica: ConversationReplica | undefined;
 	workers: WorkerSummary[] = [];
 	watchState: SocketState = "closed";
-	/** Why the server ended the watch (terminal: no reconnect); cleared when the session is reopened or closed. */
+	/** Why the server ended the watch for good (see `isTerminalEnd`; no reconnect); cleared when the session is reopened or closed. */
 	watchEnded: string | undefined;
 	/** Set while ops frames are applied but not yet rebuilt: the transcript height before the first of them. */
 	private dirtyFrom: number | undefined;
@@ -416,13 +425,16 @@ export class SessionScreen {
 				}
 				return;
 			case "end":
-				// Terminal: the server will not resume this watch, so stop the socket (it would reconnect forever and flash each
-				// cycle). The transcript stays; opening the session again (no watch left) starts a fresh one.
-				this.watch?.close();
-				this.watch = undefined;
-				this.watchEnded = frame.reason;
 				this.app.flash(`watch ended: ${frame.reason}`);
-				this.transcript.setEmptyText(`○ watch ended: ${frame.reason} · Enter to reopen`);
+				if (isTerminalEnd(frame.reason)) {
+					// The server will not resume this watch, so stop the socket (it would reconnect forever and flash each cycle).
+					// The transcript stays; opening the session again (no watch left) starts a fresh one.
+					this.watch?.close();
+					this.watch = undefined;
+					this.watchEnded = frame.reason;
+					this.transcript.setEmptyText(`○ watch ended: ${frame.reason}`);
+				}
+				// Any other reason (closed, failed: …, listener_error: …): the server closes the socket, which reconnects.
 				break;
 			case "pong":
 				return;
