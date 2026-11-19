@@ -7,6 +7,7 @@ import {
 	isFocusable,
 	isKeyRelease,
 	isKeyRepeat,
+	type KeyId,
 	matchesKey,
 	type OverlayHandle,
 	ProcessTerminal,
@@ -859,7 +860,10 @@ export class App {
 		return Math.max(3, this.terminal.rows - 4 - extra);
 	}
 
-	/** A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value. */
+	/**
+	 * A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value.
+	 * `keys` entries are a single character (matched literally) or a named key id such as "left" / "right" (matched with `matchesKey`).
+	 */
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
@@ -962,7 +966,7 @@ export class App {
 					refilter();
 					return true;
 				}
-				const key = options.keys?.find((k) => data === k);
+				const key = options.keys?.find((k) => (k.length === 1 ? data === k : matchesKey(data, k as KeyId)));
 				if (key === undefined) return items.length === 0;
 				chosen(key);
 				return true;
