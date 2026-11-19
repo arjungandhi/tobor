@@ -47,12 +47,47 @@ function pendingApprovals(app: App): PendingApproval[] {
 	);
 }
 
-/** Alt+Shift+A: pending approvals (open session first); Enter reviews one (approve / approve for session / deny), y/n decide the highlighted row. */
+/**
+ * Decide one approval: `listKey` is the key that opened it ("y"/"n" decide at once, anything else opens the review card).
+ * Resolves false when the user backed out of the card (nothing sent), true once a decision was sent or failed (flashed).
+ */
+async function review(app: App, chosen: PendingApproval, listKey: string): Promise<boolean> {
+	let decision = LIST_SHORTCUTS[listKey];
+	if (!decision) {
+		const card = await app.pick(`approve ${chosen.tool}?`, DECISIONS, {
+			lines: approvalCard(app, chosen),
+			hint: "Enter choose · y/s/n shortcuts · Esc back",
+			keys: Object.keys(SHORTCUTS),
+		});
+		if (!card) return false;
+		decision = SHORTCUTS[card.key] ?? card.value;
+	}
+	if (!decision) return false;
+	try {
+		await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
+		app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
+	} catch (err) {
+		// Expired or decided elsewhere (404/409): drop the stale row and stay in the list instead of falling out to the transcript.
+		const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
+		app.flash(gone ? `already resolved: ${chosen.tool}` : err instanceof Error ? err.message : String(err));
+	}
+	return true;
+}
+
+/**
+ * Alt+Shift+A: pending approvals (open session first); Enter reviews one (approve / approve for session / deny), y/n decide the highlighted row.
+ * Exactly one pending approval skips the list and opens its review card (Esc closes the screen); once it is decided,
+ * the next screen is again the card (one left) or the list (several), or nothing (none left).
+ */
 export async function showApprovals(app: App): Promise<void> {
-	await app.refreshApprovals();
-	if (app.approvals.length === 0) {
-		app.flash("no pending approvals");
-		return;
+	for (let first = true; ; first = false) {
+		await app.refreshApprovals();
+		if (app.approvals.length === 0) {
+			if (first) app.flash("no pending approvals");
+			return;
+		}
+		if (app.approvals.length > 1) break;
+		if (!(await review(app, pendingApprovals(app)[0]!, "enter"))) return;
 	}
 	await navigate<PendingApproval>(app, {
 		view: () => {
@@ -67,26 +102,7 @@ export async function showApprovals(app: App): Promise<void> {
 		key: (a) => a.callId,
 		onPick: async (picked) => {
 			const chosen = picked.value;
-			if (!chosen) return "stay";
-			let decision = LIST_SHORTCUTS[picked.key];
-			if (!decision) {
-				const card = await app.pick(`approve ${chosen.tool}?`, DECISIONS, {
-					lines: approvalCard(app, chosen),
-					hint: "Enter choose · y/s/n shortcuts · Esc back",
-					keys: Object.keys(SHORTCUTS),
-				});
-				if (!card) return "stay";
-				decision = SHORTCUTS[card.key] ?? card.value;
-			}
-			if (!decision) return "stay";
-			try {
-				await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
-				app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
-			} catch (err) {
-				// Expired or decided elsewhere (404/409): drop the stale row and stay in the list instead of falling out to the transcript.
-				const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
-				app.flash(gone ? `already resolved: ${chosen.tool}` : err instanceof Error ? err.message : String(err));
-			}
+			if (!chosen || !(await review(app, chosen, picked.key))) return "stay";
 			await app.refreshApprovals();
 			// The decided row is gone, so the cursor (kept by navigate) lands on the next pending item.
 			return app.approvals.length > 0 ? "refresh" : "close";

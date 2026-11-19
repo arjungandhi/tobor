@@ -68,19 +68,45 @@ async function askForm(app: App, q: PendingQuestion, fields: QuestionField[]): P
 	return answers;
 }
 
-/** Alt+Shift+U: questions the agent asked (open session first); pick one, then choose an option or type an answer. */
+/** Open questions, the open session's first. */
+function pendingQuestions(app: App): PendingQuestion[] {
+	const current = app.session.target?.id;
+	return [...app.questions].sort((a, b) => Number(b.conversationId === current) - Number(a.conversationId === current) || a.createdAt - b.createdAt);
+}
+
+/** Answer one question. Resolves false when the user backed out or sent nothing, true once an answer was sent or failed (flashed). */
+async function answerOne(app: App, chosen: PendingQuestion): Promise<boolean> {
+	const body = await collectAnswer(app, chosen);
+	if (!body) return false; // cancelled or empty: nothing is submitted
+	try {
+		await app.api().answer(chosen.callId, { ...body.request, conversationId: chosen.conversationId });
+		app.flash(body.done);
+	} catch (err) {
+		// Expired or answered elsewhere (404/409): drop the stale row and stay in the list.
+		const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
+		app.flash(gone ? "already resolved" : err instanceof Error ? err.message : String(err));
+	}
+	return true;
+}
+
+/**
+ * Alt+Shift+U: questions the agent asked (open session first); pick one, then choose an option or type an answer.
+ * Exactly one pending question skips the list and opens its card (Esc closes the screen); once it is answered, the
+ * next screen is again the card (one left) or the list (several), or nothing (none left).
+ */
 export async function showQuestions(app: App): Promise<void> {
-	await app.refreshQuestions();
-	if (app.questions.length === 0) {
-		app.flash("no pending questions");
-		return;
+	for (let first = true; ; first = false) {
+		await app.refreshQuestions();
+		if (app.questions.length === 0) {
+			if (first) app.flash("no pending questions");
+			return;
+		}
+		if (app.questions.length > 1) break;
+		if (!(await answerOne(app, pendingQuestions(app)[0]!))) return;
 	}
 	await navigate<PendingQuestion>(app, {
 		view: () => {
-			const current = app.session.target?.id;
-			const pending = [...app.questions].sort(
-				(a, b) => Number(b.conversationId === current) - Number(a.conversationId === current) || a.createdAt - b.createdAt,
-			);
+			const pending = pendingQuestions(app);
 			return {
 				title: `questions (${pending.length})`,
 				items: pending.map((q) => ({ value: q, label: q.question.replace(/\s+/g, " ").slice(0, 80), description: origin(app, q) })),
@@ -89,18 +115,7 @@ export async function showQuestions(app: App): Promise<void> {
 		},
 		key: (q) => q.callId,
 		onPick: async (picked) => {
-			const chosen = picked.value;
-			if (!chosen) return "stay";
-			const body = await collectAnswer(app, chosen);
-			if (!body) return "stay"; // cancelled or empty: nothing is submitted
-			try {
-				await app.api().answer(chosen.callId, { ...body.request, conversationId: chosen.conversationId });
-				app.flash(body.done);
-			} catch (err) {
-				// Expired or answered elsewhere (404/409): drop the stale row and stay in the list.
-				const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
-				app.flash(gone ? "already resolved" : err instanceof Error ? err.message : String(err));
-			}
+			if (!picked.value || !(await answerOne(app, picked.value))) return "stay";
 			await app.refreshQuestions();
 			return app.questions.length > 0 ? "refresh" : "close";
 		},
