@@ -23,6 +23,7 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type {
+	ApprovalMode,
 	EventsFrame,
 	NodeEvent,
 	PatchSessionRequest,
@@ -795,19 +796,17 @@ export class App {
 			case "quit":
 				return this.quit();
 			case "title":
-				if (!arg) throw new Error("usage: /title <title>");
-				return s.patch({ title: arg });
+			case "approval": {
+				const target = s.target;
+				if (!target || target.worker) throw new Error("no session open");
+				return this.editSession(name, arg, { label: "this session", title: target.title, mode: s.detail?.approval_mode, patch: (req) => s.patch(req) });
+			}
 			case "archive":
 			case "complete":
 				await s.patch({ archived: true });
 				this.session.close();
 				await this.refreshSessions();
 				return showSessions(this);
-			case "approval": {
-				if (arg !== "ask" && arg !== "auto") throw new Error("usage: /approval ask|auto");
-				if (arg === "auto" && !(await this.confirmAuto("approval mode", "Switch this session to auto? Tools will run without asking."))) return;
-				return s.patch({ approval_mode: arg });
-			}
 			default:
 				throw new Error(`unknown command /${name} · /help`);
 		}
@@ -821,18 +820,51 @@ export class App {
 		};
 		switch (name) {
 			case "title":
-				if (!arg) throw new Error("usage: /title <title>");
-				return patch({ title: arg });
+			case "approval": {
+				const summary = this.sessions.find((x) => x.id === id);
+				const open = this.session.target?.id === id ? this.session : undefined;
+				return this.editSession(name, arg, {
+					label: `#${id}`,
+					title: summary?.title ?? open?.target?.title ?? "",
+					mode: summary?.approval_mode ?? open?.detail?.approval_mode,
+					patch,
+				});
+			}
 			case "archive":
 			case "complete":
 				await patch({ archived: true });
 				if (this.session.target?.id === id) this.session.close();
 				return; // the sessions list is still open and re-shows itself
-			case "approval":
-				if (arg !== "ask" && arg !== "auto") throw new Error("usage: /approval ask|auto");
-				if (arg === "auto" && !(await this.confirmAuto("approval mode", `Switch #${id} to auto? Tools will run without asking.`))) return;
-				return patch({ approval_mode: arg });
 		}
+	}
+
+	/**
+	 * /title and /approval on one session, shared by the open session and the sessions list. Without an argument (always the
+	 * case from a list row) /title asks for the new title and /approval picks the mode; Esc or an empty title cancels.
+	 */
+	private async editSession(
+		name: "title" | "approval",
+		arg: string,
+		target: { label: string; title: string; mode: ApprovalMode | undefined; patch: (req: PatchSessionRequest) => Promise<void> },
+	): Promise<void> {
+		if (name === "title") {
+			const title = arg || (await this.ask(`rename ${target.label}`, { initial: target.title }))?.trim();
+			if (!title) return;
+			return target.patch({ title });
+		}
+		let mode: string | undefined = arg;
+		if (!mode) {
+			const picked = await this.pick(
+				`${target.label} · approval mode`,
+				(["ask", "auto"] as const).map((value) => ({ value, label: value })),
+				{ selected: target.mode === "auto" ? 1 : 0 },
+			);
+			mode = picked?.value;
+			if (!mode) return;
+		}
+		if (mode !== "ask" && mode !== "auto") throw new Error("usage: /approval ask|auto");
+		if (mode === "auto" && !(await this.confirmAuto("approval mode", `Switch ${target.label} to auto? Tools will run without asking.`))) return;
+		return target.patch({ approval_mode: mode });
 	}
 
 	private async help(): Promise<void> {
