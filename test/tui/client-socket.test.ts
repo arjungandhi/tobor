@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { ReconnectingSocket, type SocketState } from "../../src/tui/client.js";
 
+/** Mirrors STABLE_MS in src/tui/client.ts; tests backdate `openedAt` rather than wait it out. */
+const STABLE_MS = 10_000;
+
 type Frame = { n: number };
 
 let wss: WebSocketServer | undefined;
@@ -71,6 +74,8 @@ describe("ReconnectingSocket", () => {
 		});
 		sock.start();
 		await until(() => opens.length === 1);
+		// Pretend the connection has been stable for STABLE_MS, so the fast path applies.
+		(sock as unknown as { openedAt: number }).openedAt -= STABLE_MS;
 		const t0 = Date.now();
 		sock.reconnect();
 		await until(() => opens.length === 2);
@@ -91,6 +96,27 @@ describe("ReconnectingSocket", () => {
 		await until(() => states.includes("waiting"));
 		sock.reconnect();
 		await until(() => opens.length === 2);
+	});
+
+	it("a reconnect() on an unstable connection goes through backoff, and a second reconnect() does not cut it short", async () => {
+		const opens: number[] = [];
+		const url = await serve((_ws, count) => opens.push(count));
+		const states: SocketState[] = [];
+		sock = new ReconnectingSocket<Frame>({
+			url: () => url,
+			onFrame: () => {},
+			onState: (s) => states.push(s),
+			minDelayMs: 60_000,
+			maxDelayMs: 60_000,
+		});
+		sock.start();
+		await until(() => opens.length === 1);
+		sock.reconnect(); // connection just opened: not stable, so backoff
+		await until(() => states.includes("waiting"));
+		sock.reconnect(); // quick second call: must still wait out the backoff
+		await new Promise((r) => setTimeout(r, 200));
+		expect(opens).toHaveLength(1);
+		expect((sock as unknown as { attempt: number }).attempt).toBe(1);
 	});
 
 	it("keeps the backoff for organic failures", async () => {

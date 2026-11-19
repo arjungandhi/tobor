@@ -357,6 +357,8 @@ export class ReconnectingSocket<In> {
 	private watchdog: NodeJS.Timeout | undefined;
 	/** Set by `reconnect()`: the next close reconnects immediately, without backoff or counting as a failed attempt. */
 	private immediate = false;
+	/** Set by `reconnect()` on a connection that was not stable: the next retry waits out the backoff, and a repeat `reconnect()` must not cut it short. */
+	private noFastRetry = false;
 	/** Last time anything (message or pong) arrived on the current connection. */
 	private lastRx = 0;
 	/** When the current connection opened; 0 while not open. */
@@ -397,13 +399,21 @@ export class ReconnectingSocket<In> {
 		this.options.onState?.("closed");
 	}
 
-	/** Drop the current connection and reconnect now, skipping the backoff (explicit resync, e.g. after a watch `end`). */
+	/**
+	 * Drop the current connection and reconnect now, skipping the backoff (explicit resync, e.g. after a watch `end`).
+	 * Only a connection that stayed open for `STABLE_MS` gets the fast path; otherwise the retry follows the normal backoff,
+	 * so a deterministic failure right after connect cannot loop tightly.
+	 */
 	reconnect(): void {
 		if (this.stopped) return;
 		if (this.ws) {
-			this.immediate = true;
+			if (this.openedAt > 0 && Date.now() - this.openedAt >= STABLE_MS) {
+				this.immediate = true;
+			} else {
+				this.noFastRetry = true;
+			}
 			this.ws.terminate();
-		} else if (this.timer) {
+		} else if (this.timer && !this.noFastRetry) {
 			// Waiting out a backoff delay: cut it short.
 			clearTimeout(this.timer);
 			this.timer = undefined;
@@ -425,6 +435,7 @@ export class ReconnectingSocket<In> {
 		if (this.stopped) return;
 		this.options.onState?.("connecting");
 		this.lastError = undefined;
+		this.noFastRetry = false;
 		const ws = new WebSocket(this.options.url(), { handshakeTimeout: 10_000 });
 		this.ws = ws;
 		const pingMs = this.pingMs;
