@@ -718,9 +718,7 @@ export class App {
 
 	/** Empty the composer: the text and the staged image attachments. */
 	private clearComposer(): void {
-		const composer = this.session.composer;
-		composer.setText("");
-		composer.unstage(composer.stagedImages());
+		this.session.composer.clearAll();
 	}
 
 	/** `Ctrl+C`: closes the top dialog or clears the composer (and disarms the quit gate); only a press with nothing to do arms it, and a second such press within the window quits. */
@@ -749,7 +747,6 @@ export class App {
 			hasTarget: s.target !== undefined,
 			questionOptions: s.questions.options().length > 0,
 			repeating: this.repeating,
-			busy: false, // refused in do(), which flashes the busy message naming the running flow
 			now: Date.now(),
 			lastLeft: this.lastLeft,
 		});
@@ -798,9 +795,6 @@ export class App {
 				if (isModalHotkey(name)) return this.do(flowLabel(name), () => this.hotkey(name));
 				return this.inPlace(name);
 			}
-			case "busyFlash":
-				this.flash(busyMessage(this.flowName));
-				return true;
 			case "exit":
 				this.quit();
 				return true;

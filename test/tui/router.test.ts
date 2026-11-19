@@ -22,7 +22,6 @@ const idle: RouteContext = {
 	hasTarget: true,
 	questionOptions: false,
 	repeating: false,
-	busy: false,
 	now: 10_000,
 	lastLeft: 0,
 };
@@ -97,39 +96,10 @@ describe("routeKey: Esc priority", () => {
 	});
 });
 
-describe("routeKey: busy flows", () => {
-	it("still aborts while a flow is active", () => {
-		expect(route(ESC, { state: "running", busy: true })).toEqual({ type: "abort" });
-		expect(route(ESC, { state: "waiting", busy: true })).toEqual({ type: "abort" });
-	});
-
-	it("flashes instead of silently dropping flow-opening keys", () => {
-		expect(route(CTRL_N, { busy: true })).toEqual({ type: "busyFlash" });
-		expect(route(CTRL_L, { busy: true })).toEqual({ type: "busyFlash" });
-		expect(route("?", { busy: true })).toEqual({ type: "busyFlash" });
-		expect(route(ESC, { busy: true })).toEqual({ type: "busyFlash" });
-		expect(route(LEFT, { busy: true, lastLeft: 9_800 })).toEqual({ type: "busyFlash" });
-	});
-
-	it("flashes a question answer", () => {
-		expect(route(ENTER, { busy: true, questionOptions: true })).toEqual({ type: "busyFlash" });
-	});
-
-	it("does not touch non-flow keys", () => {
-		expect(route(ESC, { busy: true, composerEmpty: false })).toEqual({ type: "clearComposer" });
-		expect(route(ESC, { busy: true, workerView: true })).toEqual({ type: "backToParent" });
-		expect(route(UP, { busy: true })).toEqual({ type: "moveSelection", delta: 0 });
-	});
-
-	it("does not flash on an auto-repeat", () => {
-		expect(route(CTRL_N, { busy: true, repeating: true })).toEqual({ type: "consume" });
-	});
-});
-
 describe("routeKey: modals", () => {
 	it("passes every key", () => {
 		for (const key of [ESC, UP, DOWN, LEFT, ENTER, CTRL_L, CTRL_N, CTRL_D, "?", "a"]) {
-			for (const over of [{}, { selecting: true }, { busy: true }, { state: "running" as const }, { questionOptions: true }]) {
+			for (const over of [{}, { selecting: true }, { state: "running" as const }, { questionOptions: true }]) {
 				expect(route(key, { ...over, modalOpen: true })).toEqual({ type: "pass" });
 			}
 		}
