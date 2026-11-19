@@ -1,25 +1,88 @@
 import { type KeyId, matchesKey } from "@earendil-works/pi-tui";
 
-/** Global key bindings of the Session view (intercepted before the composer sees them); mirrors omp's defaults. */
-export const KEYS = {
-	followUp: ["ctrl+q", "ctrl+enter"],
-	abort: "escape",
-	approvals: "alt+shift+a",
-	questions: "alt+shift+u",
-	workers: ["alt+a", "ctrl+s"],
-	workerTranscript: "ctrl+o",
-	model: "alt+m",
-	modelCycle: "ctrl+p",
-	pasteImage: "ctrl+v",
-	newSession: "ctrl+n",
-	sessions: "ctrl+l",
-	workspaces: "ctrl+t",
-	settings: "ctrl+,",
-	quit: "ctrl+c",
-	exit: "ctrl+d",
-	help: "?",
-	navigate: "up",
-} as const satisfies Record<string, KeyId | readonly KeyId[]>;
+/** One global key of the Session view: the single declaration that the router, the help overlay and hint texts derive from. */
+type HotkeyDef = {
+	/** Stable name; also the `KEYS` property and (for `flow` entries) the router's `HotkeyName`. */
+	name: string;
+	/** Key bindings; any one triggers it. The first is the one shown in hints. */
+	keys: readonly KeyId[];
+	/** Help overlay key column, when the derived `Ctrl+Q / Ctrl+Enter` form is not right. */
+	label?: string;
+	/** Help overlay text: what it does. */
+	help: string;
+	/** Short action label for hints and flashes (`Alt+Shift+A approvals`); omit for keys that never appear in a hint. */
+	hint?: string;
+	/** Dispatched by the router's hotkey loop (any composer state) to a flow-opening screen. The others have bespoke routing in `routeKey` / `App.onInput`. */
+	flow?: true;
+};
+
+/**
+ * Global key bindings of the Session view (intercepted before the composer sees them); mirrors omp's defaults.
+ * Order is the help overlay's and the router's dispatch order. Keys that pi-tui or the terminal own (newline, scrolling,
+ * transcript search) are not here: see `HELP_PROVIDED`.
+ */
+export const HOTKEY_TABLE = [
+	{ name: "followUp", keys: ["ctrl+q", "ctrl+enter"], help: "queue a follow-up for after the current turn", hint: "follow-up", flow: true },
+	{
+		name: "abort",
+		keys: ["escape"],
+		help: "clear the composer; when empty: abort the run · worker view: back · idle: up a tier (sessions list; Esc there: workspaces)",
+		hint: "abort",
+	},
+	{ name: "approvals", keys: ["alt+shift+a"], help: "pending approvals: approve / approve for session / deny", hint: "approvals", flow: true },
+	{ name: "questions", keys: ["alt+shift+u"], help: "pending questions from the agent (ask_user): answer or pick an option", hint: "questions", flow: true },
+	{ name: "workers", keys: ["alt+a", "ctrl+s"], help: "workers of this session", hint: "workers", flow: true },
+	{ name: "workerTranscript", keys: ["ctrl+o"], help: "open a worker's transcript (again: back)", hint: "worker transcript", flow: true },
+	{ name: "model", keys: ["alt+m"], help: "change the session's model", hint: "model", flow: true },
+	{ name: "modelCycle", keys: ["ctrl+p"], help: "cycle to the next model", hint: "next model", flow: true },
+	{ name: "pasteImage", keys: ["ctrl+v"], help: "paste from the clipboard: an image becomes an attachment, text is inserted", hint: "paste", flow: true },
+	{ name: "newSession", keys: ["ctrl+n"], help: "new session", hint: "new session", flow: true },
+	{ name: "sessions", keys: ["ctrl+l"], help: "sessions", hint: "sessions", flow: true },
+	{ name: "workspaces", keys: ["ctrl+t"], help: "switch workspace (saved nodes, with reachability)", hint: "workspaces", flow: true },
+	{ name: "settings", keys: ["ctrl+,"], help: "settings: node defaults, workspaces and TUI preferences", hint: "settings", flow: true },
+	{
+		name: "navigate",
+		keys: ["up"],
+		label: "↑ (empty composer)",
+		help: "select transcript blocks: Enter expands a tool, loads earlier history",
+	},
+	{ name: "help", keys: ["?"], help: "this help (empty composer)", hint: "help" },
+	{ name: "quit", keys: ["ctrl+c"], help: "close the dialog or clear the composer; with neither to do, twice within 0.5 s quits", hint: "quit" },
+	{ name: "exit", keys: ["ctrl+d"], help: "quit (when the composer is empty)" },
+] as const satisfies readonly HotkeyDef[];
+
+type HotkeyEntry = (typeof HOTKEY_TABLE)[number];
+
+/** Names of the table entries the router dispatches through its hotkey loop. */
+export type FlowHotkeyName = Extract<HotkeyEntry, { flow: true }>["name"];
+
+type BindingOf<Keys> = Keys extends readonly [infer One extends KeyId] ? One : Keys;
+
+/** Key bindings by name: a single key id, or the list when there are several. Derived from `HOTKEY_TABLE`. */
+export const KEYS = Object.fromEntries(HOTKEY_TABLE.map((e) => [e.name, e.keys.length === 1 ? e.keys[0] : e.keys])) as {
+	readonly [E in HotkeyEntry as E["name"]]: BindingOf<E["keys"]>;
+};
+
+const KEY_NAMES: Readonly<Record<string, string>> = { escape: "Esc", up: "↑", down: "↓", left: "←", right: "→" };
+
+/** `alt+shift+a` → `Alt+Shift+A`, `escape` → `Esc`. */
+export function formatKey(id: string): string {
+	return id
+		.split("+")
+		.map((part) => KEY_NAMES[part] ?? part.charAt(0).toUpperCase() + part.slice(1))
+		.join("+");
+}
+
+/** The key as shown in hints: the first binding of the named table entry. */
+export function keyLabel(name: HotkeyEntry["name"]): string {
+	return formatKey(HOTKEY_TABLE.find((e) => e.name === name)?.keys[0] ?? name);
+}
+
+/** Key plus short action, e.g. `Alt+Shift+A approvals`. */
+export function hotkeyHint(name: HotkeyEntry["name"]): string {
+	const entry: HotkeyDef | undefined = HOTKEY_TABLE.find((e) => e.name === name);
+	return entry?.hint ? `${keyLabel(name)} ${entry.hint}` : keyLabel(name);
+}
 
 /** Whether `data` is the key (or any of the keys) of a binding. */
 export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]): boolean {
@@ -53,30 +116,19 @@ export class QuitGate {
 	}
 }
 
-/** Rows of the help overlay: key, then what it does. */
+/** Rows of the help overlay owned by tobor: key, then what it does. Derived from `HOTKEY_TABLE` plus the gestures below. */
 export const HELP: readonly (readonly [string, string])[] = [
 	["Enter", "send prompt (while a run is going: steer the running agent)"],
-	["Ctrl+Q / Ctrl+Enter", "queue a follow-up for after the current turn"],
-	["Esc", "clear the composer; when empty: abort the run · worker view: back · idle: up a tier (sessions list; Esc there: workspaces)"],
-	["Shift+Enter / Alt+Enter", "new line in the composer"],
-	["Alt+Shift+A", "pending approvals: approve / approve for session / deny"],
-	["Alt+Shift+U", "pending questions from the agent (ask_user): answer or pick an option"],
-	["Alt+A", "workers of this session (Ctrl+S also works)"],
-	["Ctrl+O", "open a worker's transcript (again: back)"],
-	["Alt+M", "change the session's model"],
-	["Ctrl+P", "cycle to the next model"],
-	["Ctrl+V", "paste from the clipboard: an image becomes an attachment, text is inserted"],
-	["Ctrl+N", "new session"],
-	["Ctrl+L", "sessions"],
+	...HOTKEY_TABLE.map((e: HotkeyDef): readonly [string, string] => [e.label ?? e.keys.map(formatKey).join(" / "), e.help]),
 	["←← (empty composer)", "up a tier: sessions list"],
 	["←/→ (in pickers)", "up / down a tier: workspaces ↔ sessions ↔ session"],
-	["Ctrl+T", "switch workspace (saved nodes, with reachability)"],
-	["Ctrl+,", "settings: node defaults, workspaces and TUI preferences"],
-	["↑ (empty composer)", "select transcript blocks: Enter expands a tool, loads earlier history"],
-	["PgUp/PgDn, wheel", "scroll the transcript; Ctrl+Shift+F searches it"],
-	["?", "this help (empty composer)"],
-	["Ctrl+C", "close the dialog or clear the composer; with neither to do, twice within 0.5 s quits"],
-	["Ctrl+D", "quit (when the composer is empty)"],
+];
+
+/** Help rows for keys that pi-tui or the terminal handle (not tobor's table, not remappable here), listed in their own section. */
+export const HELP_PROVIDED: readonly (readonly [string, string])[] = [
+	["Shift+Enter / Alt+Enter", "new line in the composer"],
+	["PgUp/PgDn, wheel", "scroll the transcript"],
+	["Ctrl+Shift+F", "search the transcript"],
 ];
 
 /** Slash commands typed into the composer. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KEYS, QuitGate, matchesBinding } from "../../src/tui/keys.js";
-import { type KeyAction, type RouteContext, routeInterrupt, routeKey } from "../../src/tui/router.js";
+import { HELP, HELP_PROVIDED, HOTKEY_TABLE, KEYS, QuitGate, formatKey, hotkeyHint, keyLabel, matchesBinding } from "../../src/tui/keys.js";
+import { HOTKEYS, type KeyAction, type RouteContext, routeInterrupt, routeKey } from "../../src/tui/router.js";
 
 const ESC = "\x1b";
 const UP = "\x1b[A";
@@ -242,29 +242,30 @@ describe("Ctrl+C", () => {
 	});
 });
 
+/** One byte sequence per key id; a new KEYS entry without a sample fails the test below. */
+const SAMPLE: Record<string, string> = {
+	"ctrl+q": "\x11",
+	"ctrl+enter": "\x1b[13;5u",
+	escape: "\x1b",
+	"alt+shift+a": "\x1b[97;4u",
+	"alt+shift+u": "\x1b[117;4u",
+	"alt+a": "\x1ba",
+	"ctrl+s": "\x13",
+	"ctrl+o": "\x0f",
+	"alt+m": "\x1bm",
+	"ctrl+p": "\x10",
+	"ctrl+v": "\x16",
+	"ctrl+n": CTRL_N,
+	"ctrl+l": CTRL_L,
+	"ctrl+t": "\x14",
+	"ctrl+,": "\x1b[44;5u",
+	"ctrl+c": "\x03",
+	"ctrl+d": CTRL_D,
+	"?": "?",
+	up: UP,
+};
+
 describe("KEYS completeness", () => {
-	/** One byte sequence per key id; a new KEYS entry without a sample fails the test below. */
-	const SAMPLE: Record<string, string> = {
-		"ctrl+q": "\x11",
-		"ctrl+enter": "\x1b[13;5u",
-		escape: "\x1b",
-		"alt+shift+a": "\x1b[97;4u",
-		"alt+shift+u": "\x1b[117;4u",
-		"alt+a": "\x1ba",
-		"ctrl+s": "\x13",
-		"ctrl+o": "\x0f",
-		"alt+m": "\x1bm",
-		"ctrl+p": "\x10",
-		"ctrl+v": "\x16",
-		"ctrl+n": CTRL_N,
-		"ctrl+l": CTRL_L,
-		"ctrl+t": "\x14",
-		"ctrl+,": "\x1b[44;5u",
-		"ctrl+c": "\x03",
-		"ctrl+d": CTRL_D,
-		"?": "?",
-		up: UP,
-	};
 
 	/** What each binding does on an idle, empty-composer session (quit is handled before the router, by `routeInterrupt`). */
 	const EXPECTED: Record<keyof typeof KEYS, (data: string) => KeyAction | "interrupt"> = {
@@ -319,5 +320,55 @@ describe("routeKey: paste image", () => {
 	it("passes while a modal is open and ignores auto-repeat", () => {
 		expect(route("\x16", { modalOpen: true })).toEqual({ type: "pass" });
 		expect(route("\x16", { repeating: true })).toEqual({ type: "consume" });
+	});
+});
+
+describe("hotkey table", () => {
+	it("gives every entry help text, and every flow entry a hint label", () => {
+		for (const entry of HOTKEY_TABLE) {
+			expect(entry.help.trim(), `help text of ${entry.name}`).not.toBe("");
+			if ("flow" in entry) expect("hint" in entry && entry.hint, `hint label of ${entry.name}`).toBeTruthy();
+		}
+	});
+
+	it("has unique names and no binding declared twice", () => {
+		const names = HOTKEY_TABLE.map((e) => e.name);
+		expect(new Set(names).size).toBe(names.length);
+		const bindings = HOTKEY_TABLE.flatMap((e) => e.keys);
+		expect(bindings.filter((id, i) => bindings.indexOf(id) !== i)).toEqual([]);
+	});
+
+	it("derives the router's dispatch table from the flow entries, in table order", () => {
+		expect(HOTKEYS.map(([name]) => name)).toEqual(HOTKEY_TABLE.filter((e) => "flow" in e).map((e) => e.name));
+		for (const [name, matches] of HOTKEYS) {
+			const entry = HOTKEY_TABLE.find((e) => e.name === name);
+			expect(entry, name).toBeDefined();
+			for (const id of entry?.keys ?? []) expect(matches(SAMPLE[id] ?? ""), `${name} ${id}`).toBe(true);
+		}
+	});
+
+	it("derives KEYS from the table", () => {
+		for (const entry of HOTKEY_TABLE) {
+			const binding = KEYS[entry.name];
+			expect(entry.keys.length === 1 ? binding : [...(binding as readonly string[])]).toEqual(entry.keys.length === 1 ? entry.keys[0] : [...entry.keys]);
+		}
+	});
+
+	it("shows every table entry in the help, and keeps terminal/library keys out of the table", () => {
+		const helpText = HELP.map(([, what]) => what);
+		for (const entry of HOTKEY_TABLE) expect(helpText, entry.name).toContain(entry.help);
+		const tableKeys = new Set(HOTKEY_TABLE.flatMap((e) => e.keys.map(formatKey)));
+		for (const [key] of HELP_PROVIDED) for (const part of key.split(" / ")) expect(tableKeys.has(part), `${part} is declared in the table and provided`).toBe(false);
+		expect(HELP_PROVIDED.map(([key]) => key)).toContain("Ctrl+Shift+F");
+		expect(HELP.map(([key]) => key)).not.toContain("Ctrl+Shift+F");
+	});
+
+	it("formats keys and hints from the table", () => {
+		expect(formatKey("alt+shift+a")).toBe("Alt+Shift+A");
+		expect(formatKey("escape")).toBe("Esc");
+		expect(formatKey("ctrl+,")).toBe("Ctrl+,");
+		expect(keyLabel("workers")).toBe("Alt+A");
+		expect(hotkeyHint("approvals")).toBe("Alt+Shift+A approvals");
+		expect(hotkeyHint("help")).toBe("? help");
 	});
 });

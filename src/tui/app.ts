@@ -47,7 +47,7 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { BUSY_MESSAGE, COMMANDS, HELP, KEYS, QUIT_WINDOW_MS, QuitGate } from "./keys.js";
+import { BUSY_MESSAGE, COMMANDS, HELP, HELP_PROVIDED, KEYS, QUIT_WINDOW_MS, QuitGate, hotkeyHint, keyLabel, matchesBinding } from "./keys.js";
 import { indexOfValue, pickHint } from "./pick-model.js";
 import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
@@ -431,7 +431,7 @@ export class App {
 				}
 				const where = approval.worker ? `${approval.worker} in #${approval.sessionId}` : `#${approval.sessionId}`;
 				this.notify(`approval needed: ${approval.tool} (${where})`);
-				this.flash(`⚠ approval needed: ${approval.tool} (${where}) · Alt+Shift+A`);
+				this.flash(`⚠ approval needed: ${approval.tool} (${where}) · ${keyLabel("approvals")}`);
 				this.session.rebuild();
 				break;
 			}
@@ -447,7 +447,7 @@ export class App {
 				}
 				const where = question.worker ? `${question.worker} in #${question.sessionId}` : `#${question.sessionId}`;
 				this.notify(`question from ${where}: ${question.question}${question.fields?.length ? ` (${question.fields.length} fields)` : ""}`);
-				this.flash(`? question from ${where} · Alt+Shift+U`);
+				this.flash(`? question from ${where} · ${keyLabel("questions")}`);
 				this.session.rebuild();
 				break;
 			}
@@ -521,7 +521,7 @@ export class App {
 
 	/** The connected client, or an error for screens that need one. */
 	api(): ApiClient {
-		if (!this.client) throw new Error("no workspace selected · Ctrl+T");
+		if (!this.client) throw new Error(`no workspace selected · ${keyLabel("workspaces")}`);
 		return this.client;
 	}
 
@@ -565,18 +565,18 @@ export class App {
 			segments.push(c.dim(`$${usage.cost.toFixed(4)} · ${formatTokens(usage.tokens)} tok`));
 		}
 		const pending = this.approvals.length;
-		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Alt+Shift+A`));
+		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · ${keyLabel("approvals")}`));
 		const asked = this.questions.length;
-		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · Alt+Shift+U`));
+		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · ${keyLabel("questions")}`));
 		if (this.restarting) segments.push(c.warning("⟳ node restarting…"));
 		else if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
-		this.status.set(segments, "? help · / commands");
+		this.status.set(segments, `${hotkeyHint("help")} · / commands`);
 		s.updateLabel();
 		this.tui.requestRender();
 	}
 
 	private onInput(data: string): TuiInputListenerResult {
-		if (matchesKey(data, KEYS.quit)) {
+		if (matchesBinding(data, KEYS.quit)) {
 			// Kitty keyboard protocol reports release/repeat as separate events; only a press counts.
 			if (!isKeyRelease(data) && !isKeyRepeat(data)) this.interrupt();
 			return { consume: true };
@@ -798,9 +798,13 @@ export class App {
 	}
 
 	private async help(): Promise<void> {
-		const width = Math.max(...HELP.map(([key]) => key.length));
+		const width = Math.max(...[...HELP, ...HELP_PROVIDED].map(([key]) => key.length));
+		const row = ([key, what]: readonly [string, string]): string => `${c.accent(key.padEnd(width))}  ${what}`;
 		const lines = [
-			...HELP.map(([key, what]) => `${c.accent(key.padEnd(width))}  ${what}`),
+			...HELP.map(row),
+			"",
+			c.dim("provided by the terminal / pi-tui"),
+			...HELP_PROVIDED.map(row),
 			"",
 			`${c.accent("commands")}  ${c.dim(COMMANDS.map((cmd) => `/${cmd.name}${cmd.argumentHint ? ` ${cmd.argumentHint}` : ""}`).join("  "))}`,
 		];
