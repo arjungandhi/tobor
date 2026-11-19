@@ -348,6 +348,8 @@ export class App {
 			url: () => client.eventsUrl(),
 			onFrame: (frame) => {
 				if (frame.t === "event") this.onEvent(frame.event);
+				// The node dropped events for this slow client: refetch everything, as after a reconnect.
+				else if (frame.t === "resync" && generation === this.generation) void this.refresh();
 			},
 			onOpen: () => {
 				// Always refetch: events between the initial HTTP refresh and the socket opening are lost.
