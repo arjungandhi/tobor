@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { WhoamiResponse } from "../../src/api/types.js";
 import { type Io, restartNode, upgradeLocal, upgradeNode } from "../../src/server/cli/upgrade.js";
 import type { FetchFn } from "../../src/server/release.js";
-import { ApiRequestError } from "../../src/tui/client.js";
+import { ApiRequestError, wrapRequestError } from "../../src/tui/client.js";
 import { formatCheck, mismatchHint, upgradeErrorMessage, waitForNode } from "../../src/tui/node-upgrade.js";
 
 const sha = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -122,6 +122,15 @@ describe("upgradeErrorMessage", () => {
 		expect(upgradeErrorMessage(api(503, "download_failed", "bad sha"))).toBe("download failed: bad sha");
 		expect(upgradeErrorMessage(api(404))).toContain("does not support upgrades");
 		expect(upgradeErrorMessage(new TypeError("fetch failed"))).toBe("cannot reach the node");
+	});
+
+	it("still recognises the errors ApiClient.request wraps (RequestFailedError keeps the name and the message)", () => {
+		const down = wrapRequestError("POST", "/api/upgrade", new TypeError("fetch failed", { cause: new Error("ECONNREFUSED") }));
+		expect(upgradeErrorMessage(down)).toBe("cannot reach the node");
+		const slow = wrapRequestError("POST", "/api/restart", new DOMException("The operation timed out.", "TimeoutError"), 30_000);
+		expect(upgradeErrorMessage(slow)).toBe("the node did not answer in time");
+		const aborted = wrapRequestError("POST", "/api/restart", new DOMException("aborted", "AbortError"));
+		expect(upgradeErrorMessage(aborted)).toBe("the node did not answer in time");
 	});
 });
 
