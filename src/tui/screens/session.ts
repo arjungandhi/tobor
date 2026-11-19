@@ -571,13 +571,21 @@ export class SessionScreen {
 		this.keepOnFail(text, () => this.send(text, running ? "steer" : "prompt"));
 	}
 
+	/** Whether `target` is (still) what the view shows; a reopen of the same session or worker counts as the same. */
+	private isCurrent(target: SessionTarget | undefined): boolean {
+		const cur = this.target;
+		return cur === target || (cur !== undefined && target !== undefined && cur.id === target.id && cur.worker?.name === target.worker?.name);
+	}
+
 	/** Run a flow for submitted text; if it fails (the error is flashed), put the text back unless the user has typed something new. */
 	private keepOnFail(text: string, flow: () => Promise<unknown>): void {
+		const submittedTo = this.target;
 		this.app.guard(async () => {
 			try {
 				await flow();
 			} catch (err) {
-				if (this.composer.getExpandedText().trim() === "") this.composer.setText(text);
+				// Only into the session the text was submitted to: the user may have switched away while the flow ran.
+				if (this.isCurrent(submittedTo) && this.composer.getExpandedText().trim() === "") this.composer.setText(text);
 				throw err;
 			}
 		});
@@ -607,7 +615,7 @@ export class SessionScreen {
 			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.
 			await this.app.refreshQuestions();
 		}
-		if (following) this.scroll.scrollToEnd();
+		if (following && this.isCurrent(target)) this.scroll.scrollToEnd();
 	}
 
 	/** `/attach <path>` stages a local image for the next message; `/attach clear` drops the staged ones. */
@@ -674,8 +682,10 @@ export class SessionScreen {
 			throw err;
 		}
 		this.requestIds.done();
-		this.composer.unstage(images);
 		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
+		// The user may have switched sessions while the request ran: the composer and scroll then belong to another one.
+		if (!this.isCurrent(target)) return;
+		this.composer.unstage(images);
 		this.scroll.scrollToEnd();
 	}
 
@@ -697,9 +707,10 @@ export class SessionScreen {
 			return;
 		}
 		const running = this.state() === "running" || this.state() === "waiting";
+		const target = this.target;
 		await this.send(text, running ? "follow_up" : "prompt");
-		// Sent: clear the composer (unless the user has already edited it meanwhile).
-		if (this.composer.getExpandedText().trim() === text) this.composer.setText("");
+		// Sent: clear the composer (unless the user has switched session or edited it meanwhile).
+		if (this.isCurrent(target) && this.composer.getExpandedText().trim() === text) this.composer.setText("");
 		if (text !== "") this.composer.addToHistory(text);
 	}
 
