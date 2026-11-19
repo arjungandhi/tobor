@@ -25,6 +25,7 @@ import {
 import type {
 	EventsFrame,
 	NodeEvent,
+	PatchSessionRequest,
 	PendingApproval,
 	PendingQuestion,
 	SessionId,
@@ -147,6 +148,14 @@ export class Panel implements Component, Focusable {
 
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 const COMMAND_PREFIX = "cmd:";
+
+/** Set when a slash command is run from the sessions list: `sessionId` is the highlighted row (undefined on an empty list). */
+export type CommandFrom = { sessionId?: number };
+
+/** Commands that act on one session. From the sessions list they must target the highlighted row, never the open session. */
+const SESSION_SCOPED = new Set(["title", "archive", "complete", "approval", "model", "workers"]);
+/** The scoped commands that can take a target id; the others (/model, /workers) are rejected from the list. */
+const LIST_TARGETABLE = new Set(["title", "archive", "complete", "approval"]);
 
 /** One choice of `App.pick`. */
 export type PickItem<T> = { value: T; label: string; description?: string };
@@ -726,24 +735,31 @@ export class App {
 	}
 
 	/** Run a slash command typed into the composer. */
-	async command(line: string): Promise<void> {
-		await this.exclusive(() => this.runCommand(line));
+	async command(line: string, from?: CommandFrom): Promise<void> {
+		await this.exclusive(() => this.runCommand(line, from));
 	}
 
 	/**
 	 * Run a slash command as a continuation of the flow already running, e.g. one chosen from a picker that flow opened.
 	 * Only call from within an exclusive flow: `command` would see `flowActive` and silently drop it. A flow started
 	 * outside `exclusive` (startup) gets the normal guarded `command`, so the command still holds the flow lock.
+	 * `from` is set by the sessions list: session-scoped commands then act on `from.sessionId` (the highlighted row),
+	 * never on the open session.
 	 */
-	async continueCommand(line: string): Promise<void> {
-		if (!this.flowActive) return this.command(line);
-		await this.runCommand(line);
+	async continueCommand(line: string, from?: CommandFrom): Promise<void> {
+		if (!this.flowActive) return this.command(line, from);
+		await this.runCommand(line, from);
 	}
 
-	private async runCommand(line: string): Promise<void> {
+	private async runCommand(line: string, from?: CommandFrom): Promise<void> {
 		const [name = "", ...rest] = line.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
 		const s = this.session;
+		if (from && SESSION_SCOPED.has(name)) {
+			if (from.sessionId === undefined) throw new Error(`/${name}: no session highlighted`);
+			if (!LIST_TARGETABLE.has(name)) throw new Error(`/${name} works on the open session: open the session first`);
+			return this.commandOnListed(name, arg, from.sessionId);
+		}
 		switch (name) {
 			case "sessions":
 				return showSessions(this);
@@ -794,6 +810,28 @@ export class App {
 			}
 			default:
 				throw new Error(`unknown command /${name} · /help`);
+		}
+	}
+
+	/** A session-scoped command chosen from the sessions list, applied to the highlighted session (which need not be the open one). */
+	private async commandOnListed(name: string, arg: string, id: number): Promise<void> {
+		const patch = async (req: PatchSessionRequest): Promise<void> => {
+			await this.api().patchSession(id, req);
+			await this.refreshSessions();
+		};
+		switch (name) {
+			case "title":
+				if (!arg) throw new Error("usage: /title <title>");
+				return patch({ title: arg });
+			case "archive":
+			case "complete":
+				await patch({ archived: true });
+				if (this.session.target?.id === id) this.session.close();
+				return; // the sessions list is still open and re-shows itself
+			case "approval":
+				if (arg !== "ask" && arg !== "auto") throw new Error("usage: /approval ask|auto");
+				if (arg === "auto" && !(await this.confirmAuto("approval mode", `Switch #${id} to auto? Tools will run without asking.`))) return;
+				return patch({ approval_mode: arg });
 		}
 	}
 
