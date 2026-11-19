@@ -17,9 +17,9 @@ import { ReconnectingSocket, type SocketState } from "../client.js";
 import { readClipboard, stripPasteMarkers, WL_CLIPBOARD_HINT } from "../clipboard.js";
 import { Composer } from "../components/composer.js";
 import { QuestionPanel } from "../components/question-panel.js";
-import { Transcript } from "../components/transcript.js";
+import { Transcript, type PendingBlock } from "../components/transcript.js";
 import { BUSY_MESSAGE, COMMANDS } from "../keys.js";
-import { ConversationReplica, liveOf, usageOf, type ViewUsage } from "../replica.js";
+import { type Block, ConversationReplica, type ImagePart, liveOf, usageOf, type ViewUsage } from "../replica.js";
 import { c } from "../theme.js";
 import { startSession } from "./new-session.js";
 import { WorkersStrip } from "./workers.js";
@@ -110,6 +110,35 @@ export function shorten(text: string, max: number): string {
 	return points.length > max ? `${points.slice(0, max - 1).join("")}…` : text;
 }
 
+/** A sent message awaiting the watch: `seen` is how many identical user/queued blocks already existed when it was sent. */
+export type PendingEcho = { requestId: string; text: string; images: ImagePart[]; seen: number };
+
+const sameText = (a: string, b: string): boolean => a.trim() === b.trim();
+
+/** How many user or queued blocks carry exactly `text` (modulo outer whitespace). */
+export function countUserBlocks(blocks: readonly Block[], text: string): number {
+	return blocks.filter((b) => (b.kind === "user" || b.kind === "queued") && sameText(b.text, text)).length;
+}
+
+/**
+ * The echoes still pending against `blocks`: one is settled (dropped) once more identical user/queued blocks exist than
+ * when it was sent, so the real block never shows next to its echo. The server does not return the requestId in entries,
+ * hence the text match.
+ */
+export function pendingEchoes(blocks: readonly Block[], echoes: readonly PendingEcho[]): PendingEcho[] {
+	const counts = new Map<string, number>();
+	return echoes.filter((echo) => {
+		const have = counts.get(echo.text) ?? countUserBlocks(blocks, echo.text);
+		counts.set(echo.text, have);
+		return have <= echo.seen;
+	});
+}
+
+/** The transcript block for a pending echo. */
+export function echoBlock(echo: PendingEcho): PendingBlock {
+	return { kind: "pending", key: `p:${echo.requestId}`, text: echo.text, ...(echo.images.length > 0 ? { images: echo.images } : {}) };
+}
+
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
 export type SessionTarget = {
 	id: SessionId;
@@ -142,6 +171,8 @@ export class SessionScreen {
 	private readonly requestIds = new RequestIds();
 	private readonly drafts = new DraftStore();
 	private workerStamp = new Map<string, number>();
+	/** Sent messages the watch has not delivered yet (shown as local echoes at the transcript end). */
+	private echoes: PendingEcho[] = [];
 
 	constructor(private readonly app: App) {
 		this.composer = new Composer(app.tui, {
@@ -230,6 +261,7 @@ export class SessionScreen {
 		this.detailFetch++;
 		this.workersFetch++;
 		this.workerStamp.clear();
+		this.echoes = [];
 		this.strip.update([], undefined);
 		this.watchState = "closed";
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
@@ -269,8 +301,16 @@ export class SessionScreen {
 	/** Re-derive transcript blocks (after ops, or when pending approvals change). */
 	rebuild(): void {
 		if (!this.replica || !this.target) return;
-		this.transcript.update(this.replica.blocks(this.app.pendingCalls(this.target.id), this.app.askingCalls(this.target.id)));
+		const blocks = this.derive();
+		if (!blocks) return;
+		this.echoes = pendingEchoes(blocks, this.echoes);
+		this.transcript.update([...blocks, ...this.echoes.map(echoBlock)]);
 		this.strip.update(this.workers, this.todo());
+	}
+
+	private derive(): Block[] | undefined {
+		if (!this.replica || !this.target) return undefined;
+		return this.replica.blocks(this.app.pendingCalls(this.target.id), this.app.askingCalls(this.target.id));
 	}
 
 	private todo(): { done: number; total: number } | undefined {
@@ -501,16 +541,37 @@ export class SessionScreen {
 		if (!target) throw new Error("no session open");
 		if (target.worker) throw new Error("worker transcripts are read-only · Esc back");
 		const images = [...this.composer.stagedImages()];
-		await this.app.api().input(target.id, {
-			content,
-			mode,
-			requestId: this.requestIds.for(content),
-			...(images.length > 0 ? { attachments: images.map((i) => i.attachment) } : {}),
-		});
+		const requestId = this.requestIds.for(content);
+		// Local echo: shown at once, dropped when the watch delivers the message (see `pendingEchoes`) or the send fails.
+		this.addEcho(requestId, content, images);
+		this.scroll.scrollToEnd();
+		try {
+			await this.app.api().input(target.id, {
+				content,
+				mode,
+				requestId,
+				...(images.length > 0 ? { attachments: images.map((i) => i.attachment) } : {}),
+			});
+		} catch (err) {
+			this.echoes = this.echoes.filter((e) => e.requestId !== requestId);
+			if (target === this.target) this.rebuild();
+			this.app.changed();
+			throw err;
+		}
 		this.requestIds.done();
 		this.composer.unstage(images);
 		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
 		this.scroll.scrollToEnd();
+	}
+
+	private addEcho(requestId: string, text: string, images: readonly { attachment: { data: string; mimeType: string } }[]): void {
+		const blocks = this.derive();
+		if (!blocks) return;
+		this.echoes = this.echoes.filter((e) => e.requestId !== requestId);
+		const earlier = this.echoes.filter((e) => e.text === text).length;
+		this.echoes.push({ requestId, text, images: images.map((i) => ({ data: i.attachment.data, mimeType: i.attachment.mimeType })), seen: countUserBlocks(blocks, text) + earlier });
+		this.rebuild();
+		this.app.changed();
 	}
 
 	/** Ctrl+Q: send the composer text as a follow-up while running (a prompt when idle). */

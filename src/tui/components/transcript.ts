@@ -1,5 +1,5 @@
 import { type Component, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { Block } from "../replica.js";
+import type { Block, ImagePart } from "../replica.js";
 import { oneLine } from "../sanitize.js";
 import { c } from "../theme.js";
 import { AssistantBlock } from "./assistant-block.js";
@@ -42,6 +42,12 @@ class NoticeLine implements Component {
 	}
 }
 
+/** A message sent from this client that the watch has not delivered yet (local echo); shown dimmed with a "sending…" marker. */
+export type PendingBlock = { kind: "pending"; key: string; text: string; images?: ImagePart[] };
+
+/** What the transcript renders: derived blocks plus local echoes. */
+export type TranscriptBlock = Block | PendingBlock;
+
 type View = UserBlock | AssistantBlock | ToolSlotView | NoticeLine;
 
 /** What Enter on the selected block does. */
@@ -53,7 +59,7 @@ export type TranscriptAction = { kind: "earlier" } | { kind: "gap"; after: numbe
  */
 export class Transcript implements Component {
 	private views = new Map<string, View>();
-	private order: Block[] = [];
+	private order: TranscriptBlock[] = [];
 	private selectedKey: string | undefined;
 	private empty = "";
 	private lastWidth = 80;
@@ -64,7 +70,7 @@ export class Transcript implements Component {
 	}
 
 	/** Reconcile with freshly derived blocks. */
-	update(blocks: Block[]): void {
+	update(blocks: TranscriptBlock[]): void {
 		const next = new Map<string, View>();
 		for (const block of blocks) {
 			const prev = this.views.get(block.key);
@@ -75,11 +81,16 @@ export class Transcript implements Component {
 		if (this.selectedKey !== undefined && !next.has(this.selectedKey)) this.selectedKey = undefined;
 	}
 
-	private reconcile(prev: View | undefined, block: Block): View {
+	private reconcile(prev: View | undefined, block: TranscriptBlock): View {
 		switch (block.kind) {
 			case "user": {
 				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text, undefined, block.images);
 				view.update(block.text, undefined, block.images);
+				return view;
+			}
+			case "pending": {
+				const view = prev instanceof UserBlock ? prev : new UserBlock(block.text, "sending…", block.images);
+				view.update(block.text, "sending…", block.images);
 				return view;
 			}
 			case "queued": {
@@ -119,7 +130,7 @@ export class Transcript implements Component {
 		}
 	}
 
-	private selectable(): Block[] {
+	private selectable(): TranscriptBlock[] {
 		return this.order.filter((b) => b.kind === "tool" || b.kind === "earlier" || b.kind === "gap");
 	}
 
@@ -173,6 +184,11 @@ export class Transcript implements Component {
 			line += this.views.get(block.key)?.render(this.lastWidth).length ?? 0;
 		}
 		return undefined;
+	}
+
+	/** Total rendered rows at the last rendered width (views cache their lines, so this is cheap). */
+	lineCount(): number {
+		return this.render(this.lastWidth).length;
 	}
 
 	invalidate(): void {
