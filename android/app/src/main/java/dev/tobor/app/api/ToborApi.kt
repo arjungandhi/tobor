@@ -1,8 +1,5 @@
 package dev.tobor.app.api
 
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
@@ -16,8 +13,6 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -39,77 +34,18 @@ class ToborApiException(
 ) : IOException(message)
 
 /**
- * REST + socket factory for one tobor node. [baseUrl] and [token] may be changed at runtime (e.g. from settings); every
- * call reads them fresh. Mutations send `Content-Type: application/json`; no `Origin` header is ever added (OkHttp adds
- * none). A non-empty [token] is sent as `Authorization: Bearer …` on every REST call and WebSocket upgrade to the node
- * (one application interceptor, inherited by all derived clients) and never to any other host.
+ * REST + socket factory for one tobor node. [baseUrl] may be changed at runtime (e.g. from settings); every call reads
+ * it fresh. Mutations send `Content-Type: application/json`; no `Origin` header is ever added (OkHttp adds none).
  */
-class ToborApi(baseUrl: String, token: String = "") {
-    /** Node address and its token as one immutable value, so readers never see a new host with the old token. */
-    private class Config(val baseUrl: String, val token: String)
-
+class ToborApi(baseUrl: String) {
     @Volatile
-    private var config = Config(normalize(baseUrl), normalizeToken(token))
-
-    var baseUrl: String
-        get() = config.baseUrl
-        set(value) = configure(value, config.token)
-
-    var token: String
-        get() = config.token
-        set(value) = configure(config.baseUrl, value)
-
-    /** Points the api at one workspace's node; host and token switch together in a single reference swap. */
-    @Synchronized
-    fun configure(baseUrl: String, token: String) {
-        val next = Config(normalize(baseUrl), normalizeToken(token))
-        val prev = config
-        config = next
-        if (next.baseUrl != prev.baseUrl || next.token != prev.token) resetAuthPrompt()
-    }
-
-    private val _authRequired = MutableStateFlow(false)
-
-    /** True once the node answered 401 (missing/wrong [token]) and the user has not dismissed the prompt for it. */
-    val authRequired: StateFlow<Boolean> = _authRequired.asStateFlow()
-
-    @Volatile
-    private var authPromptMuted = false
-
-    /** User declined to enter a token: stay quiet (no re-prompt from polling/reconnects) until the node/token changes or a call succeeds. */
-    fun dismissAuthPrompt() {
-        authPromptMuted = true
-        _authRequired.value = false
-    }
-
-    /** Clears the 401 state and un-mutes the prompt (call after the user saved a token, even an unchanged one, so a retry can re-prompt). */
-    fun resetAuthPrompt() {
-        authPromptMuted = false
-        _authRequired.value = false
-    }
-
-    private val authInterceptor = Interceptor { chain ->
-        val request = chain.request()
-        val cfg = config // one read: host and token always belong together
-        val node = cfg.baseUrl.toHttpUrlOrNull()
-        val toNode = node != null && request.url.scheme == node.scheme &&
-            request.url.host == node.host && request.url.port == node.port
-        val t = cfg.token
-        val outgoing = if (toNode && t.isNotEmpty()) request.newBuilder().header("Authorization", "Bearer $t").build() else request
-        val response = chain.proceed(outgoing)
-        if (toNode) {
-            if (response.code == 401) {
-                if (!authPromptMuted) _authRequired.value = true
-            } else if (response.code < 400) {
-                authPromptMuted = false
-            }
+    var baseUrl: String = normalize(baseUrl)
+        set(value) {
+            field = normalize(value)
         }
-        response
-    }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .callTimeout(30, TimeUnit.SECONDS)
-        .addInterceptor(authInterceptor)
         .build()
 
     /** Same pool/dispatcher, but no read/call timeouts: sockets are long-lived and we send our own pings. */
@@ -271,7 +207,7 @@ class ToborApi(baseUrl: String, token: String = "") {
     // ─── Internals ───────────────────────────────────────────────────────────────────────────────────────────────
 
     private fun urlFor(path: String, query: Map<String, String>): HttpUrl {
-        val builder = (config.baseUrl + path).toHttpUrl().newBuilder()
+        val builder = (baseUrl + path).toHttpUrl().newBuilder()
         for ((k, v) in query) builder.addQueryParameter(k, v)
         return builder.build()
     }
@@ -333,9 +269,6 @@ class ToborApi(baseUrl: String, token: String = "") {
     companion object {
         /** Trim whitespace and trailing slashes. */
         fun normalize(url: String): String = url.trim().trimEnd('/')
-
-        /** Bearer tokens are visible ASCII; dropping everything else (spaces, newlines from a paste) keeps the header valid. */
-        fun normalizeToken(token: String): String = token.filter { it.code in 33..126 }
 
         internal fun parseModelIds(raw: JsonObject): Pair<List<String>, String?> {
             val ids = (raw["models"] as? JsonArray).orEmpty().mapNotNull { e ->

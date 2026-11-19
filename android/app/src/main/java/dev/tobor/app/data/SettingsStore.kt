@@ -10,12 +10,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 @Serializable
-data class Workspace(
-    val name: String,
-    val baseUrl: String,
-    /** Optional bearer token for a node behind an authenticating proxy; empty = none. Sent only to [baseUrl]. */
-    val token: String = "",
-)
+data class Workspace(val name: String, val baseUrl: String)
 
 class SettingsStore(context: Context) {
     private val prefs: SharedPreferences =

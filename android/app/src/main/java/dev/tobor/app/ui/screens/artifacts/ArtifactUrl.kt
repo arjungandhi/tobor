@@ -17,18 +17,8 @@ private val loopbackHosts = setOf("127.0.0.1", "localhost", "::1", "[::1]", "0.0
  * If [url]'s host is loopback or one of [advertisedHosts] (hosts parsed from whoami's `public_url`/`artifacts_url`;
  * case-insensitive), swap in [baseUrl]'s host, keeping [url]'s scheme, port, path and query. Returns [url] unchanged
  * for any other host, an unparseable input, or a [baseUrl] that is itself loopback.
- *
- * In [tokenMode] (the workspace has a bearer token, i.e. the node sits behind an authenticating proxy) nothing is
- * rewritten: the advertised artifact host is a separate, publicly reachable, browser-authenticated host, while
- * [baseUrl] is the token-gated host that would answer a browser with 401.
  */
-fun rewriteServerHost(
-    url: String,
-    baseUrl: String,
-    advertisedHosts: Set<String> = emptySet(),
-    tokenMode: Boolean = false,
-): String {
-    if (tokenMode) return url
+fun rewriteServerHost(url: String, baseUrl: String, advertisedHosts: Set<String> = emptySet()): String {
     val target = url.toHttpUrlOrNull() ?: return url
     val host = target.host.lowercase()
     if (host !in loopbackHosts && advertisedHosts.none { it.equals(host, ignoreCase = true) }) return url
@@ -43,14 +33,13 @@ fun advertisedHostsOf(vararg urls: String): Set<String> =
 
 /**
  * App-wide [UriHandler] that runs every opened link (artifact list, markdown/linkified chat links) through
- * [rewriteServerHost] before delegating. [baseUrl], [advertisedHosts] and [tokenMode] are read at open time so
- * workspace switches and late whoami responses apply immediately.
+ * [rewriteServerHost] before delegating. [baseUrl] and [advertisedHosts] are read at open time so workspace switches
+ * and late whoami responses apply immediately.
  */
 class ServerHostUriHandler(
     private val delegate: UriHandler,
     private val baseUrl: () -> String,
     private val advertisedHosts: () -> Set<String>,
-    private val tokenMode: () -> Boolean = { false },
 ) : UriHandler {
-    override fun openUri(uri: String) = delegate.openUri(rewriteServerHost(uri, baseUrl(), advertisedHosts(), tokenMode()))
+    override fun openUri(uri: String) = delegate.openUri(rewriteServerHost(uri, baseUrl(), advertisedHosts()))
 }
