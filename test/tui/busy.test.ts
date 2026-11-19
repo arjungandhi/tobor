@@ -30,12 +30,12 @@ describe("lock-free hotkeys", () => {
 });
 
 describe("flow lock", () => {
-	type Lock = { flowActive: boolean; flowName: string | undefined; flowEpoch: number };
+	type Lock = { flowActive: boolean; flowName: string | undefined; flowEpoch: number; retryInitial(): void };
 	const proto = App.prototype as unknown as {
 		exclusive(this: Lock, label: string, flow: () => Promise<unknown>): Promise<unknown>;
 		detachFlow(this: Lock): void;
 	};
-	const lock = (): Lock => ({ flowActive: false, flowName: undefined, flowEpoch: 0 });
+	const lock = (): Lock => ({ flowActive: false, flowName: undefined, flowEpoch: 0, retryInitial: () => {} });
 
 	it("holds the lock under the flow's label and releases it when the flow settles", async () => {
 		const self = lock();
