@@ -21,10 +21,16 @@ export function relevantQuestions(questions: readonly PendingQuestion[], target:
 		.sort((a, b) => a.createdAt - b.createdAt);
 }
 
+function questionKey(q: PendingQuestion): string {
+	return `${q.conversationId}:${q.callId}`;
+}
+
 /** Inline `ask_user` panel between the workers strip and the composer; renders nothing without a relevant question. */
 export class QuestionPanel implements Component {
 	private selected = 0;
 	private shown: string | undefined;
+	/** Answers collected so far for form questions, keyed by conversation and call id (the last field is never stored). */
+	private readonly collected = new Map<string, string[]>();
 
 	constructor(
 		private readonly app: App,
@@ -39,7 +45,7 @@ export class QuestionPanel implements Component {
 	/** The question being shown (the oldest relevant one). */
 	current(): PendingQuestion | undefined {
 		const q = this.pending()[0];
-		const key = q ? `${q.conversationId}:${q.callId}` : undefined;
+		const key = q ? `${questionKey(q)}:${this.fieldIndex(q)}` : undefined;
 		if (key !== this.shown) {
 			this.shown = key;
 			this.selected = 0;
@@ -47,17 +53,52 @@ export class QuestionPanel implements Component {
 		return q;
 	}
 
+	/** Index of the field being answered (0 for a single question). */
+	fieldIndex(q: PendingQuestion): number {
+		return q.fields?.length ? (this.collected.get(questionKey(q))?.length ?? 0) : 0;
+	}
+
+	/** Options of what is being answered now: the current field's for a form, else the question's. */
+	options(): string[] {
+		const q = this.current();
+		if (!q) return [];
+		return (q.fields?.length ? q.fields[this.fieldIndex(q)]?.options : q.options) ?? [];
+	}
+
+	/**
+	 * Take the answer to the current field. Returns the full `answers` once the last field is answered, else undefined
+	 * (the panel moves to the next field). A single question returns undefined: it is answered with `answer` instead.
+	 */
+	record(q: PendingQuestion, answer: string): string[] | undefined {
+		const fields = q.fields;
+		if (!fields?.length) return undefined;
+		const key = questionKey(q);
+		const soFar = this.collected.get(key) ?? [];
+		if (soFar.length + 1 < fields.length) {
+			this.collected.set(key, [...soFar, answer]);
+			return undefined;
+		}
+		return [...soFar, answer];
+	}
+
+	/** Forget collected answers of questions that are no longer pending. */
+	private prune(): void {
+		for (const key of this.collected.keys()) {
+			if (!this.app.questions.some((q) => questionKey(q) === key)) this.collected.delete(key);
+		}
+	}
+
 	/** Move the option highlight; false when the shown question has no options. */
 	move(delta: number): boolean {
-		const options = this.current()?.options;
-		if (!options?.length) return false;
+		const options = this.options();
+		if (!options.length) return false;
 		this.selected = (this.selected + delta + options.length) % options.length;
 		return true;
 	}
 
 	/** The highlighted option of the shown question. */
 	selectedOption(): string | undefined {
-		return this.current()?.options?.[this.selected];
+		return this.options()[this.selected];
 	}
 
 	invalidate(): void {}
@@ -65,6 +106,7 @@ export class QuestionPanel implements Component {
 	render(width: number): string[] {
 		const q = this.current();
 		if (!q) return [];
+		this.prune();
 		const all = this.pending().length;
 		const inner = Math.max(1, width - 4);
 		const side = c.warning("│");
@@ -72,13 +114,18 @@ export class QuestionPanel implements Component {
 		const title = truncateToWidth(all > 1 ? ` question 1 of ${all} ` : " question ", Math.max(1, width - 6));
 		const top = `${c.warning("╭─")}${c.bold(c.warning(title))}${c.warning(`${"─".repeat(Math.max(0, width - 3 - visibleWidth(title)))}╮`)}`;
 
-		const [origin = "", , ...text] = questionCard(this.app, q);
+		const fields = q.fields?.length ? q.fields : undefined;
+		const index = this.fieldIndex(q);
+		const [origin = "", , ...cardText] = questionCard(this.app, q);
+		const text = fields
+			? [...q.question.split("\n").map((line) => c.dim(line)), "", c.bold(`field ${index + 1}/${fields.length}`), ...(fields[index]?.prompt ?? "").split("\n")]
+			: cardText;
 		const body = [origin];
 		const wrapped = text.flatMap((line) => (line === "" ? [""] : wrapTextWithAnsi(line, inner)));
 		body.push(...wrapped.slice(0, MAX_TEXT_LINES));
 		if (wrapped.length > MAX_TEXT_LINES) body.push(c.dim("…"));
 
-		const options = q.options ?? [];
+		const options = this.options();
 		if (options.length > 0) {
 			body.push("");
 			const start = Math.max(0, Math.min(this.selected - Math.floor(MAX_OPTIONS / 2), options.length - MAX_OPTIONS));
