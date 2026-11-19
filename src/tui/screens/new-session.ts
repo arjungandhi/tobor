@@ -24,8 +24,24 @@ async function pickCwd(app: App, cwds: { roots: string[]; recent: string[] }): P
 	);
 	if (!picked?.value) return undefined;
 	if (picked.value !== OTHER) return picked.value;
-	const typed = await app.ask("working directory", { initial: cwds.roots[0] ? `${cwds.roots[0]}/` : "", placeholder: "/absolute/path" });
-	return typed?.trim() || undefined;
+	return askCwd(app, cwds.roots);
+}
+
+/** Ask for a working directory inside a root; a path outside every root re-prompts with the error instead of failing after the wizard closed. */
+async function askCwd(app: App, roots: string[]): Promise<string | undefined> {
+	let initial = roots[0] ? `${roots[0]}/` : "";
+	for (let problem = ""; ; ) {
+		const typed = await app.ask("working directory", {
+			initial,
+			placeholder: "/absolute/path",
+			lines: [c.dim(`a path inside a root · roots: ${roots.join(", ") || "none"}`), ...(problem ? [c.error(problem)] : [])],
+		});
+		const dir = typed?.trim();
+		if (!dir) return undefined;
+		if (inRoots(dir, roots)) return dir;
+		problem = `${dir} is not inside a root`;
+		initial = dir;
+	}
 }
 
 /**
@@ -51,7 +67,7 @@ export async function startSession(app: App, prompt?: string, options: { pickCwd
 	let text = prompt?.trim();
 	const attachments = options.attachments?.length ? options.attachments : undefined;
 	if (!text && asked && !attachments) {
-		text = (await app.ask("new session · first prompt", { lines: [c.dim(cwd)] }))?.trim();
+		text = (await app.askMultiline("new session · first prompt", { lines: [c.dim(cwd)], hint: "Enter send · Shift+Enter newline · Esc back" }))?.trim();
 		if (!text) return false;
 	}
 	const { id } = await app.api().createSession({ cwd, ...(text || attachments ? { prompt: text ?? "" } : {}), ...(attachments ? { attachments } : {}) });
