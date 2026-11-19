@@ -628,7 +628,7 @@ private fun WorkersStrip(workers: List<WorkerSummary>, onOpenConversation: (Long
             .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        workers.forEach { w ->
+        workers.asReversed().forEach { w ->
             val color = when (w.state.lowercase()) {
                 "running" -> ToborColors.gold
                 "done" -> ToborColors.success
