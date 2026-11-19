@@ -39,7 +39,7 @@ describe("QuestionPanel", () => {
 	};
 	const single: PendingQuestion = { ...q("single", 1, 1, 20), question: "Proceed?", options: ["yes", "no"] };
 	const panel = (...questions: PendingQuestion[]) => {
-		const app = { questions, sessions: [], whoami: undefined } as unknown as App;
+		const app = { questions, sessions: [], whoami: undefined, now: () => Date.now() } as unknown as App;
 		return new QuestionPanel(app, () => ({ id: 1 }));
 	};
 
