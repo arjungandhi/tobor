@@ -34,9 +34,11 @@ const DECISIONS: { value: ApprovalDecision; label: string; description: string }
 ];
 
 const SHORTCUTS: Record<string, ApprovalDecision> = { y: "approve", s: "approve_session", n: "deny" };
+/** The list decides without showing the full arguments, so it offers only the one-shot decisions; session-wide approval needs the review card. */
+const LIST_SHORTCUTS: Record<string, ApprovalDecision> = { y: "approve", n: "deny" };
 
-/** Alt+Shift+A: pending approvals (open session first); pick one, then approve / approve for session / deny. */
-export async function showApprovals(app: App): Promise<void> {
+/** Alt+Shift+A: pending approvals (open session first); pick one, then approve / approve for session / deny. `selected` is the list row to focus. */
+export async function showApprovals(app: App, selected = 0): Promise<void> {
 	await app.refreshApprovals();
 	const current = app.session.target?.id;
 	const pending = [...app.approvals].sort(
@@ -46,16 +48,17 @@ export async function showApprovals(app: App): Promise<void> {
 		app.flash("no pending approvals");
 		return;
 	}
+	const at = Math.min(Math.max(selected, 0), pending.length - 1);
 	let chosen: PendingApproval | undefined = pending[0];
 	let decision: ApprovalDecision | undefined;
 	if (pending.length > 1) {
 		const picked = await app.pick(
 			`approvals (${pending.length})`,
 			pending.map((a) => ({ value: a, label: a.tool, description: `${origin(app, a)} · ${argsSummary(a.tool, a.args)}` })),
-			{ hint: "Enter review · y approve · s approve for session · n deny · Esc close", keys: Object.keys(SHORTCUTS) },
+			{ hint: "Enter review · y approve · n deny · Esc close", keys: Object.keys(LIST_SHORTCUTS), selected: at },
 		);
 		chosen = picked?.value;
-		decision = picked ? SHORTCUTS[picked.key] : undefined;
+		decision = picked ? LIST_SHORTCUTS[picked.key] : undefined;
 	}
 	if (!chosen) return;
 	if (!decision) {
@@ -64,12 +67,13 @@ export async function showApprovals(app: App): Promise<void> {
 			hint: "Enter choose · y/s/n shortcuts · Esc back",
 			keys: Object.keys(SHORTCUTS),
 		});
-		if (!picked) return pending.length > 1 ? showApprovals(app) : undefined;
+		if (!picked) return pending.length > 1 ? showApprovals(app, at) : undefined;
 		decision = SHORTCUTS[picked.key] ?? picked.value;
 	}
 	if (!decision) return;
 	await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
 	app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
 	await app.refreshApprovals();
-	if (app.approvals.length > 0) await showApprovals(app);
+	// The decided row is gone, so the same index is the next pending item (clamped to the end).
+	if (app.approvals.length > 0) await showApprovals(app, at);
 }
