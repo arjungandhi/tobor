@@ -3,6 +3,9 @@ import type { App } from "../app.js";
 import { navigate } from "../nav.js";
 import { c } from "../theme.js";
 
+/** Server default for `misfire_grace`; sent to reset the field. */
+const DEFAULT_MISFIRE_GRACE = "2h";
+
 function describe(s: Schedule): string {
 	const timing = s.cron ? `cron ${s.cron}` : `at ${s.at}`;
 	const next = s.nextFireAt ? ` · next ${new Date(s.nextFireAt).toLocaleString()}` : "";
@@ -116,44 +119,44 @@ async function editSchedule(app: App, id: string): Promise<void> {
 	});
 }
 
-/** Edit one field; resolves true when the schedule changed. */
-async function editField(app: App, s: Schedule, field: ScheduleField): Promise<boolean> {
-	const update = await promptField(app, s, field);
-	if (!update) return false;
-	await app.api().updateSchedule(s.id, update);
-	return true;
-}
+const TIMING_HELP = "a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)";
 
-/** Ask for a new value for one field; undefined means leave it unchanged. */
-async function promptField(app: App, s: Schedule, field: ScheduleField): Promise<UpdateScheduleRequest | undefined> {
+/**
+ * Edit one field. A bad value (unparseable, or rejected by the server) re-prompts with the error shown and the typed
+ * text kept; Esc gives up. Resolves true when the schedule changed.
+ */
+async function editField(app: App, s: Schedule, field: ScheduleField): Promise<boolean> {
 	if (field === "approval_mode") {
 		const mode = await app.pick(
 			`${s.name} · approval mode`,
 			(["ask", "auto"] as const).map((value) => ({ value, label: value })),
 			{ selected: s.approval_mode === "auto" ? 1 : 0 },
 		);
-		return mode?.value ? { approval_mode: mode.value } : undefined;
+		if (!mode?.value) return false;
+		await app.api().updateSchedule(s.id, { approval_mode: mode.value });
+		return true;
 	}
-	if (field === "timing") {
-		const answer = await app.ask(`${s.name} · when`, {
-			initial: s.cron ?? s.at ?? "",
-			lines: [c.dim("a 5-field cron expression (`0 9 * * 1-5`) or a one-shot time (`2026-12-01T09:00`)")],
-		});
-		return answer?.trim() ? parseTiming(answer) : undefined;
-	}
-	if (field === "model") {
-		const answer = await app.ask(`${s.name} · model`, { initial: s.model ?? "", lines: [c.dim("provider/modelId")] });
-		if (answer === undefined) return undefined;
-		if (!answer.trim()) {
-			app.flash("model unchanged — cannot be cleared");
-			return undefined;
+	const title = field === "timing" ? `${s.name} · when` : `${s.name} · ${field.replace("_", " ")}`;
+	const lines = field === "timing" ? [c.dim(TIMING_HELP)] : field === "model" ? [c.dim("provider/modelId")] : field === "misfire_grace" ? [c.dim("a duration such as 2h; empty resets to the default (2h)")] : [];
+	let initial = field === "timing" ? (s.cron ?? s.at ?? "") : field === "misfire_grace" ? (s.misfire_grace ?? "") : field === "model" ? (s.model ?? "") : s[field];
+	for (let problem = ""; ; ) {
+		const shown = [...lines, ...(problem ? [c.error(problem)] : [])];
+		const answer = field === "prompt" ? await app.askMultiline(title, { initial, lines: shown }) : await app.ask(title, { initial, lines: shown });
+		if (answer === undefined) return false;
+		const text = answer.trim();
+		if (!text && field !== "misfire_grace") {
+			app.flash(`${field.replace("_", " ")} unchanged — cannot be empty`);
+			return false;
 		}
-		return { model: answer.trim() };
+		try {
+			const update: UpdateScheduleRequest = field === "timing" ? parseTiming(text) : field === "misfire_grace" ? { misfire_grace: text || DEFAULT_MISFIRE_GRACE } : { [field]: text };
+			await app.api().updateSchedule(s.id, update);
+			return true;
+		} catch (err) {
+			problem = (err as Error).message;
+			initial = answer;
+		}
 	}
-	const initial = field === "name" ? s.name : field === "tz" ? s.tz : field === "cwd" ? s.cwd : field === "prompt" ? s.prompt : (s.misfire_grace ?? "");
-	const title = `${s.name} · ${field.replace("_", " ")}`;
-	const answer = field === "prompt" ? await app.askMultiline(title, { initial }) : await app.ask(title, { initial });
-	return answer?.trim() ? { [field]: answer.trim() } : undefined;
 }
 
 async function showRuns(app: App, s: Schedule): Promise<void> {
