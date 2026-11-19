@@ -79,6 +79,31 @@ export class RequestIds {
 	}
 }
 
+/** Composer drafts per session (`""` = no session open), so typing in one session never leaks into another. */
+export class DraftStore {
+	private readonly drafts = new Map<string, string>();
+
+	constructor(private readonly cap = 50) {}
+
+	/** Remember `text` for `key` (blank text forgets it); the oldest drafts beyond the cap are dropped. */
+	stash(key: string, text: string): void {
+		this.drafts.delete(key);
+		if (text.trim() === "") return;
+		this.drafts.set(key, text);
+		for (const old of this.drafts.keys()) {
+			if (this.drafts.size <= this.cap) break;
+			this.drafts.delete(old);
+		}
+	}
+
+	/** Remove and return the draft for `key`. */
+	take(key: string): string | undefined {
+		const text = this.drafts.get(key);
+		this.drafts.delete(key);
+		return text;
+	}
+}
+
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
 export type SessionTarget = {
 	id: SessionId;
@@ -109,6 +134,7 @@ export class SessionScreen {
 	/** Numbers the images pasted with Ctrl+V (`pasted-1.png`). */
 	private pasteSeq = 0;
 	private readonly requestIds = new RequestIds();
+	private readonly drafts = new DraftStore();
 	private workerStamp = new Map<string, number>();
 
 	constructor(private readonly app: App) {
@@ -140,7 +166,8 @@ export class SessionScreen {
 			this.app.changed();
 			return;
 		}
-		this.close();
+		this.stashDraft();
+		this.reset();
 		const client = this.app.api();
 		const id = target.id;
 		this.target = target;
@@ -164,11 +191,30 @@ export class SessionScreen {
 		void this.refreshDetail();
 		this.rebuild();
 		this.scroll.scrollToEnd();
+		this.restoreDraft();
 		this.app.changed();
 	}
 
 	/** Stop watching and clear the view. */
 	close(): void {
+		if (this.target) this.stashDraft();
+		this.reset();
+		this.restoreDraft();
+	}
+
+	/** Stash the composer text under the open session (or `""`) and clear the composer, ahead of switching away. */
+	private stashDraft(): void {
+		this.drafts.stash(this.target ? String(this.target.id) : "", this.composer.getExpandedText());
+		this.composer.setText("");
+	}
+
+	/** Put back the draft of whatever is now open (or of no session), unless the composer already has text. */
+	private restoreDraft(): void {
+		const draft = this.drafts.take(this.target ? String(this.target.id) : "");
+		if (draft !== undefined && this.composer.getExpandedText().trim() === "") this.composer.setText(draft);
+	}
+
+	private reset(): void {
 		this.watch?.close();
 		this.watch = undefined;
 		this.target = undefined;
@@ -289,6 +335,7 @@ export class SessionScreen {
 		if (deleted) {
 			this.app.flash(`session #${id} was deleted`);
 			this.close();
+			this.drafts.take(String(id));
 			this.app.changed();
 			return;
 		}

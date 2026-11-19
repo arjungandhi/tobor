@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RequestIds, routeSubmit } from "../../src/tui/screens/session.js";
+import { DraftStore, RequestIds, routeSubmit } from "../../src/tui/screens/session.js";
 
 describe("routeSubmit", () => {
 	it("sends plain text as a prompt and slash text as a command when no question is pending", () => {
@@ -48,5 +48,34 @@ describe("RequestIds", () => {
 		const other = ids.for("hello world");
 		expect(other).not.toBe(first);
 		expect(ids.for("hello")).not.toBe(first);
+	});
+});
+
+describe("DraftStore", () => {
+	it("keeps a draft per key and hands it back once", () => {
+		const drafts = new DraftStore();
+		drafts.stash("1", "draft for one");
+		drafts.stash("", "no session");
+		expect(drafts.take("2")).toBeUndefined();
+		expect(drafts.take("1")).toBe("draft for one");
+		expect(drafts.take("1")).toBeUndefined();
+		expect(drafts.take("")).toBe("no session");
+	});
+
+	it("forgets a key stashed with blank text", () => {
+		const drafts = new DraftStore();
+		drafts.stash("1", "old");
+		drafts.stash("1", "  ");
+		expect(drafts.take("1")).toBeUndefined();
+	});
+
+	it("drops the oldest drafts beyond the cap", () => {
+		const drafts = new DraftStore(2);
+		drafts.stash("1", "a");
+		drafts.stash("2", "b");
+		drafts.stash("3", "c");
+		expect(drafts.take("1")).toBeUndefined();
+		expect(drafts.take("2")).toBe("b");
+		expect(drafts.take("3")).toBe("c");
 	});
 });
