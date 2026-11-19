@@ -2,6 +2,7 @@ import type { ApprovalDecision, PendingApproval } from "../../api/types.js";
 import type { App } from "../app.js";
 import { ApiRequestError } from "../client.js";
 import { argsSummary } from "../components/tool-slot.js";
+import { navigate } from "../nav.js";
 import { c } from "../theme.js";
 
 function origin(app: App, a: PendingApproval): string {
@@ -38,49 +39,57 @@ const SHORTCUTS: Record<string, ApprovalDecision> = { y: "approve", s: "approve_
 /** The list decides without showing the full arguments, so it offers only the one-shot decisions; session-wide approval needs the review card. */
 const LIST_SHORTCUTS: Record<string, ApprovalDecision> = { y: "approve", n: "deny" };
 
-/** Alt+Shift+A: pending approvals (open session first); pick one, then approve / approve for session / deny. `selected` is the list row to focus. */
-export async function showApprovals(app: App, selected = 0): Promise<void> {
-	await app.refreshApprovals();
+/** Open approvals, the open session's first. */
+function pendingApprovals(app: App): PendingApproval[] {
 	const current = app.session.target?.id;
-	const pending = [...app.approvals].sort(
+	return [...app.approvals].sort(
 		(a, b) => Number(b.conversationId === current) - Number(a.conversationId === current) || a.createdAt - b.createdAt,
 	);
-	if (pending.length === 0) {
+}
+
+/** Alt+Shift+A: pending approvals (open session first); Enter reviews one (approve / approve for session / deny), y/n decide the highlighted row. */
+export async function showApprovals(app: App): Promise<void> {
+	await app.refreshApprovals();
+	if (app.approvals.length === 0) {
 		app.flash("no pending approvals");
 		return;
 	}
-	const at = Math.min(Math.max(selected, 0), pending.length - 1);
-	let chosen: PendingApproval | undefined = pending[0];
-	let decision: ApprovalDecision | undefined;
-	if (pending.length > 1) {
-		const picked = await app.pick(
-			`approvals (${pending.length})`,
-			pending.map((a) => ({ value: a, label: a.tool, description: `${origin(app, a)} · ${argsSummary(a.tool, a.args)}` })),
-			{ hint: "Enter review · y approve · n deny · Esc close", keys: Object.keys(LIST_SHORTCUTS), selected: at },
-		);
-		chosen = picked?.value;
-		decision = picked ? LIST_SHORTCUTS[picked.key] : undefined;
-	}
-	if (!chosen) return;
-	if (!decision) {
-		const picked = await app.pick(`approve ${chosen.tool}?`, DECISIONS, {
-			lines: approvalCard(app, chosen),
-			hint: "Enter choose · y/s/n shortcuts · Esc back",
-			keys: Object.keys(SHORTCUTS),
-		});
-		if (!picked) return pending.length > 1 ? showApprovals(app, at) : undefined;
-		decision = SHORTCUTS[picked.key] ?? picked.value;
-	}
-	if (!decision) return;
-	try {
-		await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
-		app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
-	} catch (err) {
-		// Expired or decided elsewhere (404/409): drop the stale row and stay in the list instead of falling out to the transcript.
-		const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
-		app.flash(gone ? `already resolved: ${chosen.tool}` : err instanceof Error ? err.message : String(err));
-	}
-	await app.refreshApprovals();
-	// The decided row is gone, so the same index is the next pending item (clamped to the end).
-	if (app.approvals.length > 0) await showApprovals(app, at);
+	await navigate<PendingApproval>(app, {
+		view: () => {
+			const pending = pendingApprovals(app);
+			return {
+				title: `approvals (${pending.length})`,
+				items: pending.map((a) => ({ value: a, label: a.tool, description: `${origin(app, a)} · ${argsSummary(a.tool, a.args)}` })),
+				hint: "Enter review · y approve · n deny · Esc back",
+				keys: Object.keys(LIST_SHORTCUTS),
+			};
+		},
+		key: (a) => a.callId,
+		onPick: async (picked) => {
+			const chosen = picked.value;
+			if (!chosen) return "stay";
+			let decision = LIST_SHORTCUTS[picked.key];
+			if (!decision) {
+				const card = await app.pick(`approve ${chosen.tool}?`, DECISIONS, {
+					lines: approvalCard(app, chosen),
+					hint: "Enter choose · y/s/n shortcuts · Esc back",
+					keys: Object.keys(SHORTCUTS),
+				});
+				if (!card) return "stay";
+				decision = SHORTCUTS[card.key] ?? card.value;
+			}
+			if (!decision) return "stay";
+			try {
+				await app.api().decide(chosen.callId, { decision, conversationId: chosen.conversationId });
+				app.flash(`${decision.replace("_", " ")}: ${chosen.tool}`);
+			} catch (err) {
+				// Expired or decided elsewhere (404/409): drop the stale row and stay in the list instead of falling out to the transcript.
+				const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
+				app.flash(gone ? `already resolved: ${chosen.tool}` : err instanceof Error ? err.message : String(err));
+			}
+			await app.refreshApprovals();
+			// The decided row is gone, so the cursor (kept by navigate) lands on the next pending item.
+			return app.approvals.length > 0 ? "refresh" : "close";
+		},
+	});
 }
