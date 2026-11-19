@@ -351,6 +351,8 @@ export class ReconnectingSocket<In> {
 	private stopped = false;
 	private timer: NodeJS.Timeout | undefined;
 	private ping: NodeJS.Timeout | undefined;
+	/** Set by `reconnect()`: the next close reconnects immediately, without backoff or counting as a failed attempt. */
+	private immediate = false;
 	/** Last time anything (message or pong) arrived on the current connection. */
 	private lastRx = 0;
 	/** When the current connection opened; 0 while not open. */
@@ -377,10 +379,18 @@ export class ReconnectingSocket<In> {
 		this.options.onState?.("closed");
 	}
 
-	/** Drop the current connection and reconnect now (e.g. after a watch `end`). */
+	/** Drop the current connection and reconnect now, skipping the backoff (explicit resync, e.g. after a watch `end`). */
 	reconnect(): void {
 		if (this.stopped) return;
-		this.ws?.terminate();
+		if (this.ws) {
+			this.immediate = true;
+			this.ws.terminate();
+		} else if (this.timer) {
+			// Waiting out a backoff delay: cut it short.
+			clearTimeout(this.timer);
+			this.timer = undefined;
+			this.connect();
+		}
 	}
 
 	/** Report a protocol/handler failure and drop the link; the close handler runs the reconnect path. */
@@ -449,6 +459,11 @@ export class ReconnectingSocket<In> {
 			if (this.stopped) return;
 			if (this.openedAt > 0 && Date.now() - this.openedAt >= STABLE_MS) this.attempt = 0;
 			this.openedAt = 0;
+			if (this.immediate) {
+				this.immediate = false;
+				this.connect();
+				return;
+			}
 			const delay = Math.min(this.options.maxDelayMs ?? 15_000, (this.options.minDelayMs ?? 500) * 2 ** this.attempt);
 			this.attempt++;
 			const jittered = Math.round(delay * (0.75 + Math.random() * 0.5));
