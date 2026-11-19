@@ -37,6 +37,10 @@ async function editFile(app: App, path: string): Promise<void> {
 			const quoted = `'${local.replace(/'/g, "'\\''")}'`;
 			const result = await app.suspend(() => spawnSync(`${editor} ${quoted}`, { stdio: "inherit", shell: true }));
 			if (result.error) throw new Error(`${editor}: ${result.error.message}`);
+			if (result.status !== 0 || result.signal) {
+				app.flash(`✗ editor \`${editor}\` failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`}); ${path} not saved`);
+				return;
+			}
 			const content = await readFile(local, "utf8");
 			if (content === file.content) {
 				app.flash(`${path}: no changes`);
