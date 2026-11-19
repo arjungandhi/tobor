@@ -223,7 +223,13 @@ export class App {
 	/** Fetch/event counters per shared list: a fetch is applied only if nothing newer started or happened meanwhile. */
 	private readonly sessionsSeq = { fetch: 0, event: 0 };
 	private readonly approvalsSeq = { fetch: 0, event: 0 };
+	/** The UI is up (set at the end of `begin`): from then on a stray promise rejection is shown, not fatal. */
+	private started = false;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
+	private readonly onRejection = (reason: unknown): void => {
+		if (!this.started || this.stopped) return this.fatal(reason);
+		this.flash(`✗ unhandled error: ${reason instanceof Error ? reason.message : String(reason)}`, 8000);
+	};
 
 	constructor(
 		public config: ClientConfig,
@@ -249,7 +255,7 @@ export class App {
 		const { promise, resolve } = Promise.withResolvers<number>();
 		this.exit = resolve;
 		process.on("uncaughtException", this.onFatal);
-		process.on("unhandledRejection", this.onFatal);
+		process.on("unhandledRejection", this.onRejection);
 		try {
 			this.begin(start, notice);
 		} catch (err) {
@@ -277,12 +283,13 @@ export class App {
 		const flash = [notice, start.kind === "picker" ? start.reason : undefined].filter(Boolean).join(" · ");
 		if (flash) this.flash(flash);
 		this.changed();
+		this.started = true;
 	}
 
 	/** Stop sockets and the renderer once, restoring the terminal. */
 	private stopUi(preserveScreen = false): void {
 		process.off("uncaughtException", this.onFatal);
-		process.off("unhandledRejection", this.onFatal);
+		process.off("unhandledRejection", this.onRejection);
 		if (this.stopped) return;
 		this.stopped = true;
 		clearTimeout(this.slotTimer);
@@ -301,10 +308,10 @@ export class App {
 		process.exit(1);
 	}
 
-	/** Leave the TUI. */
-	quit(): void {
+	/** Leave the TUI (restoring the terminal); `run` resolves with `code`. */
+	quit(code = 0): void {
 		this.stopUi();
-		this.exit?.(0);
+		this.exit?.(code);
 	}
 
 	/** The server's clock now: `whoami.now` advanced by the time since it was fetched (local clock drift corrected). */
