@@ -313,7 +313,7 @@ export class SessionScreen {
 		const route = routeSubmit(text, question !== undefined);
 		if (route === "attach") {
 			const arg = /^\/attach(?:\s+(.*))?$/s.exec(text)?.[1] ?? "";
-			this.app.guard(() => this.attach(arg.trim()));
+			this.keepOnFail(text, () => this.attach(arg.trim()));
 			return;
 		}
 		if (route === "command") {
@@ -325,7 +325,7 @@ export class SessionScreen {
 			return;
 		}
 		if (route === "answer" && question) {
-			this.app.guard(() => this.answerQuestion(question, text));
+			this.keepOnFail(text, () => this.answerQuestion(question, text));
 			return;
 		}
 		if (!this.target) {
@@ -354,10 +354,8 @@ export class SessionScreen {
 
 	/** Answer an inline question (highlighted option or typed text), then refresh so the panel moves on or collapses. */
 	async answerQuestion(question: PendingQuestion, answer: string): Promise<void> {
-		if (this.answering) {
-			this.app.flash("still answering\u2026");
-			return;
-		}
+		// Throw (not flash+return) so `keepOnFail` puts the submitted text back instead of silently dropping it.
+		if (this.answering) throw new Error("still answering\u2026");
 		this.answering = true;
 		try {
 			if (question.fields?.length) {
