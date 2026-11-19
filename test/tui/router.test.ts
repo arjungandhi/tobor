@@ -255,6 +255,7 @@ describe("KEYS completeness", () => {
 		"ctrl+o": "\x0f",
 		"alt+m": "\x1bm",
 		"ctrl+p": "\x10",
+		"ctrl+v": "\x16",
 		"ctrl+n": CTRL_N,
 		"ctrl+l": CTRL_L,
 		"ctrl+t": "\x14",
@@ -275,6 +276,7 @@ describe("KEYS completeness", () => {
 		workerTranscript: () => ({ type: "hotkey", name: "workerTranscript" }),
 		model: () => ({ type: "hotkey", name: "model" }),
 		modelCycle: () => ({ type: "hotkey", name: "modelCycle" }),
+		pasteImage: () => ({ type: "hotkey", name: "pasteImage" }),
 		newSession: () => ({ type: "hotkey", name: "newSession" }),
 		sessions: () => ({ type: "hotkey", name: "sessions" }),
 		workspaces: () => ({ type: "hotkey", name: "workspaces" }),
@@ -305,4 +307,17 @@ describe("KEYS completeness", () => {
 			});
 		}
 	}
+});
+
+describe("routeKey: paste image", () => {
+	it("routes Ctrl+V to the pasteImage hotkey, also with text in the composer", () => {
+		expect(route("\x16")).toEqual({ type: "hotkey", name: "pasteImage" });
+		expect(route("\x16", { composerEmpty: false })).toEqual({ type: "hotkey", name: "pasteImage" });
+		expect(route("\x1b[118;5u")).toEqual({ type: "hotkey", name: "pasteImage" });
+	});
+
+	it("passes while a modal is open and ignores auto-repeat", () => {
+		expect(route("\x16", { modalOpen: true })).toEqual({ type: "pass" });
+		expect(route("\x16", { repeating: true })).toEqual({ type: "consume" });
+	});
 });
