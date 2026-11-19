@@ -43,7 +43,8 @@ const PROBE_SETTLE_MS = 2000;
  * sessions list (connecting first when it is not the connected one), Esc/← closes the picker (back to the open session, if any).
  *
  * The rows paint at once: probes run in the background and are cached for the life of the picker, so a row still
- * (The `g` refresh waits for its probes to finish, so every row has a real state afterwards.)
+ * waiting shows "probing…" until the list is next shown (any action, or `g`, which also probes everything again and
+ * waits for those probes to finish, so every row has a real state afterwards).
  * An empty list is shown as such (`a add`); it never opens the add wizard by itself.
  */
 export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string): Promise<void> {
