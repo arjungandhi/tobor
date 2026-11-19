@@ -8,6 +8,8 @@ import { c, editorTheme } from "../theme.js";
 export class Composer extends Editor {
 	private label = "";
 	private staged: StagedImage[] = [];
+	/** Right-aligned text in the top border, asked at render time (e.g. "↓ new output"); empty for none. */
+	cue: () => string = () => "";
 
 	constructor(tui: TUI, source: PathCompletionSource) {
 		super(tui, editorTheme, { paddingX: 1 });
@@ -39,6 +41,12 @@ export class Composer extends Editor {
 		this.invalidate();
 	}
 
+	/** Clear the text and unstage every pending image. */
+	clearAll(): void {
+		this.setText("");
+		this.unstage();
+	}
+
 	override render(width: number): string[] {
 		const lines = super.render(width);
 		if (this.staged.length === 0) return lines;
@@ -47,8 +55,13 @@ export class Composer extends Editor {
 	}
 
 	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
-		if (hiddenLineCount > 0 || this.label === "") return super.renderTopBorder(width, hiddenLineCount);
-		const label = truncateToWidth(` ${this.label} `, Math.max(0, width - 4));
-		return `${this.borderColor("──")}${c.dim(label)}${this.borderColor("─".repeat(Math.max(0, width - 2 - visibleWidth(label))))}`;
+		const cue = hiddenLineCount > 0 ? "" : oneLineStyled(this.cue()).trim();
+		if (hiddenLineCount > 0 || (this.label === "" && cue === "")) return super.renderTopBorder(width, hiddenLineCount);
+		const cueText = cue === "" ? "" : ` ${cue} `;
+		const cueWidth = visibleWidth(cueText);
+		// The cue keeps its place; the label gives way to it.
+		const label = truncateToWidth(this.label === "" ? "" : ` ${this.label} `, Math.max(0, width - 4 - cueWidth));
+		const fill = Math.max(0, width - 2 - visibleWidth(label) - cueWidth - (cueWidth > 0 ? 1 : 0));
+		return `${this.borderColor("──")}${c.dim(label)}${this.borderColor("─".repeat(fill))}${cueText === "" ? "" : c.warning(cueText)}${cueWidth > 0 ? this.borderColor("─") : ""}`;
 	}
 }

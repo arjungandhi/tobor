@@ -36,7 +36,7 @@ import type {
 import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
 import { commandRows } from "./command-rows.js";
 import { Band } from "./components/band.js";
-import { StatusLine } from "./components/status.js";
+import { type Progress, type Severity, StatusLine, StatusSlot } from "./components/status.js";
 import {
 	baseUrl,
 	type ClientConfig,
@@ -147,6 +147,12 @@ export class Panel implements Component, Focusable {
 	}
 }
 
+/** Status text: no escape sequences or control characters, one line, at most 300 characters. */
+function cleanStatusText(message: string): string {
+	const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
+	return Array.from(text).slice(0, 300).join("");
+}
+
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 const COMMAND_PREFIX = "cmd:";
 
@@ -170,6 +176,9 @@ export class App {
 	readonly tui: TuiAltScreen;
 	readonly band = new Band();
 	readonly status = new StatusLine();
+	/** The single status slot (flashes replace each other, progress sticks); painted by `status`. */
+	private readonly slot = new StatusSlot();
+	private slotTimer: ReturnType<typeof setTimeout> | undefined;
 	readonly session: SessionScreen;
 	client: ApiClient | undefined;
 	/** Workspace connected to (for an unsaved `tobor host:port`, named after the address). */
@@ -264,6 +273,7 @@ export class App {
 		process.off("unhandledRejection", this.onFatal);
 		if (this.stopped) return;
 		this.stopped = true;
+		clearTimeout(this.slotTimer);
 		this.events?.close();
 		this.session.close();
 		this.tui.setLayoutRoot(new VStack([]));
@@ -540,11 +550,49 @@ export class App {
 		this.terminal.write(`\x07\x1b]9;tobor: ${text.replace(/[\x00-\x1f\x7f]/g, " ")}\x07`);
 	}
 
-	/** A transient message over the transcript. */
-	flash(message: string, durationMs = 4000): void {
-		const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
-		this.tui.flash(Array.from(text).slice(0, 300).join(""), durationMs);
-		this.tui.requestRender();
+	/**
+	 * A transient message in the status line. One at a time: a new message replaces the current one. `✗ `-prefixed
+	 * messages are errors (override with `severity`). Sticky progress (`progress`) is not replaced by it.
+	 */
+	flash(message: string, durationMs = FLASH_MS, severity?: Severity): void {
+		const text = cleanStatusText(message);
+		this.slot.flash(text, severity ?? severityOf(text), durationMs);
+		this.changed();
+		this.scheduleSlotExpiry();
+	}
+
+	/**
+	 * A sticky status entry (`label`) that stays until `done()`, however many flashes come and go meanwhile; the newest
+	 * live one is shown. `update(label)` changes the text; `done(message?)` ends it and optionally flashes `message`
+	 * (a `✗ ` prefix makes it an error). Both are no-ops after `done`.
+	 */
+	progress(label: string): Progress {
+		const inner = this.slot.progress(cleanStatusText(label));
+		this.changed();
+		return {
+			update: (next) => {
+				inner.update(cleanStatusText(next));
+				this.changed();
+			},
+			done: (message) => {
+				inner.done(message === undefined ? undefined : cleanStatusText(message));
+				this.changed();
+				this.scheduleSlotExpiry();
+			},
+		};
+	}
+
+	/** Repaint when the transient message runs out. */
+	private scheduleSlotExpiry(): void {
+		clearTimeout(this.slotTimer);
+		this.slotTimer = undefined;
+		const left = this.slot.expiresIn();
+		if (left === undefined || this.stopped) return;
+		this.slotTimer = setTimeout(() => {
+			this.slotTimer = undefined;
+			this.changed();
+		}, left + 5);
+		this.slotTimer.unref();
 	}
 
 	/** Run a screen flow, turning errors into a flash. */
@@ -580,7 +628,7 @@ export class App {
 		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · ${keyLabel("questions")}`));
 		if (this.restarting) segments.push(c.warning("⟳ node restarting…"));
 		else if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
-		this.status.set(segments, `${hotkeyHint("help")} · / commands`);
+		this.status.set(segments, `${hotkeyHint("help")} · / commands`, this.slot.view());
 		s.updateLabel();
 		this.tui.requestRender();
 	}
