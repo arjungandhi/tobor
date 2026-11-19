@@ -157,6 +157,8 @@ function cleanStatusText(message: string): string {
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 /** How often pending approvals/questions are refetched while any exist (a backstop against missed events). */
 export const PENDING_POLL_MS = 60_000;
+/** How often the events socket is checked for staleness (status line indicator). */
+const STALE_CHECK_MS = 5_000;
 
 /** Backoff before retry number `failures` (0-based) of a failed refresh: 2s, 4s, 8s, … capped at 30s. */
 export function refreshRetryDelay(failures: number): number {
@@ -243,6 +245,9 @@ export class App {
 	private refreshErrorShown = false;
 	/** Backstop poll of approvals and questions against missed events (see `pollPending`). */
 	private pendingPoll: ReturnType<typeof setInterval> | undefined;
+	/** Repaints the status line when the events socket goes quiet (stale) or recovers: staleness is time-based, no event announces it. */
+	private staleTick: ReturnType<typeof setInterval> | undefined;
+	private eventsStale = false;
 	/** The UI is up (set at the end of `begin`): from then on a stray promise rejection is shown, not fatal. */
 	private started = false;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
@@ -315,6 +320,7 @@ export class App {
 		clearTimeout(this.slotTimer);
 		this.cancelRefreshRetry();
 		clearInterval(this.pendingPoll);
+		clearInterval(this.staleTick);
 		this.events?.close();
 		this.session.close();
 		this.tui.setLayoutRoot(new VStack([]));
@@ -349,6 +355,14 @@ export class App {
 		this.cancelRefreshRetry();
 		clearInterval(this.pendingPoll);
 		this.pendingPoll = setInterval(() => void this.pollPending(), PENDING_POLL_MS);
+		clearInterval(this.staleTick);
+		this.eventsStale = false;
+		this.staleTick = setInterval(() => {
+			const stale = this.events?.stale ?? false;
+			if (stale === this.eventsStale) return;
+			this.eventsStale = stale;
+			this.changed();
+		}, STALE_CHECK_MS);
 		this.refreshFailures = 0;
 		this.refreshErrorShown = false;
 		this.session.close();
@@ -383,6 +397,9 @@ export class App {
 				}
 				void this.refresh();
 			},
+			onError: (message) => {
+				if (generation === this.generation) this.flash(`✗ ${message}`, 8000);
+			},
 			onState: (state, detail) => {
 				if (generation !== this.generation) return; // the old connection's socket closing
 				if (state === "waiting") {
@@ -403,6 +420,7 @@ export class App {
 					}
 				}
 				this.eventsState = state;
+				this.eventsStale = false;
 				this.changed();
 			},
 		});
@@ -437,6 +455,7 @@ export class App {
 		} catch (err) {
 			this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 		}
+		this.flashStateError();
 		if (this.workspace?.name === from) this.workspace = { ...this.workspace, name: to };
 		this.changed();
 	}
@@ -455,7 +474,6 @@ export class App {
 			if (this.stopped || this.modals.length > 0 || this.flowActive) return;
 			this.openInitial();
 		}, 0);
-		this.flashStateError();
 	}
 
 	/** The session last opened on the connected workspace (state.json), for default cursors. */
@@ -578,6 +596,7 @@ export class App {
 				this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 			}
 		}
+		this.flashStateError();
 	}
 
 	/** Pending approvals of one conversation, by call id. */
@@ -596,7 +615,6 @@ export class App {
 				this.approvalsSeq.event++;
 				const { approval } = event;
 				if (!this.approvals.some((a) => a.callId === approval.callId && a.conversationId === approval.conversationId)) {
-		this.flashStateError();
 					this.approvals = [...this.approvals, approval];
 				}
 				const where = approval.worker ? `${approval.worker} in #${approval.sessionId}` : `#${approval.sessionId}`;
@@ -773,7 +791,7 @@ export class App {
 		const cwd = s.detail?.cwd ?? "";
 		this.band.setHeader(`${c.bold(c.accent("tobor"))} ${c.dim("▸")} ${host} ${c.dim("▸")} ${where}`, c.dim(cwd));
 
-		const conn = this.eventsState === "open" && (s.target === undefined || s.watchState === "open");
+		const conn = this.eventsState === "open" && !this.eventsStale && (s.target === undefined || s.watchState === "open");
 		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.connectionText(s.watchState)}`)];
 		if (s.target) {
 			const state = s.state();
@@ -797,7 +815,7 @@ export class App {
 	private connectionText(watchState: string): string {
 		switch (this.eventsState) {
 			case "open":
-				return watchState;
+				return this.eventsStale ? "events stale (no data from node)" : watchState;
 			case "waiting":
 				return `reconnecting${this.eventsDetail ? ` — ${this.eventsDetail}` : ""}`;
 			case "connecting":

@@ -321,6 +321,9 @@ export class SessionScreen {
 				if (reconnect) void this.app.refresh();
 				void this.refreshWorkers();
 			},
+			onError: (message) => {
+				if (replica === this.replica) this.app.flash(`✗ ${message}`, 8000);
+			},
 			onState: (state, detail) => {
 				if (state === "waiting" && this.watchState === "open") this.app.flash(`watch: ${detail ?? "disconnected"}`);
 				this.watchState = state;
