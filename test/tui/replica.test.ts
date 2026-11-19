@@ -241,4 +241,17 @@ describe("replica over constructed ops", () => {
 		]);
 		expect(deriveBlocks([], {} as never)).toEqual([]);
 	});
+
+	it("deriveBlocks shows queued inbox messages with numeric submission ids", () => {
+		const inbox = {
+			items: [
+				{ id: 22, mode: "steer", content: "X" },
+				{ id: 23, mode: "followUp", content: [{ type: "text", text: "Y" }] },
+			],
+		};
+		expect(deriveBlocks([], { "pi.inbox": inbox } as never)).toEqual([
+			{ kind: "queued", key: "q:22", text: "X", mode: "steer" },
+			{ kind: "queued", key: "q:23", text: "Y", mode: "followUp" },
+		]);
+	});
 });

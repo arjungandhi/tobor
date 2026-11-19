@@ -83,14 +83,14 @@ export function liveOf(docs: WatchValue["docs"] | undefined): LiveState {
 }
 
 /** Messages waiting in `pi.inbox` (internal `write` items excluded). */
-function queuedOf(docs: WatchValue["docs"] | undefined): Array<{ id: string; mode: "steer" | "followUp"; content: Message["content"] }> {
+function queuedOf(docs: WatchValue["docs"] | undefined): Array<{ id: string | number; mode: "steer" | "followUp"; content: Message["content"] }> {
 	type Item = { id?: unknown; mode?: unknown; content?: Message["content"] };
 	const items = docs?.["pi.inbox"]?.items;
 	if (!Array.isArray(items)) return [];
-	const queued: Array<{ id: string; mode: "steer" | "followUp"; content: Message["content"] }> = [];
+	const queued: Array<{ id: string | number; mode: "steer" | "followUp"; content: Message["content"] }> = [];
 	for (const item of items as Item[]) {
 		if (item?.mode !== "steer" && item?.mode !== "followUp") continue;
-		if (typeof item.id !== "string") continue;
+		if (typeof item.id !== "string" && typeof item.id !== "number") continue;
 		queued.push({ id: item.id, mode: item.mode, content: item.content });
 	}
 	return queued;
