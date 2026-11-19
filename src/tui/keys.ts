@@ -37,14 +37,18 @@ export const DOUBLE_LEFT_WINDOW_MS = 500;
 
 /**
  * Double-press detector for `Ctrl+C`: `press` returns true when it is the second press within `QUIT_WINDOW_MS`.
- * A press that already did something (closed a dialog, cleared the composer) passes `arm = false` and does not start the window.
+ * A press that already did something (closed a dialog, cleared the composer) passes `arm = false`: it never quits and disarms the gate.
  */
 export class QuitGate {
 	private armedAt = Number.NEGATIVE_INFINITY;
 
 	press(now: number, arm = true): boolean {
+		if (!arm) {
+			this.armedAt = Number.NEGATIVE_INFINITY;
+			return false;
+		}
 		if (now - this.armedAt < QUIT_WINDOW_MS) return true;
-		if (arm) this.armedAt = now;
+		this.armedAt = now;
 		return false;
 	}
 }
