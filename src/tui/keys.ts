@@ -61,7 +61,7 @@ export const HELP: readonly (readonly [string, string])[] = [
 	["Ctrl+O", "open a worker's transcript (again: back)"],
 	["Alt+M", "change the session's model"],
 	["Ctrl+P", "cycle to the next model"],
-	["Ctrl+V", "paste an image (or text) from the system clipboard as an attachment"],
+	["Ctrl+V", "paste from the clipboard: an image becomes an attachment, text is inserted"],
 	["Ctrl+N", "new session"],
 	["Ctrl+L", "sessions"],
 	["←← (empty composer)", "sessions list"],
