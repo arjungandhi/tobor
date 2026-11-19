@@ -190,6 +190,14 @@ export class App {
 	approvals: PendingApproval[] = [];
 	questions: PendingQuestion[] = [];
 	eventsState: SocketState = "closed";
+	/** Why the events socket is not open (last retry detail); cleared when it opens. */
+	eventsDetail: string | undefined;
+	/** The events socket has been open on this connection. */
+	private eventsEverOpen = false;
+	/** An open events socket dropped and has not reopened yet (so the next open is a reconnect worth announcing). */
+	private eventsLost = false;
+	/** The first-connect failure was already flashed for this connection. */
+	private connectFailureShown = false;
 	private events: ReconnectingSocket<EventsFrame> | undefined;
 	/** Open modals, bottom to top; `cancel` dismisses one as if Esc was pressed. */
 	private modals: { handle: OverlayHandle; cancel: () => void }[] = [];
@@ -313,6 +321,10 @@ export class App {
 		this.workspace = workspace;
 		this.whoami = undefined;
 		this.whoamiAt = 0;
+		this.eventsDetail = undefined;
+		this.eventsEverOpen = false;
+		this.eventsLost = false;
+		this.connectFailureShown = false;
 		this.sessions = [];
 		this.approvals = [];
 		this.questions = [];
@@ -330,7 +342,24 @@ export class App {
 				});
 			},
 			onState: (state, detail) => {
-				if (state === "waiting" && this.eventsState === "open") this.flash(`events: ${detail ?? "disconnected"}`);
+				if (generation !== this.generation) return; // the old connection's socket closing
+				if (state === "waiting") {
+					if (this.eventsState === "open") {
+						this.eventsLost = true;
+						this.flash(`events: ${detail ?? "disconnected"}`);
+					} else if (!this.eventsEverOpen && !this.connectFailureShown) {
+						this.connectFailureShown = true;
+						this.flash(`✗ cannot reach ${this.workspace?.name ?? "the node"}: ${detail ?? "connection failed"}`, 8000);
+					}
+					this.eventsDetail = detail;
+				} else if (state === "open") {
+					this.eventsEverOpen = true;
+					this.eventsDetail = undefined;
+					if (this.eventsLost) {
+						this.eventsLost = false;
+						this.flash("reconnected");
+					}
+				}
 				this.eventsState = state;
 				this.changed();
 			},
@@ -617,7 +646,7 @@ export class App {
 		this.band.setHeader(`${c.bold(c.accent("tobor"))} ${c.dim("▸")} ${host} ${c.dim("▸")} ${where}`, c.dim(cwd));
 
 		const conn = this.eventsState === "open" && (s.target === undefined || s.watchState === "open");
-		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.eventsState === "open" ? s.watchState : this.eventsState}`)];
+		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.connectionText(s.watchState)}`)];
 		if (s.target) {
 			const state = s.state();
 			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : state === "working" ? c.tool : c.dim;
@@ -634,6 +663,20 @@ export class App {
 		this.status.set(segments, `${hotkeyHint("help")} · / commands`, this.slot.view());
 		s.updateLabel();
 		this.tui.requestRender();
+	}
+
+	/** Status text of a connection that is not fully up: the events socket's state and retry detail, else the session watch's state. */
+	private connectionText(watchState: string): string {
+		switch (this.eventsState) {
+			case "open":
+				return watchState;
+			case "waiting":
+				return `reconnecting${this.eventsDetail ? ` — ${this.eventsDetail}` : ""}`;
+			case "connecting":
+				return this.eventsDetail === undefined ? "connecting…" : "reconnecting…";
+			default:
+				return this.eventsState;
+		}
 	}
 
 	private onInput(data: string): TuiInputListenerResult {
