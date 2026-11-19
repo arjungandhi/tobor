@@ -149,7 +149,7 @@ export const COMMANDS: readonly { name: string; description: string; argumentHin
 	{ name: "restart", description: "restart the node" },
 	{ name: "attach", description: "attach a local image to the next message (/attach clear drops them)", argumentHint: "<path>|clear" },
 	{ name: "title", description: "rename this session", argumentHint: "<title>" },
-	{ name: "approval", description: "approval mode of this session", argumentHint: "ask|auto" },
+	{ name: "approval", description: "approval mode of this session", argumentHint: "[ask|auto]" },
 	{ name: "archive", description: "archive this session (archived sessions: h in the sessions list)" },
 	{ name: "complete", description: "archive this session (alias of /archive; archived sessions: h)" },
 	{ name: "help", description: "keys and commands" },

@@ -22,7 +22,7 @@ describe("commandRows", () => {
 	it("excludes commands that require arguments but keeps optional ones", () => {
 		expect(names("attach")).toEqual([]);
 		expect(names("title")).toEqual([]);
-		expect(names("approval")).toEqual(["approvals"]);
+		expect(names("approval")).toEqual(["approvals", "approval"]);
 		expect(names("artifacts")).toEqual(["artifacts"]);
 	});
 });
