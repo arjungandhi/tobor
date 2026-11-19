@@ -344,7 +344,7 @@ export class App {
 		try {
 			saveClientConfig(this.configPath, config);
 		} catch (err) {
-			this.flash(`saving ${this.configPath}: ${(err as Error).message}`);
+			this.flash(`✗ saving ${this.configPath}: ${(err as Error).message}`);
 		}
 		if (this.workspace && !findWorkspace(config, this.workspace.name)) {
 			// The connected workspace was removed: keep the connection, labelled by its address.
@@ -360,7 +360,7 @@ export class App {
 			setLastSession(this.statePath, from, undefined);
 			if (last !== undefined) setLastSession(this.statePath, to, last);
 		} catch (err) {
-			this.flash(`saving ${this.statePath}: ${(err as Error).message}`);
+			this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 		}
 		if (this.workspace?.name === from) this.workspace = { ...this.workspace, name: to };
 		this.changed();
@@ -399,7 +399,7 @@ export class App {
 			this.questions = questions;
 			this.session.rebuild();
 		} catch (err) {
-			if (client === this.client) this.flash(`${this.workspace?.name}: ${(err as Error).message}`);
+			if (client === this.client) this.flash(`✗ ${this.workspace?.name}: ${(err as Error).message}`);
 		}
 		this.changed();
 	}
@@ -426,7 +426,7 @@ export class App {
 			try {
 				setLastSession(this.statePath, this.workspace.name, id);
 			} catch (err) {
-				this.flash(`saving ${this.statePath}: ${(err as Error).message}`);
+				this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 			}
 		}
 	}
@@ -512,7 +512,7 @@ export class App {
 			const sessions = await this.latest(client, () => client.sessions(), this.sessionsSeq);
 			if (sessions && client === this.client) this.sessions = sessions;
 		} catch (err) {
-			this.flash((err as Error).message);
+			this.flash(`✗ ${(err as Error).message}`);
 		}
 		this.changed();
 	}
@@ -575,7 +575,7 @@ export class App {
 				this.changed();
 			},
 			done: (message) => {
-				inner.done(message === undefined ? undefined : cleanStatusText(message));
+				inner.done(message === undefined ? undefined : typeof message === "string" ? cleanStatusText(message) : { ...message, text: cleanStatusText(message.text) });
 				this.changed();
 				this.scheduleSlotExpiry();
 			},
