@@ -399,12 +399,20 @@ export class App {
 		this.changed();
 	}
 
-	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc/← walks back up to the workspace picker); once per connection, never over a modal. */
+	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc/← walks back up to the workspace picker); once per connection, never over a modal (it is retried when the modals close and when a flow ends: see `retryInitial`). */
 	openInitial(): void {
 		if (this.initialOpened === this.generation || this.session.target || this.modals.length > 0) return;
 		if (!this.client || !this.whoami || !this.workspace) return;
 		this.initialOpened = this.generation;
 		this.guard(() => showSessions(this));
+	}
+
+	/** Try `openInitial` again once the current tick's flow had its chance to open the next dialog; only when nothing is open or running. */
+	private retryInitial(): void {
+		setTimeout(() => {
+			if (this.stopped || this.modals.length > 0 || this.flowActive) return;
+			this.openInitial();
+		}, 0);
 	}
 
 	/** The session last opened on the connected workspace (state.json), for default cursors. */
@@ -695,14 +703,26 @@ export class App {
 		}
 	}
 
+	/** Nothing typed and nothing attached: Esc / Ctrl+C / Ctrl+D then act on the session instead of the composer. */
+	private composerEmpty(): boolean {
+		const composer = this.session.composer;
+		return composer.getText() === "" && composer.stagedImages().length === 0;
+	}
+
+	/** Empty the composer: the text and the staged image attachments. */
+	private clearComposer(): void {
+		const composer = this.session.composer;
+		composer.setText("");
+		composer.unstage(composer.stagedImages());
+	}
+
 	/** `Ctrl+C`: closes the top dialog or clears the composer (and disarms the quit gate); only a press with nothing to do arms it, and a second such press within the window quits. */
 	private interrupt(): void {
-		const composer = this.session.composer;
 		const top = this.modals.at(-1);
-		const action = routeInterrupt({ modalOpen: top !== undefined, composerEmpty: composer.getText() === "" });
+		const action = routeInterrupt({ modalOpen: top !== undefined, composerEmpty: this.composerEmpty() });
 		const quit = this.quitGate.press(Date.now(), action.arm);
 		if (action.type === "closeModal") top?.cancel();
-		else if (action.type === "clearComposer") composer.setText("");
+		else if (action.type === "clearComposer") this.clearComposer();
 		else if (quit) this.quit();
 		else this.flash("Ctrl+C again to quit", QUIT_WINDOW_MS);
 	}
@@ -715,7 +735,7 @@ export class App {
 			modalOpen: this.modals.length > 0,
 			selecting: s.transcript.selecting,
 			autocompleteOpen: composer.isShowingAutocomplete(),
-			composerEmpty: composer.getText() === "",
+			composerEmpty: this.composerEmpty(),
 			hasStagedImages: composer.stagedImages().length > 0,
 			workerView: s.target?.worker !== undefined,
 			state: s.state(),
@@ -755,7 +775,7 @@ export class App {
 				return this.do("answering the question", () => s.answerQuestion(question, answer));
 			}
 			case "clearComposer":
-				composer.setText("");
+				this.clearComposer();
 				return true;
 			case "backToParent":
 				if (s.target?.worker) this.openSession(s.target.worker.parent.id);
@@ -846,6 +866,7 @@ export class App {
 			if (epoch === this.flowEpoch) {
 				this.flowActive = false;
 				this.flowName = undefined;
+				this.retryInitial();
 			}
 		}
 	}
@@ -1024,7 +1045,10 @@ export class App {
 		return () => {
 			handle.hide();
 			this.modals = this.modals.filter((m) => m.handle !== handle);
-			if (this.modals.length === 0) this.tui.setFocus(this.session.composer);
+			if (this.modals.length === 0) {
+				this.tui.setFocus(this.session.composer);
+				this.retryInitial();
+			}
 			this.tui.requestRender();
 		};
 	}
