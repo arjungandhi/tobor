@@ -33,7 +33,7 @@ import type {
 	SessionSummary,
 	WhoamiResponse,
 } from "../api/types.js";
-import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
+import { ApiClient, ApiRequestError, ReconnectingSocket, type SocketState } from "./client.js";
 import { commandRows } from "./command-rows.js";
 import { Band } from "./components/band.js";
 import { FLASH_MS, type Progress, type Severity, severityOf, StatusLine, StatusSlot } from "./components/status.js";
@@ -223,6 +223,11 @@ export class App {
 	/** Fetch/event counters per shared list: a fetch is applied only if nothing newer started or happened meanwhile. */
 	private readonly sessionsSeq = { fetch: 0, event: 0 };
 	private readonly approvalsSeq = { fetch: 0, event: 0 };
+	private readonly questionsSeq = { fetch: 0, event: 0 };
+	/** The last questions fetch failed (the previous list was kept). */
+	private questionsFailing = false;
+	/** The questions fetch failure was already flashed (reset on the next success: one flash per outage). */
+	private questionsErrorShown = false;
 	/** The UI is up (set at the end of `begin`): from then on a stray promise rejection is shown, not fatal. */
 	private started = false;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
@@ -335,6 +340,8 @@ export class App {
 		this.sessions = [];
 		this.approvals = [];
 		this.questions = [];
+		this.questionsFailing = false;
+		this.questionsErrorShown = false;
 		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
 		this.events = new ReconnectingSocket<EventsFrame>({
@@ -432,19 +439,18 @@ export class App {
 		const client = this.client;
 		if (!client) return;
 		try {
-			// A node without `ask_user` support has no /api/questions; treat that as no questions.
 			const [whoami, sessions, approvals, questions] = await Promise.all([
 				client.whoami(),
 				this.latest(client, () => client.sessions(), this.sessionsSeq),
 				this.latest(client, () => client.approvals(), this.approvalsSeq),
-				client.questions().catch(() => []),
+				this.fetchQuestions(client),
 			]);
 			if (client !== this.client) return;
 			this.whoami = whoami;
 			this.whoamiAt = Date.now();
 			if (sessions) this.sessions = sessions;
 			if (approvals) this.approvals = approvals;
-			this.questions = questions;
+			if (questions) this.questions = questions;
 			this.session.rebuild();
 		} catch (err) {
 			if (client === this.client) this.flash(`✗ ${this.workspace?.name}: ${(err as Error).message}`);
@@ -463,6 +469,38 @@ export class App {
 			const value = await fetch();
 			if (mine !== seq.fetch || client !== this.client) return undefined;
 			if (events === seq.event || attempt >= 2) return value;
+		}
+	}
+
+	/**
+	 * Fetch the pending questions through the staleness guard. Undefined means "keep the current list": the result is
+	 * stale, or the fetch failed (flashed once per outage, never turned into "no questions"). A node without `ask_user`
+	 * support has no /api/questions (404): that is no questions.
+	 */
+	private async fetchQuestions(client: ApiClient): Promise<PendingQuestion[] | undefined> {
+		try {
+			const questions = await this.latest(
+				client,
+				() =>
+					client.questions().catch((err: unknown) => {
+						if (err instanceof ApiRequestError && err.status === 404) return [];
+						throw err;
+					}),
+				this.questionsSeq,
+			);
+			if (questions && client === this.client) {
+				this.questionsFailing = false;
+				this.questionsErrorShown = false;
+			}
+			return questions;
+		} catch (err) {
+			if (client !== this.client) return undefined;
+			this.questionsFailing = true;
+			if (!this.questionsErrorShown) {
+				this.questionsErrorShown = true;
+				this.flash(`✗ questions: ${(err as Error).message}`);
+			}
+			return undefined;
 		}
 	}
 
@@ -509,6 +547,7 @@ export class App {
 				this.session.rebuild();
 				break;
 			case "question.asked": {
+				this.questionsSeq.event++;
 				const { question } = event;
 				if (!this.questions.some((q) => q.callId === question.callId && q.conversationId === question.conversationId)) {
 					this.questions = [...this.questions, question];
@@ -520,6 +559,7 @@ export class App {
 				break;
 			}
 			case "question.answered":
+				this.questionsSeq.event++;
 				this.questions = this.questions.filter((q) => !(q.callId === event.callId && q.conversationId === event.conversationId));
 				this.session.rebuild();
 				break;
@@ -576,12 +616,12 @@ export class App {
 		this.changed();
 	}
 
-	/** Refetch pending questions only. */
+	/** Refetch pending questions only. Never throws: a failure keeps the current list and is flashed once. */
 	async refreshQuestions(): Promise<void> {
 		const client = this.client;
 		if (!client) return;
-		const questions = await client.questions();
-		if (client !== this.client) return;
+		const questions = await this.fetchQuestions(client);
+		if (!questions || client !== this.client) return;
 		this.questions = questions;
 		this.session.rebuild();
 		this.changed();
