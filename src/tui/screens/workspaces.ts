@@ -33,6 +33,8 @@ function whoamiLines(w: WhoamiResponse | undefined, ws: Workspace): string[] {
 
 /** How long the first show waits for probes before painting the rows (answers from nodes on this machine arrive well within it). */
 const PROBE_HEAD_START_MS = 200;
+/** How long `g` waits for every probe to finish: the 1.5 s probe timeout plus a margin, so each row ends up reachable or unreachable. */
+const PROBE_SETTLE_MS = 2000;
 
 /**
  * The workspace list with reachability (each probed via `/api/whoami`, 1.5 s timeout). `switch` (startup picker,
@@ -41,7 +43,7 @@ const PROBE_HEAD_START_MS = 200;
  * sessions list (connecting first when it is not the connected one), Esc/← closes the picker (back to the open session, if any).
  *
  * The rows paint at once: probes run in the background and are cached for the life of the picker, so a row still
- * waiting shows "probing…" until the list is next shown (any action, or `g`, which also probes everything again).
+ * (The `g` refresh waits for its probes to finish, so every row has a real state afterwards.)
  * An empty list is shown as such (`a add`); it never opens the add wizard by itself.
  */
 export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string): Promise<void> {
@@ -63,16 +65,17 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 			);
 		}
 	};
-	const headStart = async (): Promise<void> => {
+	/** Wait for the in-flight probes, at most `ms`; the probes still running after that keep showing "probing…". */
+	const waitProbes = async (ms: number): Promise<void> => {
 		if (pending.length === 0) return;
-		await Promise.race([Promise.all(pending), new Promise((resolve) => setTimeout(resolve, PROBE_HEAD_START_MS))]);
+		await Promise.race([Promise.all(pending), new Promise((resolve) => setTimeout(resolve, ms))]);
 		pending = [];
 	};
 	await navigate<string>(app, {
 		view: async () => {
 			const config = app.config;
 			startProbes(false);
-			await headStart();
+			await waitProbes(PROBE_HEAD_START_MS);
 			const current = app.workspace;
 			return {
 				title: mode === "switch" ? "workspaces" : "manage workspaces",
@@ -96,6 +99,7 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 			if (picked.key === "left") return "close";
 			if (picked.key === "g") {
 				startProbes(true);
+				await waitProbes(PROBE_SETTLE_MS);
 				return "refresh";
 			}
 			if (picked.key === "a") {

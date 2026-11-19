@@ -380,7 +380,6 @@ export class App {
 		this.questionsErrorShown = false;
 		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
-		let firstOpen = true;
 		this.events = new ReconnectingSocket<EventsFrame>({
 			url: () => client.eventsUrl(),
 			onFrame: (frame) => {
@@ -390,11 +389,9 @@ export class App {
 			},
 			onOpen: () => {
 				if (generation !== this.generation) return;
-				// connect() already started this connection's first refresh; every later open is a reconnect (events were lost).
-				if (firstOpen) {
-					firstOpen = false;
-					return;
-				}
+				// Refresh on EVERY open, the first included: events published between connect()'s initial HTTP refresh and
+				// the socket actually opening reach nobody, and the 60s poll is idle while approvals/questions are empty.
+				// A refresh that overlaps one already running is harmless (the seq guards drop the stale result).
 				void this.refresh();
 			},
 			onError: (message) => {
