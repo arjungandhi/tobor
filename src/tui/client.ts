@@ -54,6 +54,32 @@ export class ApiRequestError extends Error {
 	}
 }
 
+/**
+ * A request that failed before an HTTP response arrived (timeout, abort, network error). Deliberately not an
+ * `ApiRequestError`: callers treat those as "the server answered with a status". `name` and `cause` are kept from
+ * the original error so `TimeoutError`/`AbortError` checks still work.
+ */
+export class RequestFailedError extends Error {
+	constructor(message: string, cause: unknown) {
+		super(message, { cause });
+		this.name = cause instanceof Error ? cause.name : "RequestFailedError";
+	}
+}
+
+/** Wrap a fetch failure as `METHOD path: <message>`. */
+export function wrapRequestError(method: string, path: string, err: unknown, timeoutMs?: number): RequestFailedError {
+	const name = err instanceof Error ? err.name : "";
+	let message: string;
+	if (name === "TimeoutError") message = `timed out${timeoutMs === undefined ? "" : ` after ${Math.round(timeoutMs / 1000)}s`}`;
+	else if (name === "AbortError") message = "aborted";
+	else {
+		message = err instanceof Error ? err.message : String(err);
+		const cause = err instanceof Error ? err.cause : undefined;
+		if (cause instanceof Error && cause.message && !message.includes(cause.message)) message += ` (${cause.message})`;
+	}
+	return new RequestFailedError(`${method} ${path}: ${message}`, err);
+}
+
 /** Request timeout when the body carries image attachments (up to 8 × 5 MB). */
 const UPLOAD_TIMEOUT_MS = 120_000;
 
@@ -67,13 +93,19 @@ export class ApiClient {
 		const headers: Record<string, string> = { accept: "application/json" };
 		const payload = body === undefined ? (method === "GET" ? undefined : "{}") : JSON.stringify(body);
 		if (payload !== undefined) headers["content-type"] = "application/json";
-		const res = await fetch(`${this.base}${path}`, {
-			method,
-			headers,
-			body: payload,
-			signal: AbortSignal.timeout(timeoutMs),
-		});
-		const text = await res.text();
+		let res: Response;
+		let text: string;
+		try {
+			res = await fetch(`${this.base}${path}`, {
+				method,
+				headers,
+				body: payload,
+				signal: AbortSignal.timeout(timeoutMs),
+			});
+			text = await res.text();
+		} catch (err) {
+			throw wrapRequestError(method, path, err, timeoutMs);
+		}
 		let data: unknown;
 		let parseFailed = false;
 		try {
