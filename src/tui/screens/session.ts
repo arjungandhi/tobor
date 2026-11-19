@@ -198,8 +198,11 @@ export class AbortWatch {
 	}
 }
 
-/** A sent message awaiting the watch: `seen` is how many identical user/queued blocks already existed when it was sent. */
-export type PendingEcho = { requestId: string; text: string; images: ImagePart[]; seen: number };
+/** An echo that is still unsettled this long after it was sent is dropped (a deduped retry or matching history never settles it). */
+export const ECHO_TTL_MS = 30_000;
+
+/** A sent message awaiting the watch: `seen` is how many identical user/queued blocks already existed when it was sent; `sentAt` is `Date.now()` then. */
+export type PendingEcho = { requestId: string; text: string; images: ImagePart[]; seen: number; sentAt: number };
 
 const sameText = (a: string, b: string): boolean => a.trim() === b.trim();
 
@@ -211,11 +214,12 @@ export function countUserBlocks(blocks: readonly Block[], text: string): number 
 /**
  * The echoes still pending against `blocks`: one is settled (dropped) once more identical user/queued blocks exist than
  * when it was sent, so the real block never shows next to its echo. The server does not return the requestId in entries,
- * hence the text match.
+ * hence the text match. An echo older than `ECHO_TTL_MS` (at `now`) is dropped too.
  */
-export function pendingEchoes(blocks: readonly Block[], echoes: readonly PendingEcho[]): PendingEcho[] {
+export function pendingEchoes(blocks: readonly Block[], echoes: readonly PendingEcho[], now = Date.now()): PendingEcho[] {
 	const counts = new Map<string, number>();
 	return echoes.filter((echo) => {
+		if (now - echo.sentAt >= ECHO_TTL_MS) return false;
 		const have = counts.get(echo.text) ?? countUserBlocks(blocks, echo.text);
 		counts.set(echo.text, have);
 		return have <= echo.seen;
@@ -277,6 +281,8 @@ export class SessionScreen {
 	private workerStamp = new Map<string, number>();
 	/** Sent messages the watch has not delivered yet (shown as local echoes at the transcript end). */
 	private echoes: PendingEcho[] = [];
+	/** Fires when the oldest echo reaches its TTL, so it goes away without waiting for a frame. */
+	private echoTimer: ReturnType<typeof setTimeout> | undefined;
 	private earlierRetry = new RetryGate();
 	private readonly abortWatch = new AbortWatch();
 	/** Output arrived while the view was scrolled up (cleared on return to the end). */
@@ -333,7 +339,14 @@ export class SessionScreen {
 			url: () => client.watchUrl(id, replica.resume),
 			onFrame: (frame) => this.onFrame(replica, frame),
 			onOpen: (reconnect) => {
-				if (reconnect) void this.app.refresh();
+				if (reconnect) {
+					// The snapshot that follows reflects everything the server has: no echo may outlive it.
+					if (replica === this.replica && this.echoes.length > 0) {
+						this.echoes = [];
+						this.rebuild();
+					}
+					void this.app.refresh();
+				}
 				void this.refreshWorkers();
 			},
 			onError: (message) => {
@@ -383,6 +396,8 @@ export class SessionScreen {
 		this.workersFetch++;
 		this.workerStamp.clear();
 		this.echoes = [];
+		clearTimeout(this.echoTimer);
+		this.echoTimer = undefined;
 		this.dirtyFrom = undefined;
 		this.newOutput = false;
 		this.followBeforeSelect = true;
@@ -404,6 +419,7 @@ export class SessionScreen {
 		switch (frame.t) {
 			case "snapshot":
 				replica.snapshot(frame.value);
+				this.echoes = [];
 				this.transcript.setEmptyText("empty conversation");
 				break;
 			case "ops":
@@ -457,8 +473,23 @@ export class SessionScreen {
 		const blocks = this.derive();
 		if (!blocks) return;
 		this.echoes = pendingEchoes(blocks, this.echoes);
+		this.scheduleEchoExpiry();
 		this.transcript.update([...blocks, ...this.echoes.map(echoBlock)]);
 		this.strip.update(this.workers, this.todo());
+	}
+
+	/** Re-arm the timer for the oldest echo's expiry (none when no echo is pending). */
+	private scheduleEchoExpiry(): void {
+		clearTimeout(this.echoTimer);
+		this.echoTimer = undefined;
+		if (this.echoes.length === 0) return;
+		const oldest = Math.min(...this.echoes.map((e) => e.sentAt));
+		this.echoTimer = setTimeout(() => {
+			this.echoTimer = undefined;
+			this.rebuild();
+			this.app.changed();
+		}, Math.max(0, oldest + ECHO_TTL_MS - Date.now()) + 1);
+		this.echoTimer.unref?.();
 	}
 
 	private derive(): Block[] | undefined {
@@ -747,7 +778,7 @@ export class SessionScreen {
 		if (!blocks) return;
 		this.echoes = this.echoes.filter((e) => e.requestId !== requestId);
 		const earlier = this.echoes.filter((e) => e.text === text).length;
-		this.echoes.push({ requestId, text, images: images.map((i) => ({ data: i.attachment.data, mimeType: i.attachment.mimeType })), seen: countUserBlocks(blocks, text) + earlier });
+		this.echoes.push({ requestId, text, images: images.map((i) => ({ data: i.attachment.data, mimeType: i.attachment.mimeType })), seen: countUserBlocks(blocks, text) + earlier, sentAt: Date.now() });
 		this.rebuild();
 		this.app.changed();
 	}
