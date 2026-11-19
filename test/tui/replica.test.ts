@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import type { Op } from "@earendil-works/chord/delta";
-import type { EntryRecord } from "@earendil-works/pi-durable";
+import type { EntryRecord, TranscriptItem } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import type { WatchValue } from "../../src/api/types.js";
-import { type Block, ConversationReplica, deriveBlocks, type EntriesFetcher, usageOf } from "../../src/tui/replica.js";
+import { type Block, BlockDeriver, ConversationReplica, deriveBlocks, type EntriesFetcher, usageOf } from "../../src/tui/replica.js";
 import { APPROVAL_CALL, approvedOps, FINAL_ANSWER, initialView, streamingOps } from "./scenario.js";
 
 type Fixture = { initial: WatchValue; ops: Op[][]; final: WatchValue };
@@ -253,5 +253,89 @@ describe("replica over constructed ops", () => {
 			{ kind: "queued", key: "q:22", text: "X", mode: "steer" },
 			{ kind: "queued", key: "q:23", text: "Y", mode: "followUp" },
 		]);
+	});
+});
+
+describe("incremental block derivation", () => {
+	const entry = (id: number, kind: string, message: unknown): TranscriptItem => ({ kind: "entry", entry: { kind, id, conversationId: 1, model: [message] } as unknown as EntryRecord });
+	const user = (id: number, text: string) => entry(id, "pi.user", { role: "user", content: text, timestamp: 1 });
+	const call = (id: number, callId: string) =>
+		entry(id, "pi.assistant", { role: "assistant", content: [{ type: "toolCall", id: callId, name: "bash", arguments: { cmd: "ls" } }], stopReason: "toolUse" });
+	const result = (id: number, callId: string, text: string) =>
+		entry(id, "pi.tool-result", { role: "toolResult", toolCallId: callId, toolName: "bash", content: [{ type: "text", text }], isError: false });
+
+	it("reuses the blocks of unchanged entries when items only grow at the end", () => {
+		const d = new BlockDeriver();
+		const items = [user(1, "one"), user(2, "two")];
+		const first = d.derive(items, undefined);
+		const three = user(3, "three");
+		const second = d.derive([...items, three], undefined);
+		expect(second.map((b) => b.key)).toEqual(["u:1", "u:2", "u:3"]);
+		expect(second[0]).toBe(first[0]);
+		expect(second[1]).toBe(first[1]);
+		// Same items again: the blocks are still the cached ones, in a fresh array.
+		const again = d.derive([...items, three], undefined);
+		expect(again).not.toBe(second);
+		expect(again[0]).toBe(first[0]);
+		expect(again[2]).toBe(second[2]);
+	});
+
+	it("matches the one-shot derivation", () => {
+		const items = [user(1, "go"), call(2, "c1"), result(3, "c1", "out"), user(4, "next")];
+		const d = new BlockDeriver();
+		d.derive(items.slice(0, 2), undefined);
+		expect(d.derive(items, undefined)).toEqual(deriveBlocks(items, undefined));
+	});
+
+	it("replaces a tool block when its result lands, without touching blocks already handed out", () => {
+		const d = new BlockDeriver();
+		const items = [user(1, "go"), call(2, "c1")];
+		const before = d.derive(items, undefined);
+		const tool = before[1] as Extract<Block, { kind: "tool" }>;
+		expect(tool).toMatchObject({ status: "pending", output: "" });
+		const after = d.derive([...items, result(3, "c1", "done!")], undefined);
+		expect(after[0]).toBe(before[0]);
+		expect(after[1]).not.toBe(before[1]);
+		expect(after[1]).toMatchObject({ status: "done", output: "done!", args: { cmd: "ls" } });
+		expect(tool).toMatchObject({ status: "pending", output: "" });
+	});
+
+	it("keeps committed blocks untouched by approval and live overlays", () => {
+		const d = new BlockDeriver();
+		const items = [call(1, "c1")];
+		const plain = d.derive(items, undefined);
+		const approving = d.derive(items, undefined, new Set(["c1"]));
+		expect(approving[0]).toMatchObject({ status: "approval" });
+		expect(d.derive(items, undefined)[0]).toBe(plain[0]);
+		expect(plain[0]).toMatchObject({ status: "pending" });
+	});
+
+	it("invalidates when an entry changes or the items are not an extension", () => {
+		const d = new BlockDeriver();
+		const a = [user(1, "one"), user(2, "two")];
+		const first = d.derive(a, undefined);
+		// Same ids, different entry object and text: re-derived.
+		const edited = d.derive([a[0] as TranscriptItem, user(2, "TWO")], undefined);
+		expect(edited[0]).toBe(first[0]);
+		expect(edited[1]).toMatchObject({ text: "TWO" });
+		// An entry inserted before existing ones (e.g. earlier history loaded): everything is rebuilt, the entry blocks reused.
+		const prepended = d.derive([user(0, "zero"), a[0] as TranscriptItem, a[1] as TranscriptItem], undefined);
+		expect(prepended.map((b) => b.key)).toEqual(["u:0", "u:1", "u:2"]);
+		expect(prepended[1]).toBe(first[0]);
+		expect(prepended[2]).toBe(first[1]);
+	});
+});
+
+describe("replica atomic updates", () => {
+	it("a merge that throws leaves value and items as they were", () => {
+		const replica = new ConversationReplica(noEntries);
+		const fx = loadFixture("bash-run");
+		replica.snapshot(fx.initial);
+		const view = replica.view;
+		const items = replica.items;
+		const bad = { ...fx.initial, entries: null } as unknown as WatchValue;
+		expect(() => replica.snapshot(bad)).toThrow();
+		expect(replica.view).toBe(view);
+		expect(replica.items).toBe(items);
 	});
 });
