@@ -234,6 +234,8 @@ export class SessionScreen {
 	replica: ConversationReplica | undefined;
 	workers: WorkerSummary[] = [];
 	watchState: SocketState = "closed";
+	/** Why the server ended the watch (terminal: no reconnect); cleared when the session is reopened or closed. */
+	watchEnded: string | undefined;
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
 	private loadingEarlier = false;
 	private answering = false;
@@ -355,6 +357,7 @@ export class SessionScreen {
 		this.newOutput = false;
 		this.strip.update([], undefined);
 		this.watchState = "closed";
+		this.watchEnded = undefined;
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
 		this.transcript.update([]);
 	}
@@ -377,11 +380,13 @@ export class SessionScreen {
 				}
 				break;
 			case "end":
+				// Terminal: the server will not resume this watch, so stop the socket (it would reconnect forever and flash each
+				// cycle). The transcript stays; opening the session again (no watch left) starts a fresh one.
+				this.watch?.close();
+				this.watch = undefined;
+				this.watchEnded = frame.reason;
 				this.app.flash(`watch ended: ${frame.reason}`);
-				if (/delet|not.found/i.test(frame.reason)) {
-					this.watch?.close();
-					this.watch = undefined;
-				}
+				this.transcript.setEmptyText(`○ watch ended: ${frame.reason} · Enter to reopen`);
 				break;
 			case "pong":
 				return;
