@@ -722,6 +722,8 @@ export class App {
 				return pickModel(this);
 			case "modelCycle":
 				return s.cycleModel();
+			case "pasteImage":
+				return s.pasteClipboard();
 			case "newSession":
 				return newSession(this);
 			case "sessions":

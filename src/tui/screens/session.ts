@@ -12,8 +12,9 @@ import type {
 	WorkerSummary,
 } from "../../api/types.js";
 import type { App } from "../app.js";
-import { loadImage, MAX_ATTACHMENTS } from "../attachments.js";
+import { clipboardImage, loadImage, MAX_ATTACHMENTS } from "../attachments.js";
 import { ReconnectingSocket, type SocketState } from "../client.js";
+import { readClipboard, stripPasteMarkers, WL_CLIPBOARD_HINT } from "../clipboard.js";
 import { Composer } from "../components/composer.js";
 import { QuestionPanel } from "../components/question-panel.js";
 import { Transcript } from "../components/transcript.js";
@@ -71,6 +72,8 @@ export class SessionScreen {
 	/** Stale guards for `refreshWorkers`: the latest fetch wins, and events newer than a fetch's start win over its result. */
 	private workersFetch = 0;
 	private eventSeq = 0;
+	/** Numbers the images pasted with Ctrl+V (`pasted-1.png`). */
+	private pasteSeq = 0;
 	private workerStamp = new Map<string, number>();
 
 	constructor(private readonly app: App) {
@@ -368,6 +371,29 @@ export class SessionScreen {
 		if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
 		this.composer.stage(image);
 		this.app.flash(`attached ${image.name} (${this.composer.stagedImages().length}/${MAX_ATTACHMENTS}) · sent with your next message`);
+		this.app.tui.requestRender();
+	}
+
+	/** Ctrl+V: stage the system clipboard's image; with no image, paste its text into the composer. */
+	async pasteClipboard(): Promise<void> {
+		if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
+		const { available, image: data, text, wlPasteMissing } = await readClipboard();
+		if (data) {
+			const image = clipboardImage(data, this.pasteSeq + 1);
+			if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
+			this.pasteSeq++;
+			this.composer.stage(image);
+			this.app.flash(`attached ${image.name} (${this.composer.stagedImages().length}/${MAX_ATTACHMENTS}) · sent with your next message`);
+			this.app.tui.requestRender();
+			return;
+		}
+		const pasted = text ? stripPasteMarkers(text) : "";
+		if (!pasted) {
+			if (!available) throw new Error(`clipboard: unavailable (no display · ${WL_CLIPBOARD_HINT})`);
+			throw new Error(wlPasteMissing ? `clipboard: no image or text (${WL_CLIPBOARD_HINT} to read the Wayland clipboard)` : "clipboard: no image or text");
+		}
+		// The same bracketed paste the terminal layer sends, so the Editor's paste handling applies (markers stripped so the text cannot end it early).
+		this.composer.handleInput(`\x1b[200~${pasted}\x1b[201~`);
 		this.app.tui.requestRender();
 	}
 

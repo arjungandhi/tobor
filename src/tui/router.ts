@@ -11,6 +11,7 @@ export type HotkeyName =
 	| "workerTranscript"
 	| "model"
 	| "modelCycle"
+	| "pasteImage"
 	| "newSession"
 	| "sessions"
 	| "workspaces"
@@ -84,6 +85,7 @@ const HOTKEYS: readonly (readonly [HotkeyName, (data: string) => boolean])[] = [
 	["workerTranscript", (d) => matchesKey(d, KEYS.workerTranscript)],
 	["model", (d) => matchesBinding(d, KEYS.model)],
 	["modelCycle", (d) => matchesBinding(d, KEYS.modelCycle)],
+	["pasteImage", (d) => matchesBinding(d, KEYS.pasteImage)],
 	["newSession", (d) => matchesKey(d, KEYS.newSession)],
 	["sessions", (d) => matchesKey(d, KEYS.sessions)],
 	["workspaces", (d) => matchesKey(d, KEYS.workspaces)],

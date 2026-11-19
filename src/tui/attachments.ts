@@ -1,5 +1,5 @@
-// Client-side image attachments: `/attach <path>` reads a local file, checks it and stages it on the composer until the
-// next message is sent. The node enforces the same limits (8 per message, 5 MB decoded each).
+// Client-side image attachments: `/attach <path>` reads a local file (Ctrl+V takes the system clipboard's image), checks it
+// and stages it on the composer until the next message is sent. The node enforces the same limits (8 per message, 5 MB decoded each).
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
@@ -63,4 +63,15 @@ export async function loadImage(input: string): Promise<StagedImage> {
 	const mimeType = sniffImage(data.subarray(0, 12));
 	if (!mimeType) throw new Error(`${name}: not a PNG, JPEG, GIF or WebP image`);
 	return { name, bytes: data.length, attachment: { type: "image", data: data.toString("base64"), mimeType } };
+}
+
+const EXTENSIONS: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+
+/** Validate image bytes from the system clipboard (Ctrl+V); `seq` numbers the generated name (`pasted-1.png`). Throws an Error with a user-facing message. */
+export function clipboardImage(data: Uint8Array, seq: number): StagedImage {
+	if (data.length === 0) throw new Error("clipboard: image is empty");
+	if (data.length > MAX_ATTACHMENT_BYTES) throw new Error(`clipboard: ${formatSize(data.length)} is over the ${formatSize(MAX_ATTACHMENT_BYTES)} limit`);
+	const mimeType = sniffImage(data.subarray(0, 12));
+	if (!mimeType) throw new Error("clipboard: not a PNG, JPEG, GIF or WebP image");
+	return { name: `pasted-${seq}.${EXTENSIONS[mimeType]}`, bytes: data.length, attachment: { type: "image", data: Buffer.from(data.buffer, data.byteOffset, data.length).toString("base64"), mimeType } };
 }
