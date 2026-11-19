@@ -148,6 +148,9 @@ export class Panel implements Component, Focusable {
 	}
 }
 
+/** Thrown by `App.exclusive` when another flow holds the lock; `App.guard` shows it as info, not as an error. */
+class BusyError extends Error {}
+
 /** Status text: no escape sequences or control characters, one line, at most 300 characters. */
 function cleanStatusText(message: string): string {
 	const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
@@ -773,7 +776,11 @@ export class App {
 
 	/** Run a screen flow, turning errors into a flash. */
 	guard(flow: () => Promise<unknown>): void {
-		flow().catch((err: unknown) => this.flash(`✗ ${(err as Error).message ?? String(err)}`));
+		flow().catch((err: unknown) => {
+			// Busy is not an error: show it as info, like the hotkey path does.
+			if (err instanceof BusyError) this.flash(err.message, FLASH_MS, "info");
+			else this.flash(`✗ ${(err as Error).message ?? String(err)}`);
+		});
 	}
 
 	/** Re-derive header, status and composer label, then render. */
@@ -846,7 +853,9 @@ export class App {
 
 	/** Empty the composer: the text and the staged image attachments. */
 	private clearComposer(): void {
+		const staged = this.session.composer.stagedImages().length;
 		this.session.composer.clearAll();
+		if (staged > 0) this.flash(`cleared ${staged} attachment${staged === 1 ? "" : "s"}`, FLASH_MS, "info");
 	}
 
 	/** `Ctrl+C`: closes the top dialog or clears the composer (and disarms the quit gate); only a press with nothing to do arms it, and a second such press within the window quits. */
@@ -985,7 +994,7 @@ export class App {
 
 	/** Run `flow` under the flow lock (modals open only after network calls, so `modals` alone is no guard); `label` names it in the busy message. Refuses while another holds the lock. */
 	private async exclusive(label: string, flow: () => Promise<unknown>): Promise<unknown> {
-		if (this.flowActive) throw new Error(busyMessage(this.flowName));
+		if (this.flowActive) throw new BusyError(busyMessage(this.flowName));
 		this.flowActive = true;
 		this.flowName = label;
 		const epoch = this.flowEpoch;
