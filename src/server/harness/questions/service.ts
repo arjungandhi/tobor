@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import { type ConversationId, type Cursor, type Harness } from "@earendil-works/pi-durable";
-import type { PendingQuestion, SessionId } from "../../../api/types.js";
+import type { PendingQuestion, QuestionField, SessionId } from "../../../api/types.js";
 import type { Config } from "../../../config/schema.js";
 import { type QuestionAnswer, type QuestionRecord, QuestionsDoc, type QuestionsDocValue, SessionDoc } from "../../../docs.js";
 import type { EventBus } from "../../../events.js";
@@ -44,7 +44,7 @@ export class QuestionService implements QuestionServiceContract {
 
 	async ask(
 		conversationId: SessionId,
-		call: { callId: string; question: string; options?: string[] },
+		call: { callId: string; question: string; options?: string[]; fields?: QuestionField[] },
 		ctx: Context,
 	): Promise<AskResult> {
 		const harness = this.requireHarness();
@@ -62,6 +62,7 @@ export class QuestionService implements QuestionServiceContract {
 				conversationId,
 				question: call.question,
 				...(call.options?.length ? { options: [...call.options] } : {}),
+				...(call.fields?.length ? { fields: call.fields.map(copyField) } : {}),
 				createdAt,
 				expiresAt: createdAt + timeoutMs,
 				...(session?.worker ? { worker: session.worker.name } : {}),
@@ -104,7 +105,7 @@ export class QuestionService implements QuestionServiceContract {
 		return { kind: "cancelled" };
 	}
 
-	async answer(conversationId: SessionId, callId: string, text: string): Promise<void> {
+	async answer(conversationId: SessionId, callId: string, reply: { text?: string; answers?: string[] }): Promise<void> {
 		const harness = this.requireHarness();
 		const id = conversationId as ConversationId;
 		const existing = await harness.snapshot(QuestionsDoc, id, BACKGROUND_CONTEXT);
@@ -116,6 +117,7 @@ export class QuestionService implements QuestionServiceContract {
 			const record = doc.questions[callId];
 			if (!record) throw new HostError(404, "not_found", `no question ${callId} in conversation ${conversationId}`);
 			if (record.answer) throw new HostError(409, "conflict", `question ${callId} was already answered`);
+			const text = composeReply(record, reply);
 			record.answer = { text, decidedAt: this.now(), reason: "operator" };
 		}, BACKGROUND_CONTEXT);
 		this.options.events.emit({ type: "question.answered", conversationId, callId, outcome: "answered" });
@@ -207,7 +209,17 @@ export class QuestionService implements QuestionServiceContract {
 		const lines = [
 			`${title || `session ${question.sessionId}`}${question.worker ? ` (worker ${question.worker})` : ""} asks:`,
 			question.question,
-			...(question.options?.length ? ["", "Options:", ...question.options.map((o) => `- ${o}`)] : []),
+			...(question.fields?.length
+				? [
+						"",
+						...question.fields.flatMap((f) => [
+							`- ${f.prompt}`,
+							...(f.options?.length ? ["  Options:", ...f.options.map((o) => `  - ${o}`)] : []),
+						]),
+					]
+				: question.options?.length
+					? ["", "Options:", ...question.options.map((o) => `- ${o}`)]
+					: []),
 		];
 		await notifier.send({
 			event: "question",
@@ -229,6 +241,26 @@ function plain<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function copyField(f: QuestionField): QuestionField {
+	return { prompt: f.prompt, ...(f.options ? { options: [...f.options] } : {}) };
+}
+
+/** The stored answer text: free text as given, or one `"<prompt>: <answer>"` line per field. */
+function composeReply(record: QuestionRecord, reply: { text?: string; answers?: string[] }): string {
+	if ((reply.text === undefined) === (reply.answers === undefined)) {
+		throw new HostError(400, "invalid", "provide exactly one of text or answers");
+	}
+	if (reply.text !== undefined) return reply.text;
+	const answers = reply.answers!.map((a) => a.trim());
+	const fields = record.fields;
+	if (!fields?.length) throw new HostError(400, "invalid", `question ${record.callId} has no fields; answer with text`);
+	if (answers.length !== fields.length) {
+		throw new HostError(400, "invalid", `expected ${fields.length} answers, got ${answers.length}`);
+	}
+	if (answers.every((a) => a === "")) throw new HostError(400, "invalid", "at least one answer must be non-empty");
+	return fields.map((f, i) => `${f.prompt}: ${answers[i] || "(skipped)"}`).join("\n");
+}
+
 function toResult(answer: QuestionAnswer | undefined): AskResult {
 	if (answer?.reason === "operator") return { kind: "answered", text: answer.text };
 	return { kind: answer?.reason === "cancelled" ? "cancelled" : "timeout" };
@@ -242,6 +274,7 @@ function toPending(r: QuestionRecord, parentId: number | undefined): PendingQues
 		callId: r.callId,
 		question: r.question,
 		...(r.options ? { options: [...r.options] } : {}),
+		...(r.fields ? { fields: r.fields.map(copyField) } : {}),
 		createdAt: r.createdAt,
 		expiresAt: r.expiresAt,
 	};

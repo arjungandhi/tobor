@@ -2,7 +2,7 @@ import { BACKGROUND_CONTEXT, withCancel } from "@earendil-works/chord/context";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { createRegistry, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { NodeEventType } from "../../src/api/types.js";
+import type { NodeEventType, QuestionField } from "../../src/api/types.js";
 import { validateConfig } from "../../src/config/load.js";
 import { QuestionsDoc, SessionDoc, type WorkerIdentity } from "../../src/docs.js";
 import { EventBus, type EventOf } from "../../src/events.js";
@@ -88,7 +88,7 @@ afterEach(async () => {
 	for (const harness of open.splice(0)) await harness.close(ctx);
 });
 
-const call = (callId: string, extra: { options?: string[] } = {}) => ({ callId, question: "Which database?", ...extra });
+const call = (callId: string, extra: { options?: string[]; fields?: QuestionField[] } = {}) => ({ callId, question: "Which database?", ...extra });
 
 describe("QuestionService.ask", () => {
 	it("blocks until the operator answers; a second answer is 409", async () => {
@@ -102,12 +102,12 @@ describe("QuestionService.ask", () => {
 		expect(await s.questions.pending()).toEqual([question]);
 		expect(await s.questions.find("q1")).toEqual(question);
 		const answered = s.next("question.answered");
-		await s.questions.answer(c.id, "q1", "postgres");
+		await s.questions.answer(c.id, "q1", { text: "postgres" });
 		expect(await ask).toEqual({ kind: "answered", text: "postgres" });
 		expect(await answered).toMatchObject({ callId: "q1", outcome: "answered" });
 		expect(await s.questions.pending()).toEqual([]);
-		await expect(s.questions.answer(c.id, "q1", "x")).rejects.toMatchObject({ status: 409 });
-		await expect(s.questions.answer(c.id, "nope", "x")).rejects.toMatchObject({ status: 404 });
+		await expect(s.questions.answer(c.id, "q1", { text: "x" })).rejects.toMatchObject({ status: 409 });
+		await expect(s.questions.answer(c.id, "nope", { text: "x" })).rejects.toMatchObject({ status: 404 });
 		// a rerun of the same call finds the stored answer without asking again
 		const seen: NodeEventType[] = [];
 		s.events.onAny((e) => seen.push(e.type));
@@ -121,7 +121,7 @@ describe("QuestionService.ask", () => {
 		const asked = s.next("question.asked");
 		const ask = s.questions.ask(c.id, { callId: "q1", question: "x".repeat(100), options: ["a", "b"] }, ctx);
 		await asked;
-		await s.questions.answer(c.id, "q1", "a");
+		await s.questions.answer(c.id, "q1", { text: "a" });
 		await ask;
 		expect(s.sent).toHaveLength(1);
 		const [n] = s.sent;
@@ -138,7 +138,7 @@ describe("QuestionService.ask", () => {
 		const asked = s.next("question.asked");
 		const ask = s.questions.ask(c.id, call("q1"), ctx);
 		await asked;
-		await s.questions.answer(c.id, "q1", "ok");
+		await s.questions.answer(c.id, "q1", { text: "ok" });
 		await ask;
 		expect(s.sent).toEqual([]);
 	});
@@ -157,7 +157,7 @@ describe("QuestionService.ask", () => {
 		const doc = await s.harness.snapshot(QuestionsDoc, c.id, ctx);
 		expect(doc?.questions.q1?.answer).toMatchObject({ reason: "timeout" });
 		expect(await s.questions.pending()).toEqual([]);
-		await expect(s.questions.answer(c.id, "q1", "late")).rejects.toMatchObject({ status: 409 });
+		await expect(s.questions.answer(c.id, "q1", { text: "late" })).rejects.toMatchObject({ status: 409 });
 	});
 
 	it("cancellation unblocks the wait and drops the pending record", async () => {
@@ -197,7 +197,7 @@ describe("QuestionService.ask", () => {
 		s.events.onAny((e) => seen.push(e.type));
 		const ask = s.questions.ask(c.id, call("q1"), ctx);
 		expect((await s.questions.pending()).map((p) => p.createdAt)).toEqual([5]);
-		await s.questions.answer(c.id, "q1", "sqlite");
+		await s.questions.answer(c.id, "q1", { text: "sqlite" });
 		expect(await ask).toEqual({ kind: "answered", text: "sqlite" });
 		expect(seen).toEqual(["question.answered"]);
 	});
@@ -211,8 +211,59 @@ describe("QuestionService.ask", () => {
 		const { question } = await asked;
 		expect(question).toMatchObject({ conversationId: worker.id, sessionId: director.id, worker: "scout-a" });
 		expect(await s.questions.pendingFor(director.id)).toHaveLength(1);
-		await s.questions.answer(worker.id, "q9", "ok");
+		await s.questions.answer(worker.id, "q9", { text: "ok" });
 		await ask;
+	});
+});
+
+describe("QuestionService forms", () => {
+	const fields: QuestionField[] = [{ prompt: "Which database?", options: ["sqlite", "postgres"] }, { prompt: "Which port?" }];
+
+	it("stores and returns fields; answers[] composes the stored text", async () => {
+		const s = await setup();
+		const c = await s.conversation();
+		const asked = s.next("question.asked");
+		const ask = s.questions.ask(c.id, call("f1", { fields }), ctx);
+		const { question } = await asked;
+		expect(question.fields).toEqual(fields);
+		expect((await s.questions.pending())[0]?.fields).toEqual(fields);
+		expect((await s.harness.snapshot(QuestionsDoc, c.id, ctx))?.questions.f1?.fields).toEqual(fields);
+		await s.questions.answer(c.id, "f1", { answers: ["  postgres ", "   "] });
+		expect(await ask).toEqual({ kind: "answered", text: "Which database?: postgres\nWhich port?: (skipped)" });
+	});
+
+	it("notifies with each field and its options", async () => {
+		const s = await setup();
+		const c = await s.conversation();
+		const asked = s.next("question.asked");
+		const ask = s.questions.ask(c.id, call("f1", { fields }), ctx);
+		await asked;
+		await s.questions.answer(c.id, "f1", { answers: ["sqlite", ""] });
+		await ask;
+		const message = s.sent[0]?.message ?? "";
+		expect(message).toContain("- Which database?\n  Options:\n  - sqlite\n  - postgres\n- Which port?");
+	});
+
+	it("rejects mismatched, all-empty and answers on a plain question; the record stays pending", async () => {
+		const s = await setup();
+		const c = await s.conversation();
+		const asked = s.next("question.asked");
+		const ask = s.questions.ask(c.id, call("f1", { fields }), ctx);
+		await asked;
+		await expect(s.questions.answer(c.id, "f1", { answers: ["a"] })).rejects.toMatchObject({ status: 400 });
+		await expect(s.questions.answer(c.id, "f1", { answers: ["a", "b", "c"] })).rejects.toMatchObject({ status: 400 });
+		await expect(s.questions.answer(c.id, "f1", { answers: [" ", ""] })).rejects.toMatchObject({ status: 400 });
+		await expect(s.questions.answer(c.id, "f1", {})).rejects.toMatchObject({ status: 400 });
+		expect(await s.questions.pending()).toHaveLength(1);
+		const plainAsked = s.next("question.asked");
+		const plain = s.questions.ask(c.id, call("p1"), ctx);
+		await plainAsked;
+		await expect(s.questions.answer(c.id, "p1", { answers: ["a"] })).rejects.toMatchObject({ status: 400 });
+		await s.questions.answer(c.id, "p1", { text: "ok" });
+		await plain;
+		// a plain text answer is still valid on a form question
+		await s.questions.answer(c.id, "f1", { text: "sqlite on 5432" });
+		expect(await ask).toEqual({ kind: "answered", text: "sqlite on 5432" });
 	});
 });
 
@@ -237,8 +288,32 @@ describe("ask_user in a run", () => {
 	}
 
 	it("returns the operator's reply as the tool result", async () => {
-		const text = await runOnce((s, id) => void s.questions.answer(id, "call-1", "use sqlite"));
+		const text = await runOnce((s, id) => void s.questions.answer(id, "call-1", { text: "use sqlite" }));
 		expect(text).toContain("User replied:\nuse sqlite");
+	});
+
+	it("passes form fields through the tool and returns the composed reply", async () => {
+		const s = await setup();
+		s.script([
+			fauxAssistantMessage(
+				fauxToolCall(
+					"ask_user",
+					{ question: "Setup", fields: [{ prompt: "DB?", options: ["sqlite"] }, { prompt: "Port?" }] },
+					{ id: "call-2" },
+				),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+		const c = await s.conversation();
+		const asked = s.next("question.asked");
+		const submission = await c.submit({ type: "input", content: "build it" }, ctx);
+		const { question } = await asked;
+		expect(question.fields).toEqual([{ prompt: "DB?", options: ["sqlite"] }, { prompt: "Port?" }]);
+		await s.questions.answer(c.id, "call-2", { answers: ["sqlite", "80"] });
+		expect(await submission.wait(ctx)).toMatchObject({ status: "done" });
+		const page = await c.entries({ order: "ascending" }, 50, undefined, ctx);
+		expect(entryText(page.items.find((e) => e.kind === "pi.tool-result"))).toContain("User replied:\nDB?: sqlite\nPort?: 80");
 	});
 
 	it("tells the model to proceed on its own judgment after a timeout", async () => {

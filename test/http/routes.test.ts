@@ -180,7 +180,7 @@ describe("routes", () => {
 		});
 		expect((await http(port, "GET", "/api/questions")).body).toEqual([pending]);
 		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "sqlite" } })).body).toEqual({ ok: true });
-		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", "sqlite"] });
+		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", { text: "sqlite" }] });
 		expect(await http(port, "POST", "/api/questions/q1", { body: { answer: "x", conversationId: 4 } })).toMatchObject({
 			status: 409,
 			body: { code: "conflict" },
@@ -189,11 +189,32 @@ describe("routes", () => {
 		expect((await http(port, "POST", "/api/questions/q1", { body: {} })).status).toBe(400);
 		const blank = await http(port, "POST", "/api/questions/q1", { body: { answer: " \n\t " } });
 		expect(blank.status).toBe(400);
-		expect(blank.body).toEqual((await http(port, "POST", "/api/questions/q1", { body: {} })).body);
+		expect(blank.body).toMatchObject({ code: "invalid", error: "answer must be a non-empty string" });
 		expect(calls.filter((c) => c.method === "questions.answer")).toHaveLength(2);
 		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "  padded  ", conversationId: 4 } })).status).toBe(409);
-		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", "padded"] });
+		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", { text: "padded" }] });
 		expect((await http(port, "POST", "/api/questions/q1", { body: { answer: "x", conversationId: "4" } })).status).toBe(400);
+	});
+
+	it("question form answers: trimmed answers[], both/neither/invalid 400, service errors propagate", async () => {
+		const pending = { conversationId: 4, sessionId: 4, callId: "q1", question: "form", createdAt: 1, expiresAt: 2 };
+		const { port, calls } = await api({
+			"questions.find": pending,
+			"questions.answer": (_c: unknown, _id: unknown, reply: { answers?: string[] }) =>
+				reply.answers?.length === 2 ? Promise.resolve() : Promise.reject(new HostError(400, "invalid", "expected 2 answers")),
+		});
+		const post = (body: unknown) => http(port, "POST", "/api/questions/q1", { body });
+		expect((await post({ answers: [" a ", ""] })).body).toEqual({ ok: true });
+		expect(calls.at(-1)).toEqual({ method: "questions.answer", args: [4, "q1", { answers: ["a", ""] }] });
+		const before = calls.filter((c) => c.method === "questions.answer").length;
+		expect((await post({ answer: "x", answers: ["a", "b"] })).status).toBe(400);
+		expect((await post({})).status).toBe(400);
+		expect((await post({ answers: [] })).status).toBe(400);
+		expect((await post({ answers: "a" })).status).toBe(400);
+		expect((await post({ answers: ["a", 1] })).status).toBe(400);
+		expect((await post({ answers: [" ", ""] })).status).toBe(400);
+		expect(calls.filter((c) => c.method === "questions.answer")).toHaveLength(before);
+		expect(await post({ answers: ["only one"] })).toMatchObject({ status: 400, body: { code: "invalid", error: "expected 2 answers" } });
 	});
 
 	it("auth, models, cwds, mcp, agents, workers", async () => {
