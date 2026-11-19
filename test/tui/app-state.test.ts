@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PendingQuestion } from "../../src/api/types.js";
-import { App } from "../../src/tui/app.js";
+import { App, refreshRetryDelay } from "../../src/tui/app.js";
 import { ApiRequestError, type ApiClient } from "../../src/tui/client.js";
 
 type Seq = { fetch: number; event: number };
@@ -127,5 +127,119 @@ describe("questions never silently clear or resurrect", () => {
 		await refreshQuestions(self);
 		expect(self.questions).toEqual([]);
 		expect(self.flashes).toEqual([]);
+	});
+});
+
+describe("refresh retry backoff", () => {
+	it("doubles from 2s and caps at 30s", () => {
+		expect([0, 1, 2, 3, 4, 5, 20].map(refreshRetryDelay)).toEqual([2000, 4000, 8000, 16_000, 30_000, 30_000, 30_000]);
+	});
+});
+
+type RefreshFake = {
+	client: unknown;
+	stopped: boolean;
+	generation: number;
+	questionsFailing: boolean;
+	refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	refreshFailures: number;
+	refreshErrorShown: boolean;
+	whoami: unknown;
+	whoamiAt: number;
+	sessions: unknown[];
+	approvals: unknown[];
+	questions: unknown[];
+	sessionsSeq: Seq;
+	approvalsSeq: Seq;
+	questionsSeq: Seq;
+	flashes: string[];
+	workspace: { name: string };
+	[k: string]: unknown;
+};
+
+function refreshFake(client: unknown): RefreshFake {
+	const self: RefreshFake = {
+		client,
+		stopped: false,
+		generation: 1,
+		questionsFailing: false,
+		refreshTimer: undefined,
+		refreshFailures: 0,
+		refreshErrorShown: false,
+		whoami: undefined,
+		whoamiAt: 0,
+		sessions: [],
+		approvals: [],
+		questions: [],
+		sessionsSeq: { fetch: 0, event: 0 },
+		approvalsSeq: { fetch: 0, event: 0 },
+		questionsSeq: { fetch: 0, event: 0 },
+		questionsErrorShown: false,
+		flashes: [],
+		workspace: { name: "ws" },
+		flash: (m: string) => void self.flashes.push(m),
+		latest: proto.latest,
+		fetchQuestions: proto.fetchQuestions,
+		cancelRefreshRetry: proto.cancelRefreshRetry,
+		session: { rebuild() {} },
+		changed() {},
+		openInitial() {},
+	};
+	return self;
+}
+
+describe("refresh() retry", () => {
+	const refresh = (self: RefreshFake): Promise<void> => (proto.refresh as unknown as (this: RefreshFake) => Promise<void>).call(self);
+
+	it("a failed refresh flashes once, schedules a retry with growing backoff and stops after success", async () => {
+		let fail = true;
+		const client = {
+			whoami: async () => {
+				if (fail) throw new Error("down");
+				return { now: 1 };
+			},
+			sessions: async () => [],
+			approvals: async () => [],
+			questions: async () => [],
+		};
+		const self = refreshFake(client);
+		try {
+			await refresh(self);
+			expect(self.flashes).toEqual(["✗ ws: down"]);
+			expect(self.refreshTimer).toBeDefined();
+			expect(self.refreshFailures).toBe(1);
+			await refresh(self);
+			expect(self.flashes).toHaveLength(1); // not re-flashed on every retry
+			expect(self.refreshFailures).toBe(2);
+			fail = false;
+			await refresh(self);
+			expect(self.refreshTimer).toBeUndefined();
+			expect(self.refreshFailures).toBe(0);
+			expect(self.refreshErrorShown).toBe(false);
+			expect(self.whoami).toEqual({ now: 1 });
+		} finally {
+			clearTimeout(self.refreshTimer);
+		}
+	});
+
+	it("a questions fetch failure keeps the list, flashes once and is retried", async () => {
+		const client = {
+			whoami: async () => ({ now: 1 }),
+			sessions: async () => [],
+			approvals: async () => [],
+			questions: async () => {
+				throw new Error("boom");
+			},
+		};
+		const self = refreshFake(client);
+		self.questions = [q("a")];
+		try {
+			await refresh(self);
+			expect(self.questions).toEqual([q("a")]);
+			expect(self.flashes).toEqual(["✗ questions: boom"]);
+			expect(self.refreshTimer).toBeDefined();
+		} finally {
+			clearTimeout(self.refreshTimer);
+		}
 	});
 });

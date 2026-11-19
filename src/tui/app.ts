@@ -154,6 +154,11 @@ function cleanStatusText(message: string): string {
 }
 
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
+/** Backoff before retry number `failures` (0-based) of a failed refresh: 2s, 4s, 8s, … capped at 30s. */
+export function refreshRetryDelay(failures: number): number {
+	return Math.min(2000 * 2 ** Math.max(0, failures), 30_000);
+}
+
 const COMMAND_PREFIX = "cmd:";
 
 /** Set when a slash command is run from the sessions list: `sessionId` is the highlighted row (undefined on an empty list). */
@@ -228,6 +233,10 @@ export class App {
 	private questionsFailing = false;
 	/** The questions fetch failure was already flashed (reset on the next success: one flash per outage). */
 	private questionsErrorShown = false;
+	/** Pending retry of a failed `refresh`, the number of failures in a row (backoff step), and whether the failure was already flashed. */
+	private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	private refreshFailures = 0;
+	private refreshErrorShown = false;
 	/** The UI is up (set at the end of `begin`): from then on a stray promise rejection is shown, not fatal. */
 	private started = false;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
@@ -298,6 +307,7 @@ export class App {
 		if (this.stopped) return;
 		this.stopped = true;
 		clearTimeout(this.slotTimer);
+		this.cancelRefreshRetry();
 		this.events?.close();
 		this.session.close();
 		this.tui.setLayoutRoot(new VStack([]));
@@ -329,6 +339,9 @@ export class App {
 		this.generation++;
 		const generation = this.generation;
 		this.events?.close();
+		this.cancelRefreshRetry();
+		this.refreshFailures = 0;
+		this.refreshErrorShown = false;
 		this.session.close();
 		this.workspace = workspace;
 		this.whoami = undefined;
@@ -344,6 +357,7 @@ export class App {
 		this.questionsErrorShown = false;
 		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
+		let firstOpen = true;
 		this.events = new ReconnectingSocket<EventsFrame>({
 			url: () => client.eventsUrl(),
 			onFrame: (frame) => {
@@ -352,10 +366,13 @@ export class App {
 				else if (frame.t === "resync" && generation === this.generation) void this.refresh();
 			},
 			onOpen: () => {
-				// Always refetch: events between the initial HTTP refresh and the socket opening are lost.
-				void this.refresh().then(() => {
-					if (generation === this.generation) this.openInitial();
-				});
+				if (generation !== this.generation) return;
+				// connect() already started this connection's first refresh; every later open is a reconnect (events were lost).
+				if (firstOpen) {
+					firstOpen = false;
+					return;
+				}
+				void this.refresh();
 			},
 			onState: (state, detail) => {
 				if (generation !== this.generation) return; // the old connection's socket closing
@@ -381,9 +398,7 @@ export class App {
 			},
 		});
 		this.events.start();
-		void this.refresh().then(() => {
-			if (generation === this.generation) this.openInitial();
-		});
+		void this.refresh();
 		this.changed();
 	}
 
@@ -436,10 +451,20 @@ export class App {
 		return this.workspace ? lastSession(this.statePath, this.workspace.name) : undefined;
 	}
 
-	/** Refetch whoami, sessions, approvals and questions (on connect and after every reconnect; `/api/events` is lossy). */
+	private cancelRefreshRetry(): void {
+		clearTimeout(this.refreshTimer);
+		this.refreshTimer = undefined;
+	}
+
+	/**
+	 * Refetch whoami, sessions, approvals and questions (on connect, after every reconnect and on a `resync` frame;
+	 * `/api/events` is lossy). A failure is retried with capped backoff until one succeeds, and opens the initial view once it has.
+	 */
 	async refresh(): Promise<void> {
 		const client = this.client;
 		if (!client) return;
+		this.cancelRefreshRetry();
+		let failure: string | undefined;
 		try {
 			const [whoami, sessions, approvals, questions] = await Promise.all([
 				client.whoami(),
@@ -454,10 +479,25 @@ export class App {
 			if (approvals) this.approvals = approvals;
 			if (questions) this.questions = questions;
 			this.session.rebuild();
+			// A failed questions fetch kept the old list and flashed itself; the refresh still has to be retried.
+			if (this.questionsFailing) failure = "";
 		} catch (err) {
-			if (client === this.client) this.flash(`✗ ${this.workspace?.name}: ${(err as Error).message}`);
+			if (client !== this.client) return;
+			failure = `✗ ${this.workspace?.name}: ${(err as Error).message}`;
+		}
+		if (client !== this.client) return;
+		if (failure === undefined) {
+			this.refreshFailures = 0;
+			this.refreshErrorShown = false;
+		} else {
+			if (failure && !this.refreshErrorShown) {
+				this.refreshErrorShown = true;
+				this.flash(failure);
+			}
+			if (!this.stopped) this.refreshTimer = setTimeout(() => void this.refresh(), refreshRetryDelay(this.refreshFailures++));
 		}
 		this.changed();
+		this.openInitial();
 	}
 
 	/**
