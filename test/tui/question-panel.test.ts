@@ -83,7 +83,7 @@ describe("QuestionPanel", () => {
 	});
 
 	it("lists every field in the question card", () => {
-		const card = plain(questionCard({ sessions: [], whoami: undefined } as unknown as App, form));
+		const card = plain(questionCard({ sessions: [], whoami: undefined, now: () => Date.now() } as unknown as App, form));
 		expect(card).toContain("Set up the service");
 		expect(card).toContain("1. Which language?");
 		expect(card).toContain("3. Notes?");

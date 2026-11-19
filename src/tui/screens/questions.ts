@@ -16,7 +16,7 @@ function age(ms: number): string {
 
 /** The card shown for one question: where it came from, expiry, and the question text (a form lists its fields). */
 export function questionCard(app: App, q: PendingQuestion): string[] {
-	const now = app.whoami?.now ?? Date.now();
+	const now = app.now();
 	const fields = q.fields ?? [];
 	return [
 		c.dim(`${origin(app, q)} · asked ${age(now - q.createdAt)} ago · gives up in ${age(q.expiresAt - now)}`),
