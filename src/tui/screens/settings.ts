@@ -6,7 +6,7 @@ import { Panel } from "../app.js";
 import { ApiRequestError } from "../client.js";
 import { type Prefs, setPref } from "../workspaces.js";
 import { addWorkspace, showWorkspaces } from "./workspaces.js";
-import { type ConfigPath, editConfig, getField, modelOverrides, parseNodeConfig } from "../node-config.js";
+import { type ConfigPath, editConfig, getField, modelOverrides, parseNodeConfig, sessionDefaults } from "../node-config.js";
 import { c, selectListTheme } from "../theme.js";
 
 const UNSET = "(unset)";
@@ -110,7 +110,18 @@ export async function showSettings(app: App): Promise<void> {
 	let problems: string[] = [];
 	let note = "";
 
-	const display = (f: Field): string => getField(doc, f.path) ?? (f.kind.type === "model" ? UNSET : f.kind.type === "enum" ? c.dim("(default)") : UNSET);
+	/** What an unset enum field falls back to, where node-config knows it (thinking's built-in default lives only on the node). */
+	const builtin = (f: Field): string | undefined => {
+		const defaults = sessionDefaults(doc);
+		return f.path.join(".") === "defaults.approval_mode" ? defaults.approval_mode : f.path.join(".") === "defaults.mode" ? defaults.mode : undefined;
+	};
+	const display = (f: Field): string => {
+		const value = getField(doc, f.path);
+		if (value !== undefined) return value;
+		if (f.kind.type !== "enum") return UNSET;
+		const fallback = builtin(f);
+		return c.dim(fallback ? `(default: ${fallback})` : "(default)");
+	};
 	const rows = app.listRows(8);
 	const nodeItems: SettingItem[] = fields.map((f) => {
 		const id = f.path.join(".");
@@ -349,7 +360,7 @@ export async function showSettings(app: App): Promise<void> {
 	const panel = new Panel("settings", {
 		lines: panelLines(),
 		child: body,
-		hint: "type to search · Enter/Space change · Ctrl+S save node defaults · Esc clear/close",
+		hint: "type to search · Enter/Space change · Ctrl+S save node defaults · Esc back",
 		onKey: (data) => {
 			if (!matchesKey(data, "ctrl+s")) return false;
 			app.guard(save);
