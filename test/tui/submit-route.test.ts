@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DraftStore, RequestIds, routeSubmit, shorten } from "../../src/tui/screens/session.js";
+import { AbortWatch, DraftStore, RequestIds, RetryGate, routeSubmit, shorten } from "../../src/tui/screens/session.js";
 
 describe("routeSubmit", () => {
 	it("sends plain text as a prompt and slash text as a command when no question is pending", () => {
@@ -90,5 +90,52 @@ describe("shorten", () => {
 		const text = "😀".repeat(10);
 		expect(shorten(text, 5)).toBe(`${"😀".repeat(4)}…`);
 		expect(shorten("😀".repeat(5), 5)).toBe("😀".repeat(5));
+	});
+});
+
+describe("RetryGate", () => {
+	it("allows loads until one fails, then waits out the delay", () => {
+		const gate = new RetryGate(1000);
+		expect(gate.allows(0)).toBe(true);
+		gate.failed(100);
+		expect(gate.allows(200)).toBe(false);
+		expect(gate.allows(1100)).toBe(true);
+	});
+
+	it("allows a retry once the user scrolled away from the top, and failing again re-arms the wait", () => {
+		const gate = new RetryGate(1000);
+		gate.failed(0);
+		gate.scrolledAway();
+		expect(gate.allows(10)).toBe(true);
+		gate.failed(20);
+		expect(gate.allows(30)).toBe(false);
+	});
+
+	it("a successful load clears the wait", () => {
+		const gate = new RetryGate(1000);
+		gate.failed(0);
+		gate.ok();
+		expect(gate.allows(1)).toBe(true);
+	});
+});
+
+describe("AbortWatch", () => {
+	it("reports once when the run stops after an abort", () => {
+		const watch = new AbortWatch(1000);
+		watch.arm(0, true);
+		expect(watch.stopped(10, true)).toBe(false);
+		expect(watch.stopped(20, false)).toBe(true);
+		expect(watch.stopped(30, false)).toBe(false);
+	});
+
+	it("does nothing when nothing was running, after a failed abort, or when too late", () => {
+		const watch = new AbortWatch(1000);
+		watch.arm(0, false);
+		expect(watch.stopped(1, false)).toBe(false);
+		watch.arm(0, true);
+		watch.disarm();
+		expect(watch.stopped(1, false)).toBe(false);
+		watch.arm(0, true);
+		expect(watch.stopped(2000, false)).toBe(false);
 	});
 });

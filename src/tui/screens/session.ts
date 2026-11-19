@@ -25,18 +25,36 @@ import { startSession } from "./new-session.js";
 import { WorkersStrip } from "./workers.js";
 
 /** The transcript's primary scroll view; scrolling up into its top calls `onTop` (to load earlier history). */
-class TranscriptScroll extends ScrollView {
+export class TranscriptScroll extends ScrollView {
+	/** Rows prepended above the viewport that the next layout should scroll past, so the user stays where they were. */
+	private shift = 0;
+
 	constructor(
 		content: Component,
 		private readonly onTop: () => void,
+		private readonly onAway: () => void = () => {},
 	) {
 		super(content, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
 	}
 
 	override scrollBy(lines: number): number {
 		const remaining = super.scrollBy(lines);
-		if (lines < 0 && this.scrollTop === 0) this.onTop();
+		if (this.scrollTop > 0) this.onAway();
+		else if (lines < 0) this.onTop();
 		return remaining;
+	}
+
+	/** `rows` were added above the current content: keep the visible lines where they are (applied on the next layout, when the new height is known). */
+	keepPosition(rows: number): void {
+		this.shift = rows;
+	}
+
+	override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+		const shift = this.shift;
+		this.shift = 0;
+		const following = this.isFollowingEnd;
+		super.updateLayout(contentHeight, viewportHeight, requestRender);
+		if (shift > 0 && !following) this.scrollTo(this.scrollTop + shift, { disableFollow: true });
 	}
 
 	override scrollToStart(): void {
@@ -110,6 +128,64 @@ export function shorten(text: string, max: number): string {
 	return points.length > max ? `${points.slice(0, max - 1).join("")}…` : text;
 }
 
+/** Backs off a failing top-of-transcript history load: no retry until the user scrolls away from the top, or `delayMs` pass. */
+export class RetryGate {
+	private failedAt: number | undefined;
+	private away = false;
+
+	constructor(private readonly delayMs = 8000) {}
+
+	/** The load failed at `now`. */
+	failed(now: number): void {
+		this.failedAt = now;
+		this.away = false;
+	}
+
+	/** The load worked. */
+	ok(): void {
+		this.failedAt = undefined;
+	}
+
+	/** The user scrolled off the top. */
+	scrolledAway(): void {
+		this.away = true;
+	}
+
+	/** Whether a load may start at `now`. */
+	allows(now: number): boolean {
+		return this.failedAt === undefined || this.away || now - this.failedAt >= this.delayMs;
+	}
+}
+
+/** Notices when an aborted run actually stops (the abort request returns before the run does). */
+export class AbortWatch {
+	private at: number | undefined;
+
+	constructor(private readonly ttlMs = 30_000) {}
+
+	/** An abort was requested at `now`; only worth watching while the run is `running`. */
+	arm(now: number, running: boolean): void {
+		this.at = running ? now : undefined;
+	}
+
+	/** The abort request failed. */
+	disarm(): void {
+		this.at = undefined;
+	}
+
+	/** True once, the first time the run is seen stopped after `arm` (and not too long after). */
+	stopped(now: number, running: boolean): boolean {
+		if (this.at === undefined) return false;
+		if (now - this.at > this.ttlMs) {
+			this.at = undefined;
+			return false;
+		}
+		if (running) return false;
+		this.at = undefined;
+		return true;
+	}
+}
+
 /** A sent message awaiting the watch: `seen` is how many identical user/queued blocks already existed when it was sent. */
 export type PendingEcho = { requestId: string; text: string; images: ImagePart[]; seen: number };
 
@@ -173,6 +249,12 @@ export class SessionScreen {
 	private workerStamp = new Map<string, number>();
 	/** Sent messages the watch has not delivered yet (shown as local echoes at the transcript end). */
 	private echoes: PendingEcho[] = [];
+	private readonly earlierRetry = new RetryGate();
+	private readonly abortWatch = new AbortWatch();
+	/** Output arrived while the view was scrolled up (cleared on return to the end). */
+	private newOutput = false;
+	/** Whether the view was following the end when transcript navigation started, so leaving it can resume following. */
+	private followBeforeSelect = true;
 
 	constructor(private readonly app: App) {
 		this.composer = new Composer(app.tui, {
@@ -186,7 +268,15 @@ export class SessionScreen {
 			target: () => (!this.target ? { kind: "default" } : this.target.worker ? { kind: "none" } : { kind: "session", id: this.target.id }),
 		});
 		this.questions = new QuestionPanel(app, () => this.target);
-		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());
+		this.scroll = new TranscriptScroll(
+			this.transcript,
+			() => this.maybeLoadEarlier(),
+			() => this.earlierRetry.scrolledAway(),
+		);
+		this.composer.cue = () => {
+			if (this.scroll.isFollowingEnd) this.newOutput = false;
+			return this.newOutput ? "↓ new output" : "";
+		};
 		this.composer.onSubmit = (text) => this.submitted(text);
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
 	}
@@ -262,6 +352,7 @@ export class SessionScreen {
 		this.workersFetch++;
 		this.workerStamp.clear();
 		this.echoes = [];
+		this.newOutput = false;
 		this.strip.update([], undefined);
 		this.watchState = "closed";
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
@@ -270,6 +361,7 @@ export class SessionScreen {
 
 	private onFrame(replica: ConversationReplica, frame: WatchFrame): void {
 		if (replica !== this.replica) return;
+		const heightBefore = this.transcript.lineCount();
 		switch (frame.t) {
 			case "snapshot":
 				replica.snapshot(frame.value);
@@ -295,6 +387,8 @@ export class SessionScreen {
 				return;
 		}
 		this.rebuild();
+		if (!this.scroll.isFollowingEnd && this.transcript.lineCount() > heightBefore) this.newOutput = true;
+		if (this.replica && this.abortWatch.stopped(Date.now(), this.replica.running)) this.app.flash("aborted");
 		this.app.changed();
 	}
 
@@ -475,6 +569,7 @@ export class SessionScreen {
 	async answerQuestion(question: PendingQuestion, answer: string): Promise<void> {
 		// Throw (not flash+return) so `keepOnFail` puts the submitted text back instead of silently dropping it.
 		if (this.answering) throw new Error("still answering\u2026");
+		const following = this.scroll.isFollowingEnd;
 		this.answering = true;
 		try {
 			if (question.fields?.length) {
@@ -492,7 +587,7 @@ export class SessionScreen {
 			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.
 			await this.app.refreshQuestions();
 		}
-		this.scroll.scrollToEnd();
+		if (following) this.scroll.scrollToEnd();
 	}
 
 	/** `/attach <path>` stages a local image for the next message; `/attach clear` drops the staged ones. */
@@ -607,8 +702,14 @@ export class SessionScreen {
 	async abort(): Promise<void> {
 		const target = this.target;
 		if (!target) return;
+		this.abortWatch.arm(Date.now(), this.replica?.running === true);
 		this.app.flash("aborting…");
-		await this.app.api().abort(target.id);
+		try {
+			await this.app.api().abort(target.id);
+		} catch (err) {
+			this.abortWatch.disarm();
+			throw err;
+		}
 	}
 
 	/** PATCH the open session, then refresh its detail and the list. */
@@ -626,17 +727,20 @@ export class SessionScreen {
 
 	/** Move the transcript selection; 0 enters navigation at the newest selectable block. */
 	moveSelection(delta: number): boolean {
+		const entering = !this.transcript.selecting;
+		const following = this.scroll.isFollowingEnd;
 		if (!this.transcript.moveSelection(delta)) return false;
+		if (entering) this.followBeforeSelect = following;
 		const line = this.transcript.selectedLine();
 		if (line !== undefined) this.scroll.scrollTo(Math.max(0, line - 2), { disableFollow: true });
 		this.app.tui.requestRender();
 		return true;
 	}
 
-	/** Leave navigation mode and follow the end again. */
+	/** Leave navigation mode; follows the end again only if the view was following it before navigation started. */
 	clearSelection(): void {
 		this.transcript.clearSelection();
-		this.scroll.scrollToEnd();
+		if (this.followBeforeSelect) this.scroll.scrollToEnd();
 		this.app.tui.requestRender();
 	}
 
@@ -666,16 +770,24 @@ export class SessionScreen {
 		this.loadingEarlier = true;
 		try {
 			await replica.loadEarlier();
+		} catch (err) {
+			this.earlierRetry.failed(Date.now());
+			throw err;
 		} finally {
 			this.loadingEarlier = false;
 		}
+		this.earlierRetry.ok();
+		// The page lands above the viewport: remember how tall the content was so the view can stay on the same lines.
+		const before = this.transcript.lineCount();
 		this.rebuild();
+		const grown = this.transcript.lineCount() - before;
+		if (grown > 0) this.scroll.keepPosition(grown);
 		this.app.changed();
 	}
 
 	/** Load earlier history when the transcript is scrolled to its top. */
 	private maybeLoadEarlier(): void {
-		if (this.replica?.items[0]?.kind !== "earlier") return;
+		if (this.replica?.items[0]?.kind !== "earlier" || !this.earlierRetry.allows(Date.now())) return;
 		this.app.guard(() => this.loadEarlier());
 	}
 }
