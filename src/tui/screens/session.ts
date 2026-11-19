@@ -344,8 +344,16 @@ export class SessionScreen {
 		}
 		this.answering = true;
 		try {
-			await this.app.api().answer(question.callId, { answer, conversationId: question.conversationId });
-			this.app.flash(`answered: ${answer.length > 40 ? `${answer.slice(0, 39)}…` : answer}`);
+			if (question.fields?.length) {
+				// A form: collect this field; send everything only after the last one.
+				const answers = this.questions.record(question, answer);
+				if (!answers) return;
+				await this.app.api().answer(question.callId, { answers, conversationId: question.conversationId });
+				this.app.flash(`answered ${answers.length} fields`);
+			} else {
+				await this.app.api().answer(question.callId, { answer, conversationId: question.conversationId });
+				this.app.flash(`answered: ${answer.length > 40 ? `${answer.slice(0, 39)}…` : answer}`);
+			}
 		} finally {
 			this.answering = false;
 			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.

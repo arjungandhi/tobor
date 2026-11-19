@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,10 +35,18 @@ import dev.tobor.app.ui.theme.fieldTextStyle
 import dev.tobor.app.ui.theme.ToborColors
 import java.util.Locale
 
+/** What the user submitted from a [QuestionCard]: one free-text answer, or one entry per form field (blank = skipped). */
+sealed interface QuestionAnswer {
+    data class Text(val text: String) : QuestionAnswer
+    data class Form(val answers: List<String>) : QuestionAnswer
+}
+
 /**
  * An `ask_user` question as an approval-style card: question text, option chips (tapping one fills the field),
- * a free-text field (always allowed) and a submit that is disabled while blank or [busy]. [error] is a non-fatal
- * server message (e.g. 409 already answered). [showSession] labels which session asked (the list screen needs it).
+ * a free-text field (always allowed) and a submit that is disabled while blank or [busy]. When [PendingQuestion.fields]
+ * is non-empty the card is a form: the header, then a labeled input (with its own chips) per field, and one submit that
+ * needs at least one non-blank field. [error] is a non-fatal server message (e.g. 409 already answered).
+ * [showSession] labels which session asked (the list screen needs it).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -46,9 +55,11 @@ fun QuestionCard(
     busy: Boolean,
     error: String?,
     showSession: Boolean,
-    onAnswer: (String) -> Unit,
+    onAnswer: (QuestionAnswer) -> Unit,
 ) {
+    val fields = q.fields.orEmpty()
     var draft by remember(q.callId) { mutableStateOf("") }
+    val drafts = remember(q.callId) { mutableStateListOf<String>().apply { repeat(fields.size) { add("") } } }
     val shape = RoundedCornerShape(4.dp)
     Column(
         Modifier
@@ -68,39 +79,33 @@ fun QuestionCard(
             Text(who, fontFamily = FontFamilies.CourierPrime, fontSize = 11.sp, color = ToborColors.muted)
         }
         Text(q.question, fontFamily = FontFamilies.CourierPrime, fontSize = 13.sp, color = ToborColors.fg)
-        val options = q.options.orEmpty()
-        if (options.isNotEmpty()) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                options.forEach { o -> AnswerChip(o, selected = draft == o, enabled = !busy) { draft = o } }
+        if (fields.isEmpty()) {
+            AnswerInput(q.options.orEmpty(), draft, "type an answer…", busy) { draft = it }
+        } else {
+            fields.forEachIndexed { i, f ->
+                Text(
+                    f.prompt,
+                    fontFamily = FontFamilies.CourierPrime,
+                    fontSize = 12.sp,
+                    color = ToborColors.muted,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                AnswerInput(f.options.orEmpty(), drafts.getOrElse(i) { "" }, "skip or type an answer…", busy) {
+                    if (i < drafts.size) drafts[i] = it
+                }
             }
         }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { draft = it },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !busy,
-            textStyle = fieldTextStyle(fontSize = 13.sp, color = ToborColors.fg),
-            placeholder = {
-                Text("type an answer…", color = ToborColors.subtle, style = fieldTextStyle(fontSize = 13.sp))
-            },
-            maxLines = 4,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = ToborColors.fg,
-                unfocusedTextColor = ToborColors.fg,
-                focusedBorderColor = ToborColors.gold,
-                unfocusedBorderColor = ToborColors.border,
-                cursorColor = ToborColors.gold,
-            ),
-        )
         if (error != null) {
             Text(error, fontFamily = FontFamilies.CourierPrime, fontSize = 11.sp, color = ToborColors.error)
         }
         Button(
-            onClick = { onAnswer(draft.trim()) },
-            enabled = !busy && draft.isNotBlank(),
+            onClick = {
+                onAnswer(
+                    if (fields.isEmpty()) QuestionAnswer.Text(draft.trim())
+                    else QuestionAnswer.Form(drafts.map { it.trim() }),
+                )
+            },
+            enabled = !busy && (if (fields.isEmpty()) draft.isNotBlank() else drafts.any { it.isNotBlank() }),
             modifier = Modifier.height(32.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp),
             shape = RoundedCornerShape(4.dp),
@@ -111,6 +116,40 @@ fun QuestionCard(
                 disabledContentColor = ToborColors.subtle,
             ),
         ) { Text("answer", fontFamily = FontFamilies.Righteous, fontSize = 12.sp) }
+    }
+}
+
+/** Option chips (tapping one fills the field) above a free-text field. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AnswerInput(options: List<String>, value: String, placeholder: String, busy: Boolean, onChange: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (options.isNotEmpty()) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                options.forEach { o -> AnswerChip(o, selected = value == o, enabled = !busy) { onChange(o) } }
+            }
+        }
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !busy,
+            textStyle = fieldTextStyle(fontSize = 13.sp, color = ToborColors.fg),
+            placeholder = {
+                Text(placeholder, color = ToborColors.subtle, style = fieldTextStyle(fontSize = 13.sp))
+            },
+            maxLines = 4,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = ToborColors.fg,
+                unfocusedTextColor = ToborColors.fg,
+                focusedBorderColor = ToborColors.gold,
+                unfocusedBorderColor = ToborColors.border,
+                cursorColor = ToborColors.gold,
+            ),
+        )
     }
 }
 

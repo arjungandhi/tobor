@@ -25,6 +25,7 @@ import type {
 	PathCompleteResponse,
 	PendingApproval,
 	PendingQuestion,
+	QuestionField,
 	PutToborFileRequest,
 	Schedule,
 	SessionDetail,
@@ -186,15 +187,19 @@ export interface QuestionService {
 	pendingFor(sessionId: SessionId): Promise<PendingQuestion[]>;
 	/** Find a pending question by call id (the API path carries only `callId`). */
 	find(callId: string): Promise<PendingQuestion | undefined>;
-	/** Commit the operator's answer. Throws 404 if unknown, 409 if already answered. */
-	answer(conversationId: SessionId, callId: string, text: string): Promise<void>;
+	/**
+	 * Commit the operator's answer: free `text`, or per-field `answers` (same length as the record's fields, empty =
+	 * skipped, at least one non-empty; composed into `"<prompt>: <answer>"` lines). Throws 404 if unknown, 409 if
+	 * already answered, 400 if `answers` do not fit the record.
+	 */
+	answer(conversationId: SessionId, callId: string, reply: { text?: string; answers?: string[] }): Promise<void>;
 	/**
 	 * The `ask_user` tool body: commit a pending record, emit `question.asked`, notify, and wait for an answer, the
 	 * timeout, or `ctx` cancellation. Idempotent per `callId`.
 	 */
 	ask(
 		conversationId: SessionId,
-		call: { callId: string; question: string; options?: string[] },
+		call: { callId: string; question: string; options?: string[]; fields?: QuestionField[] },
 		ctx: Context,
 	): Promise<AskResult>;
 }

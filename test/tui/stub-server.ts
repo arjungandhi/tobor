@@ -25,7 +25,20 @@ type Conversation = { view: WatchValue; older: unknown[]; watchers: Set<WebSocke
 const conversations = new Map<number, Conversation>();
 const events = new Set<WebSocket>();
 let approvals: PendingApproval[] = [];
-let questions: PendingQuestion[] = [];
+// `--form` seeds a multi-field `ask_user` form question (answer it, then see the `answers` the node received on stdout).
+let questions: PendingQuestion[] = process.argv.includes("--form")
+	? [
+			{
+				callId: "form-1",
+				conversationId: SESSION_ID,
+				sessionId: SESSION_ID,
+				question: "Set up the new service",
+				fields: [{ prompt: "Which language?", options: ["TypeScript", "Go", "Rust"] }, { prompt: "What should it be called?" }, { prompt: "Anything else?" }],
+				createdAt: Date.now(),
+				expiresAt: Date.now() + 3_600_000,
+			},
+		]
+	: [];
 
 function userEntry(conversationId: number, id: number, text: string): Record<string, unknown> {
 	return { kind: "pi.user", id, conversationId, model: [{ role: "user", content: text, timestamp: now }] };
@@ -235,9 +248,15 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	if (path === "/api/questions" && method === "GET") return send(res, 200, questions);
 	if ((match = m(/^\/api\/questions\/(.+)$/)) && method === "POST") {
 		const callId = decodeURIComponent(match[1] ?? "");
-		await body(req);
+		const answered = await body(req);
 		const question = questions.find((q) => q.callId === callId);
 		if (!question) return send(res, 409, { error: "already answered", code: "conflict" });
+		if (question.fields) {
+			const answers = answered.answers;
+			const ok = Array.isArray(answers) && answers.length === question.fields.length && answers.some((a) => typeof a === "string" && a !== "");
+			if (!ok) return send(res, 400, { error: "answers must have one entry per field, at least one non-empty", code: "bad_request" });
+			process.stdout.write(`form ${callId} answers: ${JSON.stringify(answers)}\n`);
+		}
 		questions = questions.filter((q) => q !== question);
 		emit({ type: "question.answered", conversationId: question.conversationId, callId, outcome: "answered" });
 		return send(res, 200, { ok: true });

@@ -5,6 +5,7 @@ import type { JsonValue } from "@earendil-works/chord/json";
 import type {
 	ApprovalDecision,
 	ApprovalMode,
+	QuestionField,
 	ScheduleRun,
 	SessionKind,
 	SessionMode,
@@ -123,6 +124,8 @@ export type QuestionRecord = {
 	question: string;
 	/** Suggested answers; free text is always allowed. */
 	options?: string[];
+	/** Form fields (additive; absent on single-question records). */
+	fields?: QuestionField[];
 	createdAt: number;
 	/** `createdAt + approval_timeout`; the tool gives up with reason `timeout` after it. */
 	expiresAt: number;

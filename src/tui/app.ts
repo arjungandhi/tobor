@@ -444,7 +444,7 @@ export class App {
 					this.questions = [...this.questions, question];
 				}
 				const where = question.worker ? `${question.worker} in #${question.sessionId}` : `#${question.sessionId}`;
-				this.notify(`question from ${where}: ${question.question}`);
+				this.notify(`question from ${where}: ${question.question}${question.fields?.length ? ` (${question.fields.length} fields)` : ""}`);
 				this.flash(`? question from ${where} · Alt+Shift+U`);
 				this.session.rebuild();
 				break;
@@ -613,7 +613,7 @@ export class App {
 			workerView: s.target?.worker !== undefined,
 			state: s.state(),
 			hasTarget: s.target !== undefined,
-			questionOptions: (s.questions.current()?.options?.length ?? 0) > 0,
+			questionOptions: s.questions.options().length > 0,
 			repeating: this.repeating,
 			busy: this.flowActive,
 			now: Date.now(),

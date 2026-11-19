@@ -279,7 +279,7 @@ describe("SessionIndex", () => {
 		await t.reachedState(id, "waiting");
 		expect((await t.host.sessions.list())[0]).toMatchObject({ state: "waiting", pending: 1 });
 		expect(await t.host.sessions.get(id)).toMatchObject({ state: "waiting", pending: 1 });
-		await t.host.questions.answer(id, "call-1", "sqlite");
+		await t.host.questions.answer(id, "call-1", { text: "sqlite" });
 		expect(await t.settle(submissionId)).toMatchObject({ status: "done" });
 		await t.reachedState(id, "idle");
 		expect(t.states.filter((s) => s.id === id).map((s) => s.state)).toEqual(["running", "waiting", "running", "idle"]);

@@ -259,6 +259,13 @@ export type ApprovalOutcome = ApprovalDecision | "timeout" | "cancelled";
 
 // ─── Questions (`ask_user`) ─────────────────────────────────────────────────────────────────────────────────────────
 
+/** One question of an `ask_user` form. */
+export type QuestionField = {
+	prompt: string;
+	/** Suggested answers; free text is always allowed. */
+	options?: string[];
+};
+
 /** A question the agent asked the operator (from `tobor.questions`) and is waiting on. */
 export type PendingQuestion = {
 	/** Conversation that asked (a session or a worker). */
@@ -272,6 +279,8 @@ export type PendingQuestion = {
 	question: string;
 	/** Suggested answers; free text is always allowed. */
 	options?: string[];
+	/** Form fields: one entry per sub-question; `question` then introduces the form. */
+	fields?: QuestionField[];
 	createdAt: Millis;
 	/** When the wait gives up (`createdAt + approval_timeout`). */
 	expiresAt: Millis;
@@ -280,9 +289,14 @@ export type PendingQuestion = {
 /** `GET /api/questions` → every pending question across conversations, oldest first. */
 export type ListQuestionsResponse = PendingQuestion[];
 
-/** `POST /api/questions/:callId`. `conversationId` disambiguates if two conversations share a call id. */
+/**
+ * `POST /api/questions/:callId`. Exactly one of `answer` (free text, valid for any question) or `answers` (one entry
+ * per form field, empty = skipped, at least one non-empty). `conversationId` disambiguates if two conversations share
+ * a call id.
+ */
 export type AnswerQuestionRequest = {
-	answer: string;
+	answer?: string;
+	answers?: string[];
 	conversationId?: SessionId;
 };
 
