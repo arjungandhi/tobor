@@ -113,7 +113,7 @@ export class ToolSlotView implements Component {
 		const more = (count: number): string => row(c.dim(`  ⋮ ${count} more line${count === 1 ? "" : "s"}`));
 		if (this.expanded && args !== undefined) {
 			const dim = (piece: string): string => row(` ${c.dim(piece)}`);
-			let rest = args;
+			let rest: unknown = args;
 			// A multi-line command is shown whole (the header only has its first line).
 			if (typeof args === "object" && args !== null && typeof (args as { command?: unknown }).command === "string") {
 				const { command, ...others } = args as Record<string, unknown>;
