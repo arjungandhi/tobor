@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { ReconnectingSocket, type SocketState } from "../../src/tui/client.js";
 
@@ -12,6 +12,7 @@ let wss: WebSocketServer | undefined;
 let sock: ReconnectingSocket<Frame> | undefined;
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	sock?.close();
 	sock = undefined;
 	for (const c of wss?.clients ?? []) c.terminate();
@@ -120,6 +121,8 @@ describe("ReconnectingSocket", () => {
 	});
 
 	it("keeps the backoff for organic failures", async () => {
+		// The retry delay is jittered by +-25% and the label rounds up, so 1000ms shows as "1s" or "2s"; pin the jitter to 1.0.
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
 		const url = await serve((ws) => ws.terminate());
 		const details: string[] = [];
 		sock = new ReconnectingSocket<Frame>({
