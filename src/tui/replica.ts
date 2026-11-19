@@ -261,15 +261,19 @@ export class ConversationReplica {
 
 	/** Replace the view with a `{t:"snapshot"}` value (first connect or reconnect). */
 	snapshot(value: WatchValue): void {
+		// Both before either is assigned: a merge() that throws must not leave `value` and the transcript disagreeing.
+		const current = this.transcript.merge(value);
 		this.value = value;
-		this.current = this.transcript.merge(value);
+		this.current = current;
 	}
 
 	/** Apply one `{t:"ops"}` batch. */
 	apply(ops: readonly Op[]): void {
 		if (this.value === undefined) throw new Error("ops before snapshot");
-		this.value = applyImmutable(this.value, ops);
-		this.current = this.transcript.merge(this.value);
+		const value = applyImmutable(this.value, ops);
+		const current = this.transcript.merge(value);
+		this.value = value;
+		this.current = current;
 	}
 
 	/** The current view (window), if a snapshot arrived. */
