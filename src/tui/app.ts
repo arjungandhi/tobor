@@ -154,6 +154,9 @@ function cleanStatusText(message: string): string {
 }
 
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
+/** How often pending approvals/questions are refetched while any exist (a backstop against missed events). */
+export const PENDING_POLL_MS = 60_000;
+
 /** Backoff before retry number `failures` (0-based) of a failed refresh: 2s, 4s, 8s, … capped at 30s. */
 export function refreshRetryDelay(failures: number): number {
 	return Math.min(2000 * 2 ** Math.max(0, failures), 30_000);
@@ -237,6 +240,8 @@ export class App {
 	private refreshTimer: ReturnType<typeof setTimeout> | undefined;
 	private refreshFailures = 0;
 	private refreshErrorShown = false;
+	/** Backstop poll of approvals and questions against missed events (see `pollPending`). */
+	private pendingPoll: ReturnType<typeof setInterval> | undefined;
 	/** The UI is up (set at the end of `begin`): from then on a stray promise rejection is shown, not fatal. */
 	private started = false;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
@@ -308,6 +313,7 @@ export class App {
 		this.stopped = true;
 		clearTimeout(this.slotTimer);
 		this.cancelRefreshRetry();
+		clearInterval(this.pendingPoll);
 		this.events?.close();
 		this.session.close();
 		this.tui.setLayoutRoot(new VStack([]));
@@ -340,6 +346,8 @@ export class App {
 		const generation = this.generation;
 		this.events?.close();
 		this.cancelRefreshRetry();
+		clearInterval(this.pendingPoll);
+		this.pendingPoll = setInterval(() => void this.pollPending(), PENDING_POLL_MS);
 		this.refreshFailures = 0;
 		this.refreshErrorShown = false;
 		this.session.close();
@@ -645,6 +653,15 @@ export class App {
 			this.flash(`✗ ${(err as Error).message}`);
 		}
 		this.changed();
+	}
+
+	/**
+	 * Poll tick: while approvals or questions are pending, refetch both (cheap GETs). Both go through the seq guards,
+	 * so a poll can never regress newer state; with both lists empty it does nothing. Failures stay quiet (a backstop).
+	 */
+	private async pollPending(): Promise<void> {
+		if (this.stopped || (this.approvals.length === 0 && this.questions.length === 0)) return;
+		await Promise.all([this.refreshApprovals().catch(() => {}), this.refreshQuestions()]);
 	}
 
 	/** Refetch pending approvals only. */

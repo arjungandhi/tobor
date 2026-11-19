@@ -243,3 +243,29 @@ describe("refresh() retry", () => {
 		}
 	});
 });
+
+describe("pending-lists safety-net poll", () => {
+	const tick = (self: object): Promise<void> => (proto.pollPending as unknown as (this: object) => Promise<void>).call(self);
+
+	it("does nothing while both lists are empty", async () => {
+		const calls: string[] = [];
+		await tick({ stopped: false, approvals: [], questions: [], refreshApprovals: async () => void calls.push("a"), refreshQuestions: async () => void calls.push("q") });
+		expect(calls).toEqual([]);
+	});
+
+	it("refetches both lists while either is non-empty, tolerating a failing approvals fetch", async () => {
+		const calls: string[] = [];
+		const self = {
+			stopped: false,
+			approvals: [],
+			questions: [q("a")],
+			refreshApprovals: async () => {
+				calls.push("a");
+				throw new Error("down");
+			},
+			refreshQuestions: async () => void calls.push("q"),
+		};
+		await tick(self);
+		expect(calls.sort()).toEqual(["a", "q"]);
+	});
+});
