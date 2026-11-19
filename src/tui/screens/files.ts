@@ -26,7 +26,7 @@ export async function showFiles(app: App, dir = ""): Promise<void> {
 
 async function editFile(app: App, path: string): Promise<void> {
 	const client = app.api();
-	const file = await client.file(path);
+	let file = await client.file(path);
 	if (file.type !== "file") throw new Error(`${path} is a directory`);
 	const tmp = await mkdtemp(join(tmpdir(), "tobor-edit-"));
 	const local = join(tmp, basename(path));
@@ -63,12 +63,27 @@ async function editFile(app: App, path: string): Promise<void> {
 				const again = await app.confirm(err.status === 409 ? `${path} changed on the node` : `${path} rejected`, [
 					...problems,
 					"",
-					err.status === 409 ? "Someone else committed this file since you opened it." : "Edit again? (No keeps your changes in the temp copy.)",
+					err.status === 409
+						? "Someone else committed this file since you opened it. Edit again against the latest version (saving replaces it; that version is written next to your copy as .remote)? No keeps your copy."
+						: "Edit again? (No keeps your changes in the temp copy.)",
 				]);
-				if (!again || err.status === 409) {
+				if (!again) {
 					keep = true;
 					app.flash(`✗ ${path} not saved · your edit is kept at ${local}`);
 					return;
+				}
+				if (err.status === 409) {
+					// Take the node's current version as the new baseline; the user's edit stays in `local`, the node's copy goes next to it to reconcile against.
+					keep = true;
+					try {
+						const latest = await client.file(path);
+						if (latest.type !== "file") throw new Error(`${path} is a directory`);
+						await writeFile(`${local}.remote`, latest.content);
+						file = latest;
+					} catch (fetchErr) {
+						throw new Error(`${path}: fetching the latest version failed: ${(fetchErr as Error).message} · your edit is kept at ${local}`);
+					}
+					keep = false;
 				}
 			}
 		}
