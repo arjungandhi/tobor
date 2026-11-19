@@ -14,6 +14,8 @@ type HotkeyDef = {
 	hint?: string;
 	/** Dispatched by the router's hotkey loop (any composer state) to a flow-opening screen. The others have bespoke routing in `routeKey` / `App.onInput`. */
 	flow?: true;
+	/** `false`: opens no dialog, so it runs without the flow lock (and is not refused while a dialog or command flow runs). */
+	modal?: false;
 };
 
 /**
@@ -22,7 +24,7 @@ type HotkeyDef = {
  * transcript search) are not here: see `HELP_PROVIDED`.
  */
 export const HOTKEY_TABLE = [
-	{ name: "followUp", keys: ["ctrl+q", "ctrl+enter"], help: "queue a follow-up for after the current turn", hint: "follow-up", flow: true },
+	{ name: "followUp", keys: ["ctrl+q", "ctrl+enter"], help: "queue a follow-up for after the current turn", hint: "follow-up", flow: true, modal: false },
 	{
 		name: "abort",
 		keys: ["escape"],
@@ -34,8 +36,8 @@ export const HOTKEY_TABLE = [
 	{ name: "workers", keys: ["alt+a", "ctrl+s"], help: "workers of this session", hint: "workers", flow: true },
 	{ name: "workerTranscript", keys: ["ctrl+o"], help: "open a worker's transcript (again: back)", hint: "worker transcript", flow: true },
 	{ name: "model", keys: ["alt+m"], help: "change the session's model", hint: "model", flow: true },
-	{ name: "modelCycle", keys: ["ctrl+p"], help: "cycle to the next model", hint: "next model", flow: true },
-	{ name: "pasteImage", keys: ["ctrl+v"], help: "paste from the clipboard: an image becomes an attachment, text is inserted", hint: "paste", flow: true },
+	{ name: "modelCycle", keys: ["ctrl+p"], help: "cycle to the next model", hint: "next model", flow: true, modal: false },
+	{ name: "pasteImage", keys: ["ctrl+v"], help: "paste from the clipboard: an image becomes an attachment, text is inserted", hint: "paste", flow: true, modal: false },
 	{ name: "newSession", keys: ["ctrl+n"], help: "new session", hint: "new session", flow: true },
 	{ name: "sessions", keys: ["ctrl+l"], help: "sessions", hint: "sessions", flow: true },
 	{ name: "workspaces", keys: ["ctrl+t"], help: "switch workspace (saved nodes, with reachability)", hint: "workspaces", flow: true },
@@ -89,8 +91,24 @@ export function matchesBinding(data: string, binding: KeyId | readonly KeyId[]):
 	return typeof binding === "string" ? matchesKey(data, binding) : binding.some((key) => matchesKey(data, key));
 }
 
-/** Flashed when a key or command needs a flow that cannot start because another one is running. */
+/** Flashed when a key or command needs a flow that cannot start because another one is running, when the running one is unknown. */
 export const BUSY_MESSAGE = "busy — finish or cancel the current dialog or command first";
+
+/** `BUSY_MESSAGE` naming the running flow (`label`: a hotkey's short name or a `/command`), if known. */
+export function busyMessage(label?: string): string {
+	return label ? `busy — finish or cancel ${label} first` : BUSY_MESSAGE;
+}
+
+/** Whether the named flow hotkey opens a dialog and so takes the flow lock; false for the ones that act in place (follow-up, next model, paste). */
+export function isModalHotkey(name: string): boolean {
+	return !HOTKEY_TABLE.some((e) => e.name === name && "modal" in e && e.modal === false);
+}
+
+/** Short name of a hotkey's flow for the busy message (`approvals`, `new session`). */
+export function flowLabel(name: HotkeyEntry["name"]): string {
+	const entry: HotkeyDef | undefined = HOTKEY_TABLE.find((e) => e.name === name);
+	return entry?.hint ?? name;
+}
 
 /** Two `Ctrl+C` presses at most this far apart quit the TUI. */
 export const QUIT_WINDOW_MS = 500;

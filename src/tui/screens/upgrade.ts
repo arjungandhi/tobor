@@ -14,13 +14,15 @@ export async function upgradeNode(app: App): Promise<void> {
 		: [`${app.workspace?.name} runs tobor ${who?.version ?? "?"}; the node checks for a newer release first.`];
 	lines.push("The node replaces its binary and restarts; this terminal reconnects when it is back.");
 	if (!(await app.confirm("upgrade node", lines))) return;
-	app.flash("upgrading node…");
+	const working = app.progress("upgrading node…");
 	let res;
 	try {
 		res = await client.upgrade();
 	} catch (err) {
+		working.done();
 		throw new Error(upgradeErrorMessage(err));
 	}
+	working.done();
 	if (res.status === "current") return app.flash(`node is up to date (tobor ${res.version})`);
 	await reconnect(app, client, `${res.version} → ${res.latest}`);
 }
@@ -38,31 +40,35 @@ export async function restartNode(app: App): Promise<void> {
 }
 
 /**
- * After the node accepted an upgrade/restart: show "node restarting…" in the status line until it answers again (the events
- * socket reconnects by itself and refetches; this waits only to report), then flag a client/node build mismatch.
+ * After the node accepted an upgrade/restart: show "restarting node…" as status progress until it answers again (the
+ * events socket reconnects by itself and refetches; this waits only to report), then flag a client/node build mismatch.
+ * The wait opens no dialog, so the flow lock is released first: hotkeys and commands keep working for up to 60 s.
  */
 async function reconnect(app: App, client: NonNullable<App["client"]>, change: string | undefined): Promise<void> {
 	const workspace = app.workspace;
 	if (!workspace) return;
-	app.restarting = true;
-	app.flash(`node restarting…${change ? ` (tobor ${change})` : ""}`);
-	app.changed();
+	app.detachFlow();
+	const progress = app.progress(`restarting node…${change ? ` (tobor ${change})` : ""}`);
+	let outcome: string | undefined;
 	try {
 		const before = app.whoami;
 		const result = await waitForNode({ probe: () => probe(workspace), ...(before ? { before } : {}) });
 		if (client !== app.client) return;
-		if (result.status === "timeout") return app.flash(`✗ ${workspace.name} did not come back within 60 s; the TUI keeps retrying`);
+		if (result.status === "timeout") {
+			outcome = `✗ ${workspace.name} did not come back within 60 s; the TUI keeps retrying`;
+			return;
+		}
 		await app.refresh();
 		if (client !== app.client) return;
 		const node = app.whoami;
 		const hint = mismatchHint({ version: VERSION, build: BUILD }, node);
-		app.flash(
+		outcome =
 			result.status === "unconfirmed"
 				? `${workspace.name} kept answering; could not confirm the restart`
-				: `node restarted: tobor ${node?.version ?? result.whoami.version}${hint ? ` · ${hint}` : ""}`,
-		);
+				: `node restarted: tobor ${node?.version ?? result.whoami.version}${hint ? ` · ${hint}` : ""}`;
+	} catch (err) {
+		outcome = `✗ ${upgradeErrorMessage(err)}`;
 	} finally {
-		app.restarting = false;
-		app.changed();
+		progress.done(outcome);
 	}
 }

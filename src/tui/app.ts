@@ -49,7 +49,7 @@ import {
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { BUSY_MESSAGE, COMMANDS, HELP, HELP_PROVIDED, KEYS, QUIT_WINDOW_MS, QuitGate, hotkeyHint, keyLabel, matchesBinding } from "./keys.js";
+import { busyMessage, COMMANDS, flowLabel, HELP, HELP_PROVIDED, hotkeyHint, isModalHotkey, KEYS, keyLabel, matchesBinding, QUIT_WINDOW_MS, QuitGate } from "./keys.js";
 import { indexOfValue, pickHint } from "./pick-model.js";
 import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
@@ -190,8 +190,6 @@ export class App {
 	approvals: PendingApproval[] = [];
 	questions: PendingQuestion[] = [];
 	eventsState: SocketState = "closed";
-	/** True while a node restart triggered by /upgrade or /restart is awaited. */
-	restarting = false;
 	private events: ReconnectingSocket<EventsFrame> | undefined;
 	/** Open modals, bottom to top; `cancel` dismisses one as if Esc was pressed. */
 	private modals: { handle: OverlayHandle; cancel: () => void }[] = [];
@@ -202,8 +200,14 @@ export class App {
 	/** Generation whose initial session/picker was already opened (connect and the first events open both try). */
 	private initialOpened = 0;
 	private generation = 0;
-	/** A modal-opening flow (hotkey or slash command) is running: further ones are ignored until it settles. */
+	/** A modal-opening flow (hotkey or slash command) is running: further ones are refused until it settles or detaches. */
 	private flowActive = false;
+	/** Names the running flow in the busy message (`approvals`, `/settings`). */
+	private flowName: string | undefined;
+	/** Bumped by `detachFlow`, so a detached flow's settling does not release a lock a later flow took. */
+	private flowEpoch = 0;
+	/** Lock-free hotkeys currently running: a second press of the same one is ignored until it settles. */
+	private readonly inFlight = new Set<string>();
 	/** The key being handled is a Kitty auto-repeat: one-shot hotkeys ignore it. */
 	private repeating = false;
 	/** Whether the TUI was already stopped (quit or fatal error). */
@@ -626,8 +630,7 @@ export class App {
 		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · ${keyLabel("approvals")}`));
 		const asked = this.questions.length;
 		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · ${keyLabel("questions")}`));
-		if (this.restarting) segments.push(c.warning("⟳ node restarting…"));
-		else if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
+		if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
 		this.status.set(segments, `${hotkeyHint("help")} · / commands`, this.slot.view());
 		s.updateLabel();
 		this.tui.requestRender();
@@ -676,7 +679,7 @@ export class App {
 			hasTarget: s.target !== undefined,
 			questionOptions: s.questions.options().length > 0,
 			repeating: this.repeating,
-			busy: this.flowActive,
+			busy: false, // refused in do(), which flashes the busy message naming the running flow
 			now: Date.now(),
 			lastLeft: this.lastLeft,
 		});
@@ -706,7 +709,7 @@ export class App {
 				const question = s.questions.current();
 				const answer = s.questions.selectedOption();
 				if (!question || answer === undefined) return false;
-				return this.do(() => s.answerQuestion(question, answer));
+				return this.do("answering the question", () => s.answerQuestion(question, answer));
 			}
 			case "clearComposer":
 				composer.setText("");
@@ -719,11 +722,14 @@ export class App {
 				this.guard(() => s.abort());
 				return true;
 			case "showSessions":
-				return this.do(() => showSessions(this));
-			case "hotkey":
-				return this.do(() => this.hotkey(action.name));
+				return this.do("sessions", () => showSessions(this));
+			case "hotkey": {
+				const name = action.name;
+				if (isModalHotkey(name)) return this.do(flowLabel(name), () => this.hotkey(name));
+				return this.inPlace(name);
+			}
 			case "busyFlash":
-				this.flash(BUSY_MESSAGE);
+				this.flash(busyMessage(this.flowName));
 				return true;
 			case "exit":
 				this.quit();
@@ -763,19 +769,52 @@ export class App {
 		}
 	}
 
-	/** Hotkey dispatch: swallows the key; ignores auto-repeats and anything while another flow is running. */
-	private do(flow: () => Promise<unknown>): true {
-		if (!this.repeating) this.guard(() => this.exclusive(flow));
+	/** Dialog-opening hotkey dispatch: swallows the key; ignores auto-repeats; flashes the busy message (naming the running flow) while another flow holds the lock. */
+	private do(label: string, flow: () => Promise<unknown>): true {
+		if (this.repeating) return true;
+		if (this.flowActive) this.flash(busyMessage(this.flowName));
+		else this.guard(() => this.exclusive(label, flow));
 		return true;
 	}
 
-	/** Run `flow` unless another exclusive one is active (modals open only after network calls, so `modals` alone is no guard). */
-	private exclusive(flow: () => Promise<unknown>): Promise<unknown> {
-		if (this.flowActive) return Promise.resolve();
-		this.flowActive = true;
-		return new Promise((resolve) => resolve(flow())).finally(() => {
-			this.flowActive = false;
+	/** A hotkey that opens no dialog (follow-up, next model, paste): runs guarded but without the flow lock; a repeat press waits for the first to settle. */
+	private inPlace(name: HotkeyName): true {
+		if (this.repeating || this.inFlight.has(name)) return true;
+		this.inFlight.add(name);
+		this.guard(async () => {
+			try {
+				await this.hotkey(name);
+			} finally {
+				this.inFlight.delete(name);
+			}
 		});
+		return true;
+	}
+
+	/** Run `flow` under the flow lock (modals open only after network calls, so `modals` alone is no guard); `label` names it in the busy message. Refuses while another holds the lock. */
+	private async exclusive(label: string, flow: () => Promise<unknown>): Promise<unknown> {
+		if (this.flowActive) throw new Error(busyMessage(this.flowName));
+		this.flowActive = true;
+		this.flowName = label;
+		const epoch = this.flowEpoch;
+		try {
+			return await flow();
+		} finally {
+			if (epoch === this.flowEpoch) {
+				this.flowActive = false;
+				this.flowName = undefined;
+			}
+		}
+	}
+
+	/**
+	 * Release the flow lock from inside the running flow, which carries on (a long wait that opens no dialog, such as the
+	 * node restart wait of /upgrade: hotkeys and commands must work meanwhile). Show what it waits for with `progress`.
+	 */
+	detachFlow(): void {
+		this.flowEpoch++;
+		this.flowActive = false;
+		this.flowName = undefined;
 	}
 
 	/** Whether a modal-opening flow is running (hotkeys and composer commands are refused meanwhile). */
@@ -785,7 +824,7 @@ export class App {
 
 	/** Run a slash command typed into the composer. */
 	async command(line: string, from?: CommandFrom): Promise<void> {
-		await this.exclusive(() => this.runCommand(line, from));
+		await this.exclusive(`/${line.slice(1).split(/\s+/)[0] ?? ""}`, () => this.runCommand(line, from));
 	}
 
 	/**
