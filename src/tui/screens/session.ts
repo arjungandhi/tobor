@@ -18,7 +18,7 @@ import { readClipboard, stripPasteMarkers, WL_CLIPBOARD_HINT } from "../clipboar
 import { Composer } from "../components/composer.js";
 import { QuestionPanel } from "../components/question-panel.js";
 import { Transcript } from "../components/transcript.js";
-import { BUSY_MESSAGE } from "../keys.js";
+import { BUSY_MESSAGE, COMMANDS } from "../keys.js";
 import { ConversationReplica, liveOf, usageOf, type ViewUsage } from "../replica.js";
 import { c } from "../theme.js";
 import { startSession } from "./new-session.js";
@@ -43,6 +43,21 @@ class TranscriptScroll extends ScrollView {
 		super.scrollToStart();
 		this.onTop();
 	}
+}
+
+/** Where submitted composer text goes. */
+export type SubmitRoute = "attach" | "command" | "answer" | "prompt";
+
+/**
+ * Routing order for submitted text: `/attach` first; then, with a question pending and non-empty text, the text is the
+ * ANSWER unless its first token is exactly a known command (so a path like `/tmp/x` can be answered); then any other
+ * `/…` is a command (unknown ones are reported by `app.command`); everything else is a prompt.
+ */
+export function routeSubmit(text: string, questionPending: boolean): SubmitRoute {
+	if (/^\/attach(?:\s+(.*))?$/s.exec(text)) return "attach";
+	const isCommand = text.startsWith("/") && COMMANDS.some((cmd) => cmd.name === text.slice(1).split(/\s+/)[0]);
+	if (questionPending && text !== "") return isCommand ? "command" : "answer";
+	return text.startsWith("/") ? "command" : "prompt";
 }
 
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
@@ -294,12 +309,14 @@ export class SessionScreen {
 		const staged = this.composer.stagedImages();
 		if (text === "" && staged.length === 0) return;
 		if (text !== "") this.composer.addToHistory(text);
-		const attach = /^\/attach(?:\s+(.*))?$/s.exec(text);
-		if (attach) {
-			this.app.guard(() => this.attach((attach[1] ?? "").trim()));
+		const question = this.questions.current();
+		const route = routeSubmit(text, question !== undefined);
+		if (route === "attach") {
+			const arg = /^\/attach(?:\s+(.*))?$/s.exec(text)?.[1] ?? "";
+			this.app.guard(() => this.attach(arg.trim()));
 			return;
 		}
-		if (text.startsWith("/")) {
+		if (route === "command") {
 			this.keepOnFail(text, async () => {
 				// Another flow is running: refuse loudly (the text stays in the composer) instead of dropping the command.
 				if (this.app.busy) throw new Error(BUSY_MESSAGE);
@@ -307,8 +324,7 @@ export class SessionScreen {
 			});
 			return;
 		}
-		const question = this.questions.current();
-		if (question && text !== "") {
+		if (route === "answer" && question) {
 			this.app.guard(() => this.answerQuestion(question, text));
 			return;
 		}
