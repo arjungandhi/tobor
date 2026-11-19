@@ -69,6 +69,18 @@ describe("DraftStore", () => {
 		expect(drafts.take("1")).toBeUndefined();
 	});
 
+	it("stashIfEmpty recovers failed-send text only into an empty entry", () => {
+		const drafts = new DraftStore();
+		drafts.stashIfEmpty("1", "failed text");
+		drafts.stashIfEmpty("1", "second failure");
+		drafts.stash("2", "typed since");
+		drafts.stashIfEmpty("2", "failed text");
+		drafts.stashIfEmpty("3", "  ");
+		expect(drafts.take("1")).toBe("failed text");
+		expect(drafts.take("2")).toBe("typed since");
+		expect(drafts.take("3")).toBeUndefined();
+	});
+
 	it("drops the oldest drafts beyond the cap", () => {
 		const drafts = new DraftStore(2);
 		drafts.stash("1", "a");

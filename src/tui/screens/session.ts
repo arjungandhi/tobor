@@ -120,6 +120,12 @@ export class DraftStore {
 		}
 	}
 
+	/** Like `stash`, but never replaces an existing draft: for text recovered from a failed send, which must not clobber what the user typed since. */
+	stashIfEmpty(key: string, text: string): void {
+		if (this.drafts.has(key)) return;
+		this.stash(key, text);
+	}
+
 	/** Remove and return the draft for `key`. */
 	take(key: string): string | undefined {
 		const text = this.drafts.get(key);
@@ -616,8 +622,11 @@ export class SessionScreen {
 			try {
 				await flow();
 			} catch (err) {
-				// Only into the session the text was submitted to: the user may have switched away while the flow ran.
-				if (this.isCurrent(submittedTo) && this.composer.getExpandedText().trim() === "") this.composer.setText(text);
+				// Only into the session the text was submitted to: the user may have switched away while the flow ran, in
+				// which case it waits in that session's draft (unless it already has one) for when they switch back.
+				if (this.isCurrent(submittedTo)) {
+					if (this.composer.getExpandedText().trim() === "") this.composer.setText(text);
+				} else this.drafts.stashIfEmpty(submittedTo ? String(submittedTo.id) : "", text);
 				throw err;
 			}
 		});
