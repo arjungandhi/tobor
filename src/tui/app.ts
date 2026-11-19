@@ -48,6 +48,7 @@ import {
 	workspaceAt,
 } from "./workspaces.js";
 import { BUSY_MESSAGE, COMMANDS, HELP, KEYS, QUIT_WINDOW_MS, QuitGate } from "./keys.js";
+import { indexOfValue, pickHint } from "./pick-model.js";
 import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
@@ -830,13 +831,16 @@ export class App {
 	}
 
 	/**
-	 * A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value.
+	 * A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value; Enter does nothing.
 	 * `keys` entries are a single character (matched literally) or a named key id such as "left" / "right" (matched with `matchesKey`).
+	 * `/` starts a filter, which keeps the selected row while it is still shown; Esc clears the filter, a second Esc closes the list.
+	 * `emptyHint` is the footer of an empty list (default "Esc back"; name the `keys` that still work there).
+	 * The list follows terminal resizes: it is rebuilt at the new height with the selected row kept.
 	 */
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
-		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number; commands?: boolean } = {},
+		options: { lines?: string[]; hint?: string; emptyHint?: string; keys?: string[]; selected?: number; commands?: boolean } = {},
 	): Promise<Picked<T> | undefined> {
 		const { promise, resolve } = Promise.withResolvers<Picked<T> | undefined>();
 		const entries: SelectItem[] = items.map((item, i) => ({
@@ -859,56 +863,65 @@ export class App {
 		};
 		// SelectList has no setItems and its setFilter is a prefix match on value, so a filter rebuilds the list from
 		// the matching entries; their values stay the original indexes, so a choice maps back to `items`.
-		const makeList = (shown: SelectItem[]): SelectList => {
-			const next = new SelectList(shown, rows(), selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
+		let shown = entries;
+		let builtRows = rows();
+		const makeList = (): SelectList => {
+			const next = new SelectList(shown, builtRows, selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
 			next.onSelect = () => chosen("enter");
 			next.onCancel = () => finish(undefined);
 			return next;
 		};
-		let list = makeList(entries);
+		let list = makeList();
 		if (options.selected !== undefined) list.setSelectedIndex(options.selected);
+		/** Show `next` rows at the current terminal height, keeping the selected row when it is still shown (a filter changed, or a resize). */
+		const rebuild = (next: SelectItem[]): void => {
+			const previous = list.getSelectedItem()?.value;
+			shown = next;
+			builtRows = rows();
+			list = makeList();
+			list.setSelectedIndex(indexOfValue(shown, previous));
+		};
 		const child: Component = {
 			get capturesViewportInput() {
 				return list.capturesViewportInput;
 			},
-			render: (width) => list.render(width),
+			render: (width) => {
+				if (rows() !== builtRows) rebuild(shown); // the terminal was resized: a shrink must not hide the selected row
+				return list.render(width);
+			},
 			handleInput: (data) => list.handleInput(data),
 			handleMouse: (event) => list.handleMouse(event),
 			invalidate: () => list.invalidate(),
 		};
-		const baseHint = `${options.hint ?? "Enter select · Esc close"}${items.length === 0 ? "" : options.commands ? " · / filter or command" : " · / filter"}`;
+		const hintFor = (filter: string | undefined): string =>
+			pickHint({ itemCount: items.length, query: filter, hint: options.hint ?? "Enter select · Esc close", emptyHint: options.emptyHint ?? "Esc back", commands: options.commands === true });
 		let query: string | undefined;
 		const refilter = (): void => {
-			if (query === undefined) {
-				list = makeList(entries);
-				panel.setHint(baseHint);
-			} else {
+			if (query === undefined) rebuild(entries);
+			else {
 				const needle = query.toLowerCase();
 				const matches = entries.filter((e) => stripTerminalSequences(`${e.label} ${e.description ?? ""}`).toLowerCase().includes(needle));
 				const cmds: SelectItem[] = options.commands
 					? commandRows(query).map((cmd) => ({ value: `${COMMAND_PREFIX}${cmd.name}`, label: c.accent(`/${cmd.name}`), description: cmd.description }))
 					: [];
-				list = makeList([...cmds, ...matches]);
-				panel.setHint(`/${query}▏ · Enter select · Esc ${query === "" ? "close" : "clear filter"}`);
+				rebuild([...cmds, ...matches]);
 			}
+			panel.setHint(hintFor(query));
 			this.tui.requestRender();
 		};
 		const panel = new Panel(title, {
 			lines: items.length === 0 ? [...(options.lines ?? []), c.dim("(none)")] : (options.lines ?? []),
 			child: items.length === 0 ? undefined : child,
-			hint: items.length === 0 ? (options.hint ?? "Enter select · Esc close") : baseHint,
+			hint: hintFor(undefined),
 			onKey: (data) => {
 				if (items.length === 0 && (matchesKey(data, "enter") || matchesKey(data, "escape"))) {
-					finish(undefined);
+					if (matchesKey(data, "escape")) finish(undefined); // Enter on an empty list does nothing
 					return true;
 				}
 				if (query !== undefined) {
 					if (matchesKey(data, "escape")) {
-						if (query === "") finish(undefined);
-						else {
-							query = undefined;
-							refilter();
-						}
+						query = undefined; // Esc leaves the filter first, even an empty one; only the next Esc closes the list
+						refilter();
 						return true;
 					}
 					if (matchesKey(data, "backspace")) {
