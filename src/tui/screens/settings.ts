@@ -1,4 +1,4 @@
-import { type Component, Input, matchesKey, type SettingItem, SettingsList, SelectList } from "@earendil-works/pi-tui";
+import { type Component, getKeybindings, Input, matchesKey, type SettingItem, SettingsList, SelectList } from "@earendil-works/pi-tui";
 import type { Document } from "yaml";
 import type { ModelInfo } from "../../api/types.js";
 import type { App } from "../app.js";
@@ -6,11 +6,15 @@ import { Panel } from "../app.js";
 import { ApiRequestError } from "../client.js";
 import { type Prefs, setPref } from "../workspaces.js";
 import { addWorkspace, showWorkspaces } from "./workspaces.js";
-import { type ConfigPath, editConfig, getField, modelOverrides, parseNodeConfig } from "../node-config.js";
+import { type ConfigPath, editConfig, getField, modelOverrides, parseNodeConfig, sessionDefaults } from "../node-config.js";
 import { c, selectListTheme } from "../theme.js";
 
 const UNSET = "(unset)";
 const CONFIG = "config.yml";
+/** Invisible tag on the library's own hint line (see `body`). */
+const HINT_MARK = "\u2063";
+/** Ids of the section-header rows. SettingsList has no non-interactive item type (pi-tui 1.5.2), so selection skips them. */
+const HEADERS = new Set(["§node", "§ws", "§tui"]);
 
 /** How a node setting is edited. */
 type Kind = { type: "model"; unset: string } | { type: "enum"; values: string[] } | { type: "int" } | { type: "text" };
@@ -106,7 +110,18 @@ export async function showSettings(app: App): Promise<void> {
 	let problems: string[] = [];
 	let note = "";
 
-	const display = (f: Field): string => getField(doc, f.path) ?? (f.kind.type === "model" ? UNSET : f.kind.type === "enum" ? c.dim("(default)") : UNSET);
+	/** What an unset enum field falls back to, where node-config knows it (thinking's built-in default lives only on the node). */
+	const builtin = (f: Field): string | undefined => {
+		const defaults = sessionDefaults(doc);
+		return f.path.join(".") === "defaults.approval_mode" ? defaults.approval_mode : f.path.join(".") === "defaults.mode" ? defaults.mode : undefined;
+	};
+	const display = (f: Field): string => {
+		const value = getField(doc, f.path);
+		if (value !== undefined) return value;
+		if (f.kind.type !== "enum") return UNSET;
+		const fallback = builtin(f);
+		return c.dim(fallback ? `(default: ${fallback})` : "(default)");
+	};
 	const rows = app.listRows(8);
 	const nodeItems: SettingItem[] = fields.map((f) => {
 		const id = f.path.join(".");
@@ -165,10 +180,21 @@ export async function showSettings(app: App): Promise<void> {
 		app.tui.requestRender();
 	};
 
+	/** The client text/sha were loaded from; editing a workspace in here can swap app's client under us, and then config.yml would go to another node. */
+	const stale = (): boolean => {
+		if (client === app.api()) return false;
+		problems = [`the connection changed to ${app.workspace?.name ?? "another node"}; these settings belong to the previous node, close and reopen settings`];
+		app.flash("✗ settings not saved: connection changed, reopen settings");
+		refresh();
+		return true;
+	};
+
 	const reload = async (): Promise<void> => {
 		const fresh = await client.file(CONFIG);
 		if (fresh.type !== "file") throw new Error(`${CONFIG} is a directory`);
 		load(fresh.content, fresh.sha);
+		// Changes the node now already has are no longer changes.
+		for (const [id, value] of pending) if (String(value ?? "") === (baseline.get(id) ?? "")) pending.delete(id);
 		for (const [id, value] of pending) text = editConfig(text, byId.get(id)!.path, value);
 		doc = parseNodeConfig(text);
 		for (const f of fields) list.updateValue(f.path.join("."), display(f));
@@ -179,6 +205,7 @@ export async function showSettings(app: App): Promise<void> {
 			note = "nothing to save";
 			return refresh();
 		}
+		if (stale()) return;
 		try {
 			const keys = [...pending.keys()].join(", ");
 			const { commit } = await client.putFile(CONFIG, { content: text, ...(sha ? { sha } : {}), message: `operator: settings (${keys})` });
@@ -198,8 +225,13 @@ export async function showSettings(app: App): Promise<void> {
 				problems = err.body?.errors?.map((e) => `${e.path}: ${e.message}`) ?? [err.body?.error ?? err.message];
 				return refresh();
 			}
+			if (stale()) return;
 			await reload();
 			problems = [];
+			if (pending.size === 0) {
+				note = "reloaded · the node already has your changes";
+				return refresh();
+			}
 			refresh();
 			const again = await app.confirm(`${CONFIG} changed on the node`, [
 				"Someone committed config.yml since it was loaded. Reloaded it and re-applied your changes:",
@@ -289,7 +321,7 @@ export async function showSettings(app: App): Promise<void> {
 			value: (text, selected) => (selected ? c.accent(text) : c.dim(text)),
 			description: c.dim,
 			cursor: c.accent("› "),
-			hint: c.dim,
+			hint: (text) => (/Esc to cancel$/.test(text) ? HINT_MARK : c.dim(text)),
 		},
 		onChange,
 		() => {
@@ -301,22 +333,41 @@ export async function showSettings(app: App): Promise<void> {
 		{ enableSearch: true },
 	);
 	list.selectItem("defaults.model");
-	// SettingsList always appends its own hint line ("Type to search · Enter/Space to change · Esc to cancel") and has no option to
-	// hide it; drop it so the Panel hint is the single hint line.
+	// SettingsList always appends a blank line and its own hint ("Type to search · Enter/Space to change · Esc to cancel") and has no
+	// option to hide it (pi-tui 1.5.2). Its theme.hint() sees that text before truncation, so tag it there and drop the tagged line
+	// (plus the blank above it) here; the Panel hint is the single hint line.
+	// If a pi-tui upgrade removes or renames these privates, the guards below turn header-skipping into a no-op: headers become
+	// selectable again (the cursor may rest on one) instead of throwing on every keypress.
+	const internals = list as unknown as { selectedIndex?: unknown; getDisplayItems?: unknown };
+	/** After a key moved the selection onto a section header, keep going the same way (bounded; stops when only headers match). */
+	const skipHeaders = (step: 1 | -1): void => {
+		if (typeof internals.getDisplayItems !== "function" || typeof internals.selectedIndex !== "number") return;
+		try {
+			const shown = (internals.getDisplayItems as () => SettingItem[])();
+			for (let i = 0; i < shown.length && HEADERS.has(shown[internals.selectedIndex as number]?.id ?? ""); i++) {
+				internals.selectedIndex = ((internals.selectedIndex as number) + step + shown.length) % shown.length;
+			}
+		} catch {
+			// pi-tui internals changed shape: leave the selection where the list put it.
+		}
+	};
 	const body: Component = {
 		capturesViewportInput: list.capturesViewportInput,
-		handleInput: (data) => list.handleInput(data),
+		handleInput: (data) => {
+			list.handleInput(data);
+			skipHeaders(getKeybindings().matches(data, "tui.select.up") ? -1 : 1);
+		},
 		invalidate: () => list.invalidate(),
 		render: (width) => {
 			const lines = list.render(width);
-			if (lines.at(-1)?.includes("Esc to cancel")) lines.splice(-2, 2);
+			if (lines.some((line) => line.includes(HINT_MARK))) lines.splice(-2, 2);
 			return lines;
 		},
 	};
 	const panel = new Panel("settings", {
 		lines: panelLines(),
 		child: body,
-		hint: "type to search · Enter/Space change · Ctrl+S save node defaults · Esc clear/close",
+		hint: "type to search · Enter/Space change · Ctrl+S save node defaults · Esc back",
 		onKey: (data) => {
 			if (!matchesKey(data, "ctrl+s")) return false;
 			app.guard(save);

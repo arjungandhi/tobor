@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { HostError } from "../../src/host.js";
+import { EventBackpressure, WS_HIGH_WATER, WS_SATURATED_CLOSE_MS } from "../../src/server/http/ws.js";
 import { type Listener, startApi } from "../../src/server/http/server.js";
 import { FakeWatch, fakeHost } from "./fake-host.js";
 
@@ -106,5 +107,41 @@ describe("events socket", () => {
 		c.ws.close();
 		await c.closed;
 		events.emit(event);
+	});
+});
+
+describe("EventBackpressure", () => {
+	const over = WS_HIGH_WATER + 1;
+
+	it("sends while under the high-water mark and never asks for a resync", () => {
+		const bp = new EventBackpressure();
+		expect(bp.offer(0, 0)).toBe("send");
+		expect(bp.offer(WS_HIGH_WATER, 1)).toBe("send");
+		expect(bp.poll(0, 2)).toBe("none");
+	});
+
+	it("coalesces many drops into exactly one resync once drained", () => {
+		const bp = new EventBackpressure();
+		expect(bp.offer(over, 0)).toBe("drop");
+		expect(bp.offer(over, 1)).toBe("drop");
+		expect(bp.offer(over, 2)).toBe("drop");
+		expect(bp.poll(over, 100)).toBe("none");
+		expect(bp.poll(WS_HIGH_WATER, 200)).toBe("resync");
+		expect(bp.poll(0, 300)).toBe("none");
+	});
+
+	it("starts a new dirty period after a resync", () => {
+		const bp = new EventBackpressure();
+		bp.offer(over, 0);
+		expect(bp.poll(0, 1)).toBe("resync");
+		expect(bp.offer(over, 2)).toBe("drop");
+		expect(bp.poll(0, 3)).toBe("resync");
+	});
+
+	it("asks to close when the buffer stays saturated too long", () => {
+		const bp = new EventBackpressure();
+		bp.offer(over, 1000);
+		expect(bp.poll(over, 1000 + WS_SATURATED_CLOSE_MS - 1)).toBe("none");
+		expect(bp.poll(over, 1000 + WS_SATURATED_CLOSE_MS)).toBe("close");
 	});
 });

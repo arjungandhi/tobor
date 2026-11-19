@@ -54,6 +54,32 @@ export class ApiRequestError extends Error {
 	}
 }
 
+/**
+ * A request that failed before an HTTP response arrived (timeout, abort, network error). Deliberately not an
+ * `ApiRequestError`: callers treat those as "the server answered with a status". `name` and `cause` are kept from
+ * the original error so `TimeoutError`/`AbortError` checks still work.
+ */
+export class RequestFailedError extends Error {
+	constructor(message: string, cause: unknown) {
+		super(message, { cause });
+		this.name = cause instanceof Error ? cause.name : "RequestFailedError";
+	}
+}
+
+/** Wrap a fetch failure as `METHOD path: <message>`. */
+export function wrapRequestError(method: string, path: string, err: unknown, timeoutMs?: number): RequestFailedError {
+	const name = err instanceof Error ? err.name : "";
+	let message: string;
+	if (name === "TimeoutError") message = `timed out${timeoutMs === undefined ? "" : ` after ${Math.round(timeoutMs / 1000)}s`}`;
+	else if (name === "AbortError") message = "aborted";
+	else {
+		message = err instanceof Error ? err.message : String(err);
+		const cause = err instanceof Error ? err.cause : undefined;
+		if (cause instanceof Error && cause.message && !message.includes(cause.message)) message += ` (${cause.message})`;
+	}
+	return new RequestFailedError(`${method} ${path}: ${message}`, err);
+}
+
 /** Request timeout when the body carries image attachments (up to 8 × 5 MB). */
 const UPLOAD_TIMEOUT_MS = 120_000;
 
@@ -67,13 +93,19 @@ export class ApiClient {
 		const headers: Record<string, string> = { accept: "application/json" };
 		const payload = body === undefined ? (method === "GET" ? undefined : "{}") : JSON.stringify(body);
 		if (payload !== undefined) headers["content-type"] = "application/json";
-		const res = await fetch(`${this.base}${path}`, {
-			method,
-			headers,
-			body: payload,
-			signal: AbortSignal.timeout(timeoutMs),
-		});
-		const text = await res.text();
+		let res: Response;
+		let text: string;
+		try {
+			res = await fetch(`${this.base}${path}`, {
+				method,
+				headers,
+				body: payload,
+				signal: AbortSignal.timeout(timeoutMs),
+			});
+			text = await res.text();
+		} catch (err) {
+			throw wrapRequestError(method, path, err, timeoutMs);
+		}
 		let data: unknown;
 		let parseFailed = false;
 		try {
@@ -293,6 +325,9 @@ function encodePath(path: string): string {
 /** A connection must stay open this long before the reconnect backoff resets. */
 const STABLE_MS = 10_000;
 
+/** A link silent for longer than this many ping intervals is treated as half-open and dropped. */
+const STALE_FACTOR = 1.5;
+
 /** Connection state of a `ReconnectingSocket`. */
 export type SocketState = "connecting" | "open" | "waiting" | "closed";
 
@@ -304,6 +339,8 @@ export type ReconnectingSocketOptions<In> = {
 	/** Called after each successful connect; `reconnect` is false the first time. */
 	onOpen?: (reconnect: boolean) => void;
 	onState?: (state: SocketState, detail?: string) => void;
+	/** Protocol or frame-handler failures (malformed frame, handler threw); the socket is dropped and reconnects right after. */
+	onError?: (message: string) => void;
 	minDelayMs?: number;
 	maxDelayMs?: number;
 	pingMs?: number;
@@ -317,14 +354,32 @@ export class ReconnectingSocket<In> {
 	private stopped = false;
 	private timer: NodeJS.Timeout | undefined;
 	private ping: NodeJS.Timeout | undefined;
+	private watchdog: NodeJS.Timeout | undefined;
+	/** Set by `reconnect()`: the next close reconnects immediately, without backoff or counting as a failed attempt. */
+	private immediate = false;
+	/** Set by `reconnect()` on a connection that was not stable: the next retry waits out the backoff, and a repeat `reconnect()` must not cut it short. */
+	private noFastRetry = false;
 	/** Last time anything (message or pong) arrived on the current connection. */
 	private lastRx = 0;
 	/** When the current connection opened; 0 while not open. */
 	private openedAt = 0;
+	private pingMs: number;
 	/** Most recent socket/handler error for the current attempt, shown in the retry detail. */
 	private lastError: string | undefined;
 
-	constructor(private readonly options: ReconnectingSocketOptions<In>) {}
+	constructor(private readonly options: ReconnectingSocketOptions<In>) {
+		this.pingMs = options.pingMs ?? 20_000;
+	}
+
+	/** When anything (message or pong) last arrived on the open connection, in epoch ms; 0 while not open. */
+	get lastReceivedAt(): number {
+		return this.openedAt > 0 ? this.lastRx : 0;
+	}
+
+	/** True while open but silent for longer than one ping interval, i.e. the last ping went unanswered. */
+	get stale(): boolean {
+		return this.openedAt > 0 && Date.now() - this.lastRx > this.pingMs;
+	}
 
 	/** Open the socket. */
 	start(): void {
@@ -336,6 +391,7 @@ export class ReconnectingSocket<In> {
 		this.stopped = true;
 		clearTimeout(this.timer);
 		clearInterval(this.ping);
+		clearInterval(this.watchdog);
 		this.ws?.removeAllListeners();
 		this.ws?.on("error", () => {});
 		this.ws?.terminate();
@@ -343,19 +399,46 @@ export class ReconnectingSocket<In> {
 		this.options.onState?.("closed");
 	}
 
-	/** Drop the current connection and reconnect now (e.g. after a watch `end`). */
+	/**
+	 * Drop the current connection and reconnect now, skipping the backoff (explicit resync, e.g. after a watch `end`).
+	 * Only a connection that stayed open for `STABLE_MS` gets the fast path; otherwise the retry follows the normal backoff,
+	 * so a deterministic failure right after connect cannot loop tightly.
+	 */
 	reconnect(): void {
 		if (this.stopped) return;
-		this.ws?.terminate();
+		if (this.ws) {
+			if (this.openedAt > 0 && Date.now() - this.openedAt >= STABLE_MS) {
+				this.immediate = true;
+			} else {
+				this.noFastRetry = true;
+			}
+			this.ws.terminate();
+		} else if (this.timer && !this.noFastRetry) {
+			// Waiting out a backoff delay: cut it short.
+			clearTimeout(this.timer);
+			this.timer = undefined;
+			this.connect();
+		}
+	}
+
+	/** Report a protocol/handler failure and drop the link; the close handler runs the reconnect path. */
+	private fail(ws: WebSocket, message: string): void {
+		this.lastError = message;
+		try {
+			this.options.onError?.(message);
+		} finally {
+			ws.terminate();
+		}
 	}
 
 	private connect(): void {
 		if (this.stopped) return;
 		this.options.onState?.("connecting");
 		this.lastError = undefined;
+		this.noFastRetry = false;
 		const ws = new WebSocket(this.options.url(), { handshakeTimeout: 10_000 });
 		this.ws = ws;
-		const pingMs = this.options.pingMs ?? 20_000;
+		const pingMs = this.pingMs;
 		ws.on("open", () => {
 			const reconnect = this.opened;
 			this.opened = true;
@@ -363,16 +446,20 @@ export class ReconnectingSocket<In> {
 			this.openedAt = this.lastRx = Date.now();
 			this.options.onState?.("open");
 			clearInterval(this.ping);
+			clearInterval(this.watchdog);
 			this.ping = setInterval(() => {
-				if (ws.readyState !== WebSocket.OPEN) return;
-				if (Date.now() - this.lastRx > pingMs * 2.5) {
+				if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "ping" }));
+			}, pingMs);
+			// Checked more often than the ping so a dead link is dropped ~1.5 intervals after the last data, not at the next ping tick.
+			this.watchdog = setInterval(
+				() => {
+					if (ws.readyState !== WebSocket.OPEN || Date.now() - this.lastRx <= pingMs * STALE_FACTOR) return;
 					// Half-open link: nothing (not even a pong) arrived; force the normal reconnect path.
 					this.lastError = "connection timed out (no data from server)";
 					ws.terminate();
-					return;
-				}
-				ws.send(JSON.stringify({ t: "ping" }));
-			}, pingMs);
+				},
+				Math.max(10, pingMs / 4),
+			);
 			this.options.onOpen?.(reconnect);
 		});
 		ws.on("pong", () => {
@@ -383,15 +470,16 @@ export class ReconnectingSocket<In> {
 			let frame: In;
 			try {
 				frame = JSON.parse(data.toString()) as In;
-			} catch {
+			} catch (err) {
+				// A dropped frame (possibly an ops frame) would leave the replica diverged; resync via reconnect.
+				this.fail(ws, `protocol error: malformed frame (${err instanceof Error ? err.message : String(err)})`);
 				return;
 			}
 			try {
 				this.options.onFrame(frame);
 			} catch (err) {
 				// Never let a frame handler crash the process; reconnect to resync instead.
-				this.lastError = `frame handler failed: ${err instanceof Error ? err.message : String(err)}`;
-				ws.terminate();
+				this.fail(ws, `frame handler failed: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		});
 		ws.on("error", (err) => {
@@ -400,10 +488,16 @@ export class ReconnectingSocket<In> {
 		ws.on("close", (code, reason) => {
 			if (this.ws !== ws) return;
 			clearInterval(this.ping);
+			clearInterval(this.watchdog);
 			this.ws = undefined;
 			if (this.stopped) return;
 			if (this.openedAt > 0 && Date.now() - this.openedAt >= STABLE_MS) this.attempt = 0;
 			this.openedAt = 0;
+			if (this.immediate) {
+				this.immediate = false;
+				this.connect();
+				return;
+			}
 			const delay = Math.min(this.options.maxDelayMs ?? 15_000, (this.options.minDelayMs ?? 500) * 2 ** this.attempt);
 			this.attempt++;
 			const jittered = Math.round(delay * (0.75 + Math.random() * 0.5));

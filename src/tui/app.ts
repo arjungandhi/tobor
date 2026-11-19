@@ -23,18 +23,20 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type {
+	ApprovalMode,
 	EventsFrame,
 	NodeEvent,
+	PatchSessionRequest,
 	PendingApproval,
 	PendingQuestion,
 	SessionId,
 	SessionSummary,
 	WhoamiResponse,
 } from "../api/types.js";
-import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
+import { ApiClient, ApiRequestError, ReconnectingSocket, type SocketState } from "./client.js";
 import { commandRows } from "./command-rows.js";
 import { Band } from "./components/band.js";
-import { StatusLine } from "./components/status.js";
+import { FLASH_MS, type Progress, type Segment, type Severity, severityOf, StatusLine, StatusSlot } from "./components/status.js";
 import {
 	baseUrl,
 	type ClientConfig,
@@ -44,10 +46,12 @@ import {
 	saveClientConfig,
 	setLastSession,
 	type Start,
+	takeStateError,
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
-import { BUSY_MESSAGE, COMMANDS, HELP, KEYS, QuitGate } from "./keys.js";
+import { busyMessage, COMMANDS, flowLabel, HELP, HELP_PROVIDED, hotkeyHint, isModalHotkey, KEYS, keyLabel, matchesBinding, QUIT_WINDOW_MS, QuitGate } from "./keys.js";
+import { indexOfValue, pickHint } from "./pick-model.js";
 import { type HotkeyName, routeInterrupt, routeKey } from "./router.js";
 import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
@@ -144,13 +148,40 @@ export class Panel implements Component, Focusable {
 	}
 }
 
+/** Thrown by `App.exclusive` when another flow holds the lock; `App.guard` shows it as info, not as an error. */
+class BusyError extends Error {}
+
+/** Status text: no escape sequences or control characters, one line, at most 300 characters. */
+function cleanStatusText(message: string): string {
+	const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
+	return Array.from(text).slice(0, 300).join("");
+}
+
+/** How often pending approvals/questions are refetched while any exist (a backstop against missed events). */
+export const PENDING_POLL_MS = 60_000;
+/** How often the events socket is checked for staleness (status line indicator). */
+const STALE_CHECK_MS = 5_000;
+
+/** Backoff before retry number `failures` (0-based) of a failed refresh: 2s, 4s, 8s, … capped at 30s. */
+export function refreshRetryDelay(failures: number): number {
+	return Math.min(2000 * 2 ** Math.max(0, failures), 30_000);
+}
+
 /** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 const COMMAND_PREFIX = "cmd:";
+
+/** Set when a slash command is run from the sessions list: `sessionId` is the highlighted row (undefined on an empty list). */
+export type CommandFrom = { sessionId?: number };
+
+/** Commands that act on one session. From the sessions list they must target the highlighted row, never the open session. */
+const SESSION_SCOPED = new Set(["title", "archive", "complete", "approval", "model", "workers"]);
+/** The scoped commands that can take a target id; the others (/model, /workers) are rejected from the list. */
+const LIST_TARGETABLE = new Set(["title", "archive", "complete", "approval"]);
 
 /** One choice of `App.pick`. */
 export type PickItem<T> = { value: T; label: string; description?: string };
 
-/** Result of `App.pick`: the chosen value and the key that chose it (`enter` or one of `keys`); `command` is a slash command row chosen with `commands` (no value). */
+/** Result of `App.pick`: the chosen value and the key that chose it (`enter` or one of `keys`); `command` is a slash command row chosen with `commands`, and its `value` is the row that was highlighted when the filter started (so a command can act on it). */
 export type Picked<T> = { key: string; value?: T; command?: string };
 
 /** The TUI: owns the renderer, the active node connection, shared lists, modals and global keys. */
@@ -159,6 +190,9 @@ export class App {
 	readonly tui: TuiAltScreen;
 	readonly band = new Band();
 	readonly status = new StatusLine();
+	/** The single status slot (flashes replace each other, progress sticks); painted by `status`. */
+	private readonly slot = new StatusSlot();
+	private slotTimer: ReturnType<typeof setTimeout> | undefined;
 	readonly session: SessionScreen;
 	client: ApiClient | undefined;
 	/** Workspace connected to (for an unsaved `tobor host:port`, named after the address). */
@@ -170,8 +204,14 @@ export class App {
 	approvals: PendingApproval[] = [];
 	questions: PendingQuestion[] = [];
 	eventsState: SocketState = "closed";
-	/** True while a node restart triggered by /upgrade or /restart is awaited. */
-	restarting = false;
+	/** Why the events socket is not open (last retry detail); cleared when it opens. */
+	eventsDetail: string | undefined;
+	/** The events socket has been open on this connection. */
+	private eventsEverOpen = false;
+	/** An open events socket dropped and has not reopened yet (so the next open is a reconnect worth announcing). */
+	private eventsLost = false;
+	/** The first-connect failure was already flashed for this connection. */
+	private connectFailureShown = false;
 	private events: ReconnectingSocket<EventsFrame> | undefined;
 	/** Open modals, bottom to top; `cancel` dismisses one as if Esc was pressed. */
 	private modals: { handle: OverlayHandle; cancel: () => void }[] = [];
@@ -182,8 +222,14 @@ export class App {
 	/** Generation whose initial session/picker was already opened (connect and the first events open both try). */
 	private initialOpened = 0;
 	private generation = 0;
-	/** A modal-opening flow (hotkey or slash command) is running: further ones are ignored until it settles. */
+	/** A modal-opening flow (hotkey or slash command) is running: further ones are refused until it settles or detaches. */
 	private flowActive = false;
+	/** Names the running flow in the busy message (`approvals`, `/settings`). */
+	private flowName: string | undefined;
+	/** Bumped by `detachFlow`, so a detached flow's settling does not release a lock a later flow took. */
+	private flowEpoch = 0;
+	/** Lock-free hotkeys currently running: a second press of the same one is ignored until it settles. */
+	private readonly inFlight = new Set<string>();
 	/** The key being handled is a Kitty auto-repeat: one-shot hotkeys ignore it. */
 	private repeating = false;
 	/** Whether the TUI was already stopped (quit or fatal error). */
@@ -191,7 +237,27 @@ export class App {
 	/** Fetch/event counters per shared list: a fetch is applied only if nothing newer started or happened meanwhile. */
 	private readonly sessionsSeq = { fetch: 0, event: 0 };
 	private readonly approvalsSeq = { fetch: 0, event: 0 };
+	private readonly questionsSeq = { fetch: 0, event: 0 };
+	/** The last questions fetch failed (the previous list was kept). */
+	private questionsFailing = false;
+	/** The questions fetch failure was already flashed (reset on the next success: one flash per outage). */
+	private questionsErrorShown = false;
+	/** Pending retry of a failed `refresh`, the number of failures in a row (backoff step), and whether the failure was already flashed. */
+	private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	private refreshFailures = 0;
+	private refreshErrorShown = false;
+	/** Backstop poll of approvals and questions against missed events (see `pollPending`). */
+	private pendingPoll: ReturnType<typeof setInterval> | undefined;
+	/** Repaints the status line when the events socket goes quiet (stale) or recovers: staleness is time-based, no event announces it. */
+	private staleTick: ReturnType<typeof setInterval> | undefined;
+	private eventsStale = false;
+	/** The UI is up (set at the end of `begin`): from then on a stray promise rejection is shown, not fatal. */
+	private started = false;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
+	private readonly onRejection = (reason: unknown): void => {
+		if (!this.started || this.stopped) return this.fatal(reason);
+		this.flash(`✗ unhandled error: ${reason instanceof Error ? reason.message : String(reason)}`, 8000);
+	};
 
 	constructor(
 		public config: ClientConfig,
@@ -217,7 +283,7 @@ export class App {
 		const { promise, resolve } = Promise.withResolvers<number>();
 		this.exit = resolve;
 		process.on("uncaughtException", this.onFatal);
-		process.on("unhandledRejection", this.onFatal);
+		process.on("unhandledRejection", this.onRejection);
 		try {
 			this.begin(start, notice);
 		} catch (err) {
@@ -245,14 +311,19 @@ export class App {
 		const flash = [notice, start.kind === "picker" ? start.reason : undefined].filter(Boolean).join(" · ");
 		if (flash) this.flash(flash);
 		this.changed();
+		this.started = true;
 	}
 
 	/** Stop sockets and the renderer once, restoring the terminal. */
 	private stopUi(preserveScreen = false): void {
 		process.off("uncaughtException", this.onFatal);
-		process.off("unhandledRejection", this.onFatal);
+		process.off("unhandledRejection", this.onRejection);
 		if (this.stopped) return;
 		this.stopped = true;
+		clearTimeout(this.slotTimer);
+		this.cancelRefreshRetry();
+		clearInterval(this.pendingPoll);
+		clearInterval(this.staleTick);
 		this.events?.close();
 		this.session.close();
 		this.tui.setLayoutRoot(new VStack([]));
@@ -268,10 +339,10 @@ export class App {
 		process.exit(1);
 	}
 
-	/** Leave the TUI. */
-	quit(): void {
+	/** Leave the TUI (restoring the terminal); `run` resolves with `code`. */
+	quit(code = 0): void {
 		this.stopUi();
-		this.exit?.(0);
+		this.exit?.(code);
 	}
 
 	/** The server's clock now: `whoami.now` advanced by the time since it was fetched (local clock drift corrected). */
@@ -284,36 +355,77 @@ export class App {
 		this.generation++;
 		const generation = this.generation;
 		this.events?.close();
+		this.cancelRefreshRetry();
+		clearInterval(this.pendingPoll);
+		this.pendingPoll = setInterval(() => void this.pollPending(), PENDING_POLL_MS);
+		clearInterval(this.staleTick);
+		this.eventsStale = false;
+		this.staleTick = setInterval(() => {
+			const stale = this.events?.stale ?? false;
+			if (stale === this.eventsStale) return;
+			this.eventsStale = stale;
+			this.changed();
+		}, STALE_CHECK_MS);
+		this.refreshFailures = 0;
+		this.refreshErrorShown = false;
 		this.session.close();
 		this.workspace = workspace;
 		this.whoami = undefined;
 		this.whoamiAt = 0;
+		this.eventsDetail = undefined;
+		this.eventsEverOpen = false;
+		this.eventsLost = false;
+		this.connectFailureShown = false;
 		this.sessions = [];
 		this.approvals = [];
 		this.questions = [];
+		this.questionsFailing = false;
+		this.questionsErrorShown = false;
 		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
 		this.events = new ReconnectingSocket<EventsFrame>({
 			url: () => client.eventsUrl(),
 			onFrame: (frame) => {
 				if (frame.t === "event") this.onEvent(frame.event);
+				// The node dropped events for this slow client: refetch everything, as after a reconnect.
+				else if (frame.t === "resync" && generation === this.generation) void this.refresh();
 			},
 			onOpen: () => {
-				// Always refetch: events between the initial HTTP refresh and the socket opening are lost.
-				void this.refresh().then(() => {
-					if (generation === this.generation) this.openInitial();
-				});
+				if (generation !== this.generation) return;
+				// Refresh on EVERY open, the first included: events published between connect()'s initial HTTP refresh and
+				// the socket actually opening reach nobody, and the 60s poll is idle while approvals/questions are empty.
+				// A refresh that overlaps one already running is harmless (the seq guards drop the stale result).
+				void this.refresh();
+			},
+			onError: (message) => {
+				if (generation === this.generation) this.flash(`✗ ${message}`, 8000);
 			},
 			onState: (state, detail) => {
-				if (state === "waiting" && this.eventsState === "open") this.flash(`events: ${detail ?? "disconnected"}`);
+				if (generation !== this.generation) return; // the old connection's socket closing
+				if (state === "waiting") {
+					if (this.eventsState === "open") {
+						this.eventsLost = true;
+						this.flash(`events: ${detail ?? "disconnected"}`);
+					} else if (!this.eventsEverOpen && !this.connectFailureShown) {
+						this.connectFailureShown = true;
+						this.flash(`✗ cannot reach ${this.workspace?.name ?? "the node"}: ${detail ?? "connection failed"}`, 8000);
+					}
+					this.eventsDetail = detail;
+				} else if (state === "open") {
+					this.eventsEverOpen = true;
+					this.eventsDetail = undefined;
+					if (this.eventsLost) {
+						this.eventsLost = false;
+						this.flash("reconnected");
+					}
+				}
 				this.eventsState = state;
+				this.eventsStale = false;
 				this.changed();
 			},
 		});
 		this.events.start();
-		void this.refresh().then(() => {
-			if (generation === this.generation) this.openInitial();
-		});
+		void this.refresh();
 		this.changed();
 	}
 
@@ -323,7 +435,7 @@ export class App {
 		try {
 			saveClientConfig(this.configPath, config);
 		} catch (err) {
-			this.flash(`saving ${this.configPath}: ${(err as Error).message}`);
+			this.flash(`✗ saving ${this.configPath}: ${(err as Error).message}`);
 		}
 		if (this.workspace && !findWorkspace(config, this.workspace.name)) {
 			// The connected workspace was removed: keep the connection, labelled by its address.
@@ -334,18 +446,21 @@ export class App {
 
 	/** Workspace `from` is now called `to`: relabel the connection and move its state. */
 	renamedWorkspace(from: string, to: string): void {
-		const last = lastSession(this.statePath, from);
+		// The renamed workspace's node (updateConfig already ran), so the session stays tied to it.
+		const address = findWorkspace(this.config, to);
+		const last = lastSession(this.statePath, from, address);
 		try {
 			setLastSession(this.statePath, from, undefined);
-			if (last !== undefined) setLastSession(this.statePath, to, last);
+			if (last !== undefined) setLastSession(this.statePath, to, last, address);
 		} catch (err) {
-			this.flash(`saving ${this.statePath}: ${(err as Error).message}`);
+			this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 		}
+		this.flashStateError();
 		if (this.workspace?.name === from) this.workspace = { ...this.workspace, name: to };
 		this.changed();
 	}
 
-	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc/← walks back up to the workspace picker); once per connection, never over a modal. */
+	/** Startup chain, workspace → sessions → session: show the workspace's sessions list (Esc/← walks back up to the workspace picker); once per connection, never over a modal (it is retried when the modals close and when a flow ends: see `retryInitial`). */
 	openInitial(): void {
 		if (this.initialOpened === this.generation || this.session.target || this.modals.length > 0) return;
 		if (!this.client || !this.whoami || !this.workspace) return;
@@ -353,34 +468,75 @@ export class App {
 		this.guard(() => showSessions(this));
 	}
 
-	/** The session last opened on the connected workspace (state.json), for default cursors. */
-	lastSessionId(): SessionId | undefined {
-		return this.workspace ? lastSession(this.statePath, this.workspace.name) : undefined;
+	/** Try `openInitial` again once the current tick's flow had its chance to open the next dialog; only when nothing is open or running. */
+	private retryInitial(): void {
+		setTimeout(() => {
+			if (this.stopped || this.modals.length > 0 || this.flowActive) return;
+			this.openInitial();
+		}, 0);
 	}
 
-	/** Refetch whoami, sessions, approvals and questions (on connect and after every reconnect; `/api/events` is lossy). */
+	/** The session last opened on the connected workspace (state.json), for default cursors. */
+	lastSessionId(): SessionId | undefined {
+		if (!this.workspace) return undefined;
+		const last = lastSession(this.statePath, this.workspace.name, this.workspace);
+		this.flashStateError();
+		return last;
+	}
+
+	/** Flash (once) the problem reading state.json, if any: a corrupt file was backed up and state restarted empty. */
+	private flashStateError(): void {
+		const problem = takeStateError();
+		if (problem) this.flash(`✗ ${problem}`, 8000);
+	}
+
+	private cancelRefreshRetry(): void {
+		clearTimeout(this.refreshTimer);
+		this.refreshTimer = undefined;
+	}
+
+	/**
+	 * Refetch whoami, sessions, approvals and questions (on connect, after every reconnect and on a `resync` frame;
+	 * `/api/events` is lossy). A failure is retried with capped backoff until one succeeds, and opens the initial view once it has.
+	 */
 	async refresh(): Promise<void> {
 		const client = this.client;
 		if (!client) return;
+		this.cancelRefreshRetry();
+		let failure: string | undefined;
 		try {
-			// A node without `ask_user` support has no /api/questions; treat that as no questions.
 			const [whoami, sessions, approvals, questions] = await Promise.all([
 				client.whoami(),
 				this.latest(client, () => client.sessions(), this.sessionsSeq),
 				this.latest(client, () => client.approvals(), this.approvalsSeq),
-				client.questions().catch(() => []),
+				this.fetchQuestions(client),
 			]);
 			if (client !== this.client) return;
 			this.whoami = whoami;
 			this.whoamiAt = Date.now();
 			if (sessions) this.sessions = sessions;
 			if (approvals) this.approvals = approvals;
-			this.questions = questions;
+			if (questions) this.questions = questions;
 			this.session.rebuild();
+			// A failed questions fetch kept the old list and flashed itself; the refresh still has to be retried.
+			if (this.questionsFailing) failure = "";
 		} catch (err) {
-			if (client === this.client) this.flash(`${this.workspace?.name}: ${(err as Error).message}`);
+			if (client !== this.client) return;
+			failure = `✗ ${this.workspace?.name}: ${(err as Error).message}`;
+		}
+		if (client !== this.client) return;
+		if (failure === undefined) {
+			this.refreshFailures = 0;
+			this.refreshErrorShown = false;
+		} else {
+			if (failure && !this.refreshErrorShown) {
+				this.refreshErrorShown = true;
+				this.flash(failure);
+			}
+			if (!this.stopped) this.refreshTimer = setTimeout(() => void this.refresh(), refreshRetryDelay(this.refreshFailures++));
 		}
 		this.changed();
+		this.openInitial();
 	}
 
 	/**
@@ -397,17 +553,50 @@ export class App {
 		}
 	}
 
+	/**
+	 * Fetch the pending questions through the staleness guard. Undefined means "keep the current list": the result is
+	 * stale, or the fetch failed (flashed once per outage, never turned into "no questions"). A node without `ask_user`
+	 * support has no /api/questions (404): that is no questions.
+	 */
+	private async fetchQuestions(client: ApiClient): Promise<PendingQuestion[] | undefined> {
+		try {
+			const questions = await this.latest(
+				client,
+				() =>
+					client.questions().catch((err: unknown) => {
+						if (err instanceof ApiRequestError && err.status === 404) return [];
+						throw err;
+					}),
+				this.questionsSeq,
+			);
+			if (questions && client === this.client) {
+				this.questionsFailing = false;
+				this.questionsErrorShown = false;
+			}
+			return questions;
+		} catch (err) {
+			if (client !== this.client) return undefined;
+			this.questionsFailing = true;
+			if (!this.questionsErrorShown) {
+				this.questionsErrorShown = true;
+				this.flash(`✗ questions: ${(err as Error).message}`);
+			}
+			return undefined;
+		}
+	}
+
 	/** Open a session in the Session view and remember it for this workspace (state.json). */
 	openSession(id: SessionId): void {
 		const summary = this.sessions.find((s) => s.id === id);
 		this.session.open({ id, title: summary?.title ?? `#${id}` });
-		if (this.workspace && lastSession(this.statePath, this.workspace.name) !== id) {
+		if (this.workspace && lastSession(this.statePath, this.workspace.name, this.workspace) !== id) {
 			try {
-				setLastSession(this.statePath, this.workspace.name, id);
+				setLastSession(this.statePath, this.workspace.name, id, this.workspace);
 			} catch (err) {
-				this.flash(`saving ${this.statePath}: ${(err as Error).message}`);
+				this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 			}
 		}
+		this.flashStateError();
 	}
 
 	/** Pending approvals of one conversation, by call id. */
@@ -430,7 +619,7 @@ export class App {
 				}
 				const where = approval.worker ? `${approval.worker} in #${approval.sessionId}` : `#${approval.sessionId}`;
 				this.notify(`approval needed: ${approval.tool} (${where})`);
-				this.flash(`⚠ approval needed: ${approval.tool} (${where}) · Alt+Shift+A`);
+				this.flash(`⚠ approval needed: ${approval.tool} (${where}) · ${keyLabel("approvals")}`);
 				this.session.rebuild();
 				break;
 			}
@@ -440,17 +629,19 @@ export class App {
 				this.session.rebuild();
 				break;
 			case "question.asked": {
+				this.questionsSeq.event++;
 				const { question } = event;
 				if (!this.questions.some((q) => q.callId === question.callId && q.conversationId === question.conversationId)) {
 					this.questions = [...this.questions, question];
 				}
 				const where = question.worker ? `${question.worker} in #${question.sessionId}` : `#${question.sessionId}`;
 				this.notify(`question from ${where}: ${question.question}${question.fields?.length ? ` (${question.fields.length} fields)` : ""}`);
-				this.flash(`? question from ${where} · Alt+Shift+U`);
+				this.flash(`? question from ${where} · ${keyLabel("questions")}`);
 				this.session.rebuild();
 				break;
 			}
 			case "question.answered":
+				this.questionsSeq.event++;
 				this.questions = this.questions.filter((q) => !(q.callId === event.callId && q.conversationId === event.conversationId));
 				this.session.rebuild();
 				break;
@@ -491,9 +682,18 @@ export class App {
 			const sessions = await this.latest(client, () => client.sessions(), this.sessionsSeq);
 			if (sessions && client === this.client) this.sessions = sessions;
 		} catch (err) {
-			this.flash((err as Error).message);
+			this.flash(`✗ ${(err as Error).message}`);
 		}
 		this.changed();
+	}
+
+	/**
+	 * Poll tick: while approvals or questions are pending, refetch both (cheap GETs). Both go through the seq guards,
+	 * so a poll can never regress newer state; with both lists empty it does nothing. Failures stay quiet (a backstop).
+	 */
+	private async pollPending(): Promise<void> {
+		if (this.stopped || (this.approvals.length === 0 && this.questions.length === 0)) return;
+		await Promise.all([this.refreshApprovals().catch(() => {}), this.refreshQuestions()]);
 	}
 
 	/** Refetch pending approvals only. */
@@ -507,12 +707,12 @@ export class App {
 		this.changed();
 	}
 
-	/** Refetch pending questions only. */
+	/** Refetch pending questions only. Never throws: a failure keeps the current list and is flashed once. */
 	async refreshQuestions(): Promise<void> {
 		const client = this.client;
 		if (!client) return;
-		const questions = await client.questions();
-		if (client !== this.client) return;
+		const questions = await this.fetchQuestions(client);
+		if (!questions || client !== this.client) return;
 		this.questions = questions;
 		this.session.rebuild();
 		this.changed();
@@ -520,7 +720,7 @@ export class App {
 
 	/** The connected client, or an error for screens that need one. */
 	api(): ApiClient {
-		if (!this.client) throw new Error("no workspace selected · Ctrl+T");
+		if (!this.client) throw new Error(`no workspace selected · ${keyLabel("workspaces")}`);
 		return this.client;
 	}
 
@@ -529,16 +729,58 @@ export class App {
 		this.terminal.write(`\x07\x1b]9;tobor: ${text.replace(/[\x00-\x1f\x7f]/g, " ")}\x07`);
 	}
 
-	/** A transient message over the transcript. */
-	flash(message: string): void {
-		const text = stripTerminalSequences(message).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ");
-		this.tui.flash(Array.from(text).slice(0, 300).join(""), 4000);
-		this.tui.requestRender();
+	/**
+	 * A transient message in the status line. One at a time: a new message replaces the current one. `✗ `-prefixed
+	 * messages are errors (override with `severity`). Sticky progress (`progress`) is not replaced by it.
+	 */
+	flash(message: string, durationMs = FLASH_MS, severity?: Severity): void {
+		const text = cleanStatusText(message);
+		this.slot.flash(text, severity ?? severityOf(text), durationMs);
+		this.changed();
+		this.scheduleSlotExpiry();
+	}
+
+	/**
+	 * A sticky status entry (`label`) that stays until `done()`, however many flashes come and go meanwhile; the newest
+	 * live one is shown. `update(label)` changes the text; `done(message?)` ends it and optionally flashes `message`
+	 * (a `✗ ` prefix makes it an error). Both are no-ops after `done`.
+	 */
+	progress(label: string): Progress {
+		const inner = this.slot.progress(cleanStatusText(label));
+		this.changed();
+		return {
+			update: (next) => {
+				inner.update(cleanStatusText(next));
+				this.changed();
+			},
+			done: (message) => {
+				inner.done(message === undefined ? undefined : typeof message === "string" ? cleanStatusText(message) : { ...message, text: cleanStatusText(message.text) });
+				this.changed();
+				this.scheduleSlotExpiry();
+			},
+		};
+	}
+
+	/** Repaint when the transient message runs out. */
+	private scheduleSlotExpiry(): void {
+		clearTimeout(this.slotTimer);
+		this.slotTimer = undefined;
+		const left = this.slot.expiresIn();
+		if (left === undefined || this.stopped) return;
+		this.slotTimer = setTimeout(() => {
+			this.slotTimer = undefined;
+			this.changed();
+		}, left + 5);
+		this.slotTimer.unref();
 	}
 
 	/** Run a screen flow, turning errors into a flash. */
 	guard(flow: () => Promise<unknown>): void {
-		flow().catch((err: unknown) => this.flash(`✗ ${(err as Error).message ?? String(err)}`));
+		flow().catch((err: unknown) => {
+			// Busy is not an error: show it as info, like the hotkey path does.
+			if (err instanceof BusyError) this.flash(err.message, FLASH_MS, "info");
+			else this.flash(`✗ ${(err as Error).message ?? String(err)}`);
+		});
 	}
 
 	/** Re-derive header, status and composer label, then render. */
@@ -553,8 +795,8 @@ export class App {
 		const cwd = s.detail?.cwd ?? "";
 		this.band.setHeader(`${c.bold(c.accent("tobor"))} ${c.dim("▸")} ${host} ${c.dim("▸")} ${where}`, c.dim(cwd));
 
-		const conn = this.eventsState === "open" && (s.target === undefined || s.watchState === "open");
-		const segments = [conn ? c.success("● connected") : c.warning(`○ ${this.eventsState === "open" ? s.watchState : this.eventsState}`)];
+		const conn = this.eventsState === "open" && !this.eventsStale && (s.target === undefined || s.watchState === "open");
+		const segments: Segment[] = [{ text: conn ? c.success("● connected") : c.warning(`○ ${this.connectionText(s.watchState)}`), pinned: true }];
 		if (s.target) {
 			const state = s.state();
 			const paint = state === "running" ? c.accent : state === "waiting" ? c.warning : state === "failed" ? c.error : state === "working" ? c.tool : c.dim;
@@ -564,18 +806,31 @@ export class App {
 			segments.push(c.dim(`$${usage.cost.toFixed(4)} · ${formatTokens(usage.tokens)} tok`));
 		}
 		const pending = this.approvals.length;
-		if (pending > 0) segments.push(c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · Alt+Shift+A`));
+		if (pending > 0) segments.push({ text: c.warning(`⚠ ${pending} approval${pending === 1 ? "" : "s"} · ${keyLabel("approvals")}`), pinned: true });
 		const asked = this.questions.length;
-		if (asked > 0) segments.push(c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · Alt+Shift+U`));
-		if (this.restarting) segments.push(c.warning("⟳ node restarting…"));
-		else if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
-		this.status.set(segments, "? help · / commands");
+		if (asked > 0) segments.push({ text: c.warning(`? ${asked} question${asked === 1 ? "" : "s"} · ${keyLabel("questions")}`), pinned: true });
+		if (this.whoami?.update_available && this.whoami.latest_version) segments.push(c.dim(`↑ ${this.whoami.latest_version} · /upgrade`));
+		this.status.set(segments, `${hotkeyHint("help")} · / commands`, this.slot.view());
 		s.updateLabel();
 		this.tui.requestRender();
 	}
 
+	/** Status text of a connection that is not fully up: the events socket's state and retry detail, else the session watch's state. */
+	private connectionText(watchState: string): string {
+		switch (this.eventsState) {
+			case "open":
+				return this.eventsStale ? "events stale (no data from node)" : watchState;
+			case "waiting":
+				return `reconnecting${this.eventsDetail ? ` — ${this.eventsDetail}` : ""}`;
+			case "connecting":
+				return this.eventsDetail === undefined ? "connecting…" : "reconnecting…";
+			default:
+				return this.eventsState;
+		}
+	}
+
 	private onInput(data: string): TuiInputListenerResult {
-		if (matchesKey(data, KEYS.quit)) {
+		if (matchesBinding(data, KEYS.quit)) {
 			// Kitty keyboard protocol reports release/repeat as separate events; only a press counts.
 			if (!isKeyRelease(data) && !isKeyRepeat(data)) this.interrupt();
 			return { consume: true };
@@ -590,15 +845,28 @@ export class App {
 		}
 	}
 
-	/** `Ctrl+C`: the second press within the window quits from any screen; the first closes the top dialog or clears the composer (only a press with nothing to do arms the gate). */
-	private interrupt(): void {
+	/** Nothing typed and nothing attached: Esc / Ctrl+C / Ctrl+D then act on the session instead of the composer. */
+	private composerEmpty(): boolean {
 		const composer = this.session.composer;
+		return composer.getText() === "" && composer.stagedImages().length === 0;
+	}
+
+	/** Empty the composer: the text and the staged image attachments. */
+	private clearComposer(): void {
+		const staged = this.session.composer.stagedImages().length;
+		this.session.composer.clearAll();
+		if (staged > 0) this.flash(`cleared ${staged} attachment${staged === 1 ? "" : "s"}`, FLASH_MS, "info");
+	}
+
+	/** `Ctrl+C`: closes the top dialog or clears the composer (and disarms the quit gate); only a press with nothing to do arms it, and a second such press within the window quits. */
+	private interrupt(): void {
 		const top = this.modals.at(-1);
-		const action = routeInterrupt({ modalOpen: top !== undefined, composerEmpty: composer.getText() === "" });
-		if (this.quitGate.press(Date.now(), action.arm)) return this.quit();
+		const action = routeInterrupt({ modalOpen: top !== undefined, composerEmpty: this.composerEmpty() });
+		const quit = this.quitGate.press(Date.now(), action.arm);
 		if (action.type === "closeModal") top?.cancel();
-		else if (action.type === "clearComposer") composer.setText("");
-		if (action.arm) this.flash("Ctrl+C again to quit");
+		else if (action.type === "clearComposer") this.clearComposer();
+		else if (quit) this.quit();
+		else this.flash("Ctrl+C again to quit", QUIT_WINDOW_MS);
 	}
 
 	/** Thin interpreter: snapshot the state, let the router decide (`router.ts`), run the action. True when the key is consumed. */
@@ -609,14 +877,13 @@ export class App {
 			modalOpen: this.modals.length > 0,
 			selecting: s.transcript.selecting,
 			autocompleteOpen: composer.isShowingAutocomplete(),
-			composerEmpty: composer.getText() === "",
+			composerEmpty: this.composerEmpty(),
 			hasStagedImages: composer.stagedImages().length > 0,
 			workerView: s.target?.worker !== undefined,
 			state: s.state(),
 			hasTarget: s.target !== undefined,
 			questionOptions: s.questions.options().length > 0,
 			repeating: this.repeating,
-			busy: this.flowActive,
 			now: Date.now(),
 			lastLeft: this.lastLeft,
 		});
@@ -646,10 +913,10 @@ export class App {
 				const question = s.questions.current();
 				const answer = s.questions.selectedOption();
 				if (!question || answer === undefined) return false;
-				return this.do(() => s.answerQuestion(question, answer));
+				return this.do("answering the question", () => s.answerQuestion(question, answer));
 			}
 			case "clearComposer":
-				composer.setText("");
+				this.clearComposer();
 				return true;
 			case "backToParent":
 				if (s.target?.worker) this.openSession(s.target.worker.parent.id);
@@ -659,12 +926,12 @@ export class App {
 				this.guard(() => s.abort());
 				return true;
 			case "showSessions":
-				return this.do(() => showSessions(this));
-			case "hotkey":
-				return this.do(() => this.hotkey(action.name));
-			case "busyFlash":
-				this.flash(BUSY_MESSAGE);
-				return true;
+				return this.do("sessions", () => showSessions(this));
+			case "hotkey": {
+				const name = action.name;
+				if (isModalHotkey(name)) return this.do(flowLabel(name), () => this.hotkey(name));
+				return this.inPlace(name);
+			}
 			case "exit":
 				this.quit();
 				return true;
@@ -703,19 +970,53 @@ export class App {
 		}
 	}
 
-	/** Hotkey dispatch: swallows the key; ignores auto-repeats and anything while another flow is running. */
-	private do(flow: () => Promise<unknown>): true {
-		if (!this.repeating) this.guard(() => this.exclusive(flow));
+	/** Dialog-opening hotkey dispatch: swallows the key; ignores auto-repeats; flashes the busy message (naming the running flow) while another flow holds the lock. */
+	private do(label: string, flow: () => Promise<unknown>): true {
+		if (this.repeating) return true;
+		if (this.flowActive) this.flash(busyMessage(this.flowName));
+		else this.guard(() => this.exclusive(label, flow));
 		return true;
 	}
 
-	/** Run `flow` unless another exclusive one is active (modals open only after network calls, so `modals` alone is no guard). */
-	private exclusive(flow: () => Promise<unknown>): Promise<unknown> {
-		if (this.flowActive) return Promise.resolve();
-		this.flowActive = true;
-		return new Promise((resolve) => resolve(flow())).finally(() => {
-			this.flowActive = false;
+	/** A hotkey that opens no dialog (follow-up, next model, paste): runs guarded but without the flow lock; a repeat press waits for the first to settle. */
+	private inPlace(name: HotkeyName): true {
+		if (this.repeating || this.inFlight.has(name)) return true;
+		this.inFlight.add(name);
+		this.guard(async () => {
+			try {
+				await this.hotkey(name);
+			} finally {
+				this.inFlight.delete(name);
+			}
 		});
+		return true;
+	}
+
+	/** Run `flow` under the flow lock (modals open only after network calls, so `modals` alone is no guard); `label` names it in the busy message. Refuses while another holds the lock. */
+	private async exclusive(label: string, flow: () => Promise<unknown>): Promise<unknown> {
+		if (this.flowActive) throw new BusyError(busyMessage(this.flowName));
+		this.flowActive = true;
+		this.flowName = label;
+		const epoch = this.flowEpoch;
+		try {
+			return await flow();
+		} finally {
+			if (epoch === this.flowEpoch) {
+				this.flowActive = false;
+				this.flowName = undefined;
+				this.retryInitial();
+			}
+		}
+	}
+
+	/**
+	 * Release the flow lock from inside the running flow, which carries on (a long wait that opens no dialog, such as the
+	 * node restart wait of /upgrade: hotkeys and commands must work meanwhile). Show what it waits for with `progress`.
+	 */
+	detachFlow(): void {
+		this.flowEpoch++;
+		this.flowActive = false;
+		this.flowName = undefined;
 	}
 
 	/** Whether a modal-opening flow is running (hotkeys and composer commands are refused meanwhile). */
@@ -724,24 +1025,31 @@ export class App {
 	}
 
 	/** Run a slash command typed into the composer. */
-	async command(line: string): Promise<void> {
-		await this.exclusive(() => this.runCommand(line));
+	async command(line: string, from?: CommandFrom): Promise<void> {
+		await this.exclusive(`/${line.slice(1).split(/\s+/)[0] ?? ""}`, () => this.runCommand(line, from));
 	}
 
 	/**
 	 * Run a slash command as a continuation of the flow already running, e.g. one chosen from a picker that flow opened.
 	 * Only call from within an exclusive flow: `command` would see `flowActive` and silently drop it. A flow started
 	 * outside `exclusive` (startup) gets the normal guarded `command`, so the command still holds the flow lock.
+	 * `from` is set by the sessions list: session-scoped commands then act on `from.sessionId` (the highlighted row),
+	 * never on the open session.
 	 */
-	async continueCommand(line: string): Promise<void> {
-		if (!this.flowActive) return this.command(line);
-		await this.runCommand(line);
+	async continueCommand(line: string, from?: CommandFrom): Promise<void> {
+		if (!this.flowActive) return this.command(line, from);
+		await this.runCommand(line, from);
 	}
 
-	private async runCommand(line: string): Promise<void> {
+	private async runCommand(line: string, from?: CommandFrom): Promise<void> {
 		const [name = "", ...rest] = line.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
 		const s = this.session;
+		if (from && SESSION_SCOPED.has(name)) {
+			if (from.sessionId === undefined) throw new Error(`/${name}: no session highlighted`);
+			if (!LIST_TARGETABLE.has(name)) throw new Error(`/${name} works on the open session: open the session first`);
+			return this.commandOnListed(name, arg, from.sessionId);
+		}
 		switch (name) {
 			case "sessions":
 				return showSessions(this);
@@ -777,28 +1085,85 @@ export class App {
 			case "quit":
 				return this.quit();
 			case "title":
-				if (!arg) throw new Error("usage: /title <title>");
-				return s.patch({ title: arg });
+			case "approval": {
+				const target = s.target;
+				if (!target || target.worker) throw new Error("no session open");
+				return this.editSession(name, arg, { label: "this session", title: target.title, mode: s.detail?.approval_mode, patch: (req) => s.patch(req) });
+			}
 			case "archive":
 			case "complete":
 				await s.patch({ archived: true });
 				this.session.close();
 				await this.refreshSessions();
 				return showSessions(this);
-			case "approval": {
-				if (arg !== "ask" && arg !== "auto") throw new Error("usage: /approval ask|auto");
-				if (arg === "auto" && !(await this.confirmAuto("approval mode", "Switch this session to auto? Tools will run without asking."))) return;
-				return s.patch({ approval_mode: arg });
-			}
 			default:
 				throw new Error(`unknown command /${name} · /help`);
 		}
 	}
 
+	/** A session-scoped command chosen from the sessions list, applied to the highlighted session (which need not be the open one). */
+	private async commandOnListed(name: string, arg: string, id: number): Promise<void> {
+		const patch = async (req: PatchSessionRequest): Promise<void> => {
+			await this.api().patchSession(id, req);
+			await this.refreshSessions();
+		};
+		switch (name) {
+			case "title":
+			case "approval": {
+				const summary = this.sessions.find((x) => x.id === id);
+				const open = this.session.target?.id === id ? this.session : undefined;
+				return this.editSession(name, arg, {
+					label: `#${id}`,
+					title: summary?.title ?? open?.target?.title ?? "",
+					mode: summary?.approval_mode ?? open?.detail?.approval_mode,
+					patch,
+				});
+			}
+			case "archive":
+			case "complete":
+				await patch({ archived: true });
+				if (this.session.target?.id === id) this.session.close();
+				return; // the sessions list is still open and re-shows itself
+		}
+	}
+
+	/**
+	 * /title and /approval on one session, shared by the open session and the sessions list. Without an argument (always the
+	 * case from a list row) /title asks for the new title and /approval picks the mode; Esc or an empty title cancels.
+	 */
+	private async editSession(
+		name: "title" | "approval",
+		arg: string,
+		target: { label: string; title: string; mode: ApprovalMode | undefined; patch: (req: PatchSessionRequest) => Promise<void> },
+	): Promise<void> {
+		if (name === "title") {
+			const title = arg || (await this.ask(`rename ${target.label}`, { initial: target.title }))?.trim();
+			if (!title) return;
+			return target.patch({ title });
+		}
+		let mode: string | undefined = arg;
+		if (!mode) {
+			const picked = await this.pick(
+				`${target.label} · approval mode`,
+				(["ask", "auto"] as const).map((value) => ({ value, label: value })),
+				{ selected: target.mode === "auto" ? 1 : 0 },
+			);
+			mode = picked?.value;
+			if (!mode) return;
+		}
+		if (mode !== "ask" && mode !== "auto") throw new Error("usage: /approval ask|auto");
+		if (mode === "auto" && !(await this.confirmAuto("approval mode", `Switch ${target.label} to auto? Tools will run without asking.`))) return;
+		return target.patch({ approval_mode: mode });
+	}
+
 	private async help(): Promise<void> {
-		const width = Math.max(...HELP.map(([key]) => key.length));
+		const width = Math.max(...[...HELP, ...HELP_PROVIDED].map(([key]) => key.length));
+		const row = ([key, what]: readonly [string, string]): string => `${c.accent(key.padEnd(width))}  ${what}`;
 		const lines = [
-			...HELP.map(([key, what]) => `${c.accent(key.padEnd(width))}  ${what}`),
+			...HELP.map(row),
+			"",
+			c.dim("provided by the terminal / pi-tui"),
+			...HELP_PROVIDED.map(row),
 			"",
 			`${c.accent("commands")}  ${c.dim(COMMANDS.map((cmd) => `/${cmd.name}${cmd.argumentHint ? ` ${cmd.argumentHint}` : ""}`).join("  "))}`,
 		];
@@ -807,35 +1172,41 @@ export class App {
 
 	/**
 	 * Show a modal and focus it; `cancel` dismisses it as Esc would (used by `Ctrl+C`). Returns a function that closes it.
-	 * Every modal is full-screen: a 100% × 100% overlay at the top-left; a Panel stretches to the terminal height, so
-	 * every viewport cell is painted and no transcript shows through.
+	 * Every modal is a full-width overlay at the top-left; a Panel stretches to the terminal height minus the status row,
+	 * so no transcript shows through and the status line (messages, progress) stays visible and is never painted over.
 	 */
 	openModal(component: Component, cancel: () => void): () => void {
-		if (component instanceof Panel) component.stretch(() => this.terminal.rows);
+		if (component instanceof Panel) component.stretch(() => Math.max(1, this.terminal.rows - 1));
 		const handle = this.tui.showOverlay(component, { width: "100%", maxHeight: "100%", anchor: "top-left" });
 		this.modals.push({ handle, cancel });
 		this.tui.requestRender();
 		return () => {
 			handle.hide();
 			this.modals = this.modals.filter((m) => m.handle !== handle);
-			if (this.modals.length === 0) this.tui.setFocus(this.session.composer);
+			if (this.modals.length === 0) {
+				this.tui.setFocus(this.session.composer);
+				this.retryInitial();
+			}
 			this.tui.requestRender();
 		};
 	}
 
-	/** Rows available for a list inside a full-screen modal with `extra` other lines (border, footer and the gap above the list take 4). */
+	/** Rows available for a list inside a modal with `extra` other lines (border, footer, the gap above the list and the status row take 5). */
 	listRows(extra: number): number {
-		return Math.max(3, this.terminal.rows - 4 - extra);
+		return Math.max(3, this.terminal.rows - 5 - extra);
 	}
 
 	/**
-	 * A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value.
+	 * A list modal. Resolves with the chosen value and key (`enter` or one of `keys`), or undefined on Esc. On an empty list, `keys` resolve without a value; Enter does nothing.
 	 * `keys` entries are a single character (matched literally) or a named key id such as "left" / "right" (matched with `matchesKey`).
+	 * `/` starts a filter, which keeps the selected row while it is still shown; Esc clears the filter, a second Esc closes the list.
+	 * `emptyHint` is the footer of an empty list (default "Esc back"; name the `keys` that still work there).
+	 * The list follows terminal resizes: it is rebuilt at the new height with the selected row kept.
 	 */
 	pick<T>(
 		title: string,
 		items: PickItem<T>[],
-		options: { lines?: string[]; hint?: string; keys?: string[]; selected?: number; commands?: boolean } = {},
+		options: { lines?: string[]; hint?: string; emptyHint?: string; keys?: string[]; selected?: number; commands?: boolean } = {},
 	): Promise<Picked<T> | undefined> {
 		const { promise, resolve } = Promise.withResolvers<Picked<T> | undefined>();
 		const entries: SelectItem[] = items.map((item, i) => ({
@@ -851,63 +1222,74 @@ export class App {
 		};
 		const chosen = (key: string): void => {
 			const item = list.getSelectedItem();
-			if (item?.value.startsWith(COMMAND_PREFIX)) return finish({ key, command: item.value.slice(COMMAND_PREFIX.length) });
+			if (item?.value.startsWith(COMMAND_PREFIX)) return finish({ key, command: item.value.slice(COMMAND_PREFIX.length), ...(anchor === undefined ? {} : { value: anchor }) });
 			if (!item && items.length > 0) return; // a filter without matches: Enter does nothing
 			const picked = item ? items[Number(item.value)] : undefined;
 			finish(picked ? { key, value: picked.value } : items.length === 0 ? { key } : undefined);
 		};
 		// SelectList has no setItems and its setFilter is a prefix match on value, so a filter rebuilds the list from
 		// the matching entries; their values stay the original indexes, so a choice maps back to `items`.
-		const makeList = (shown: SelectItem[]): SelectList => {
-			const next = new SelectList(shown, rows(), selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
+		let shown = entries;
+		/** The item row highlighted when the filter started: what a slash command chosen from the filter acts on. */
+		let anchor: T | undefined;
+		let builtRows = rows();
+		const makeList = (): SelectList => {
+			const next = new SelectList(shown, builtRows, selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
 			next.onSelect = () => chosen("enter");
 			next.onCancel = () => finish(undefined);
 			return next;
 		};
-		let list = makeList(entries);
+		let list = makeList();
 		if (options.selected !== undefined) list.setSelectedIndex(options.selected);
+		/** Show `next` rows at the current terminal height, keeping the selected row when it is still shown (a filter changed, or a resize). */
+		const rebuild = (next: SelectItem[]): void => {
+			const previous = list.getSelectedItem()?.value;
+			shown = next;
+			builtRows = rows();
+			list = makeList();
+			list.setSelectedIndex(indexOfValue(shown, previous));
+		};
 		const child: Component = {
 			get capturesViewportInput() {
 				return list.capturesViewportInput;
 			},
-			render: (width) => list.render(width),
+			render: (width) => {
+				if (rows() !== builtRows) rebuild(shown); // the terminal was resized: a shrink must not hide the selected row
+				return list.render(width);
+			},
 			handleInput: (data) => list.handleInput(data),
 			handleMouse: (event) => list.handleMouse(event),
 			invalidate: () => list.invalidate(),
 		};
-		const baseHint = `${options.hint ?? "Enter select · Esc close"}${items.length === 0 ? "" : options.commands ? " · / filter or command" : " · / filter"}`;
+		const hintFor = (filter: string | undefined): string =>
+			pickHint({ itemCount: items.length, query: filter, hint: options.hint ?? "Enter select · Esc close", emptyHint: options.emptyHint ?? "Esc back", commands: options.commands === true });
 		let query: string | undefined;
 		const refilter = (): void => {
-			if (query === undefined) {
-				list = makeList(entries);
-				panel.setHint(baseHint);
-			} else {
+			if (query === undefined) rebuild(entries);
+			else {
 				const needle = query.toLowerCase();
 				const matches = entries.filter((e) => stripTerminalSequences(`${e.label} ${e.description ?? ""}`).toLowerCase().includes(needle));
 				const cmds: SelectItem[] = options.commands
 					? commandRows(query).map((cmd) => ({ value: `${COMMAND_PREFIX}${cmd.name}`, label: c.accent(`/${cmd.name}`), description: cmd.description }))
 					: [];
-				list = makeList([...cmds, ...matches]);
-				panel.setHint(`/${query}▏ · Enter select · Esc ${query === "" ? "close" : "clear filter"}`);
+				rebuild([...cmds, ...matches]);
 			}
+			panel.setHint(hintFor(query));
 			this.tui.requestRender();
 		};
 		const panel = new Panel(title, {
 			lines: items.length === 0 ? [...(options.lines ?? []), c.dim("(none)")] : (options.lines ?? []),
 			child: items.length === 0 ? undefined : child,
-			hint: items.length === 0 ? (options.hint ?? "Enter select · Esc close") : baseHint,
+			hint: hintFor(undefined),
 			onKey: (data) => {
 				if (items.length === 0 && (matchesKey(data, "enter") || matchesKey(data, "escape"))) {
-					finish(undefined);
+					if (matchesKey(data, "escape")) finish(undefined); // Enter on an empty list does nothing
 					return true;
 				}
 				if (query !== undefined) {
 					if (matchesKey(data, "escape")) {
-						if (query === "") finish(undefined);
-						else {
-							query = undefined;
-							refilter();
-						}
+						query = undefined; // Esc leaves the filter first, even an empty one; only the next Esc closes the list
+						refilter();
 						return true;
 					}
 					if (matchesKey(data, "backspace")) {
@@ -930,6 +1312,8 @@ export class App {
 					return false;
 				}
 				if (items.length > 0 && data === "/") {
+					const at = list.getSelectedItem();
+					anchor = at && !at.value.startsWith(COMMAND_PREFIX) ? items[Number(at.value)]?.value : undefined;
 					query = "";
 					refilter();
 					return true;

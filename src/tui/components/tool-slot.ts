@@ -42,6 +42,18 @@ function wrapRows(source: string[], inner: number, limit: number, out: string[],
 	return 0;
 }
 
+/**
+ * Hard-wrap preformatted lines into rows and keep only the LAST `limit` rows (output ends are what matter).
+ * Returns how many source lines are hidden entirely; a line cut part-way still shows its tail rows.
+ */
+export function wrapTail(source: string[], inner: number, limit: number): { rows: string[]; hidden: number } {
+	const all: Array<{ piece: string; line: number }> = [];
+	for (const [line, text] of source.entries()) for (const piece of hardWrap(text, inner)) all.push({ piece, line });
+	const kept = all.slice(-limit);
+	const first = kept[0];
+	return { rows: kept.map((r) => r.piece), hidden: first ? first.line : 0 };
+}
+
 /** A tool call: status, name and argument summary, then the output tail; Enter (via the transcript) expands it. */
 export class ToolSlotView implements Component {
 	private block: ToolBlock;
@@ -99,21 +111,37 @@ export class ToolSlotView implements Component {
 						: "";
 		const lines = ["", row(`${STATUS[status]} ${c.bold(c.tool(oneLine(name)))} ${c.dim(argsSummary(name, args))}${label}`)];
 		const more = (count: number): string => row(c.dim(`  ⋮ ${count} more line${count === 1 ? "" : "s"}`));
-		if (this.expanded && args !== undefined && !(typeof args === "object" && args !== null && "command" in args && Object.keys(args).length === 1)) {
-			const cut = wrapRows(sanitizeText(JSON.stringify(args, null, 2) ?? "").split("\n"), inner, MAX_EXPANDED_ROWS, lines, (piece) => row(` ${c.dim(piece)}`));
-			if (cut > 0) lines.push(more(cut));
+		if (this.expanded && args !== undefined) {
+			const dim = (piece: string): string => row(` ${c.dim(piece)}`);
+			let rest: unknown = args;
+			// A multi-line command is shown whole (the header only has its first line).
+			if (typeof args === "object" && args !== null && typeof (args as { command?: unknown }).command === "string") {
+				const { command, ...others } = args as Record<string, unknown>;
+				if ((command as string).includes("\n")) {
+					const cut = wrapRows(sanitizeText(`$ ${command as string}`).split("\n"), inner, MAX_EXPANDED_ROWS, lines, dim);
+					if (cut > 0) lines.push(more(cut));
+					rest = Object.keys(others).length > 0 ? others : undefined;
+				} else if (Object.keys(others).length === 0) rest = undefined;
+			}
+			if (rest !== undefined) {
+				const cut = wrapRows(sanitizeText(JSON.stringify(rest, null, 2) ?? "").split("\n"), inner, MAX_EXPANDED_ROWS, lines, dim);
+				if (cut > 0) lines.push(more(cut));
+			}
 		}
 		const text = sanitizeText(output).replace(/\n+$/, "");
 		if (text !== "") {
 			const all = text.split("\n");
-			const shown = this.expanded ? all : all.slice(-TAIL_LINES);
-			const hidden = all.length - shown.length + (droppedLines ?? 0);
-			if (hidden > 0) lines.push(row(c.dim(`  ⋮ ${hidden} earlier line${hidden === 1 ? "" : "s"}${this.expanded ? "" : " · Enter expands"}`)));
 			const paint = (piece: string): string => row(` ${status === "error" ? c.error(piece) : piece}`);
 			if (this.expanded) {
-				const cut = wrapRows(shown, inner, MAX_EXPANDED_ROWS, lines, paint);
-				if (cut > 0) lines.push(more(cut));
+				// Like the collapsed view, the expanded one shows the tail; the notice says which end is cut.
+				const { rows, hidden: cut } = wrapTail(all, inner, MAX_EXPANDED_ROWS);
+				const hidden = cut + (droppedLines ?? 0);
+				if (hidden > 0) lines.push(row(c.dim(`  … first ${hidden} line${hidden === 1 ? "" : "s"} hidden`)));
+				for (const piece of rows) lines.push(paint(piece));
 			} else {
+				const shown = all.slice(-TAIL_LINES);
+				const hidden = all.length - shown.length + (droppedLines ?? 0);
+				if (hidden > 0) lines.push(row(c.dim(`  ⋮ ${hidden} earlier line${hidden === 1 ? "" : "s"} · Enter expands`)));
 				for (const line of shown) lines.push(paint(line));
 			}
 		}

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Component, ScrollView } from "@earendil-works/pi-tui";
 import type {
 	InputMode,
+	PendingApproval,
 	PendingQuestion,
 	PatchSessionRequest,
 	SessionDetail,
@@ -17,32 +18,226 @@ import { ReconnectingSocket, type SocketState } from "../client.js";
 import { readClipboard, stripPasteMarkers, WL_CLIPBOARD_HINT } from "../clipboard.js";
 import { Composer } from "../components/composer.js";
 import { QuestionPanel } from "../components/question-panel.js";
-import { Transcript } from "../components/transcript.js";
-import { BUSY_MESSAGE } from "../keys.js";
-import { ConversationReplica, liveOf, usageOf, type ViewUsage } from "../replica.js";
+import { Transcript, type PendingBlock } from "../components/transcript.js";
+import { BUSY_MESSAGE, COMMANDS } from "../keys.js";
+import { type Block, ConversationReplica, type ImagePart, liveOf, usageOf, type ViewUsage } from "../replica.js";
 import { c } from "../theme.js";
 import { startSession } from "./new-session.js";
 import { WorkersStrip } from "./workers.js";
 
 /** The transcript's primary scroll view; scrolling up into its top calls `onTop` (to load earlier history). */
-class TranscriptScroll extends ScrollView {
+export class TranscriptScroll extends ScrollView {
+	/** Rows prepended above the viewport that the next layout should scroll past, so the user stays where they were. */
+	private shift = 0;
+
 	constructor(
 		content: Component,
 		private readonly onTop: () => void,
+		private readonly onAway: () => void = () => {},
 	) {
 		super(content, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
 	}
 
 	override scrollBy(lines: number): number {
 		const remaining = super.scrollBy(lines);
-		if (lines < 0 && this.scrollTop === 0) this.onTop();
+		if (this.scrollTop > 0) this.onAway();
+		else if (lines < 0) this.onTop();
 		return remaining;
+	}
+
+	/** Forget a pending `keepPosition` (the content it was measured against is gone). */
+	clearKeep(): void {
+		this.shift = 0;
+	}
+
+	/** `rows` were added above the current content: keep the visible lines where they are (applied on the next layout, when the new height is known). */
+	keepPosition(rows: number): void {
+		this.shift = rows;
+	}
+
+	override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+		const shift = this.shift;
+		this.shift = 0;
+		const following = this.isFollowingEnd;
+		super.updateLayout(contentHeight, viewportHeight, requestRender);
+		if (shift > 0 && !following) this.scrollTo(this.scrollTop + shift, { disableFollow: true });
 	}
 
 	override scrollToStart(): void {
 		super.scrollToStart();
 		this.onTop();
 	}
+}
+
+/** Where submitted composer text goes. */
+export type SubmitRoute = "attach" | "command" | "answer" | "prompt";
+
+/**
+ * Routing order for submitted text: `/attach` first; then, with a question pending and non-empty text, the text is the
+ * ANSWER unless its first token is exactly a known command (so a path like `/tmp/x` can be answered); then any other
+ * `/…` is a command (unknown ones are reported by `app.command`); everything else is a prompt.
+ */
+export function routeSubmit(text: string, questionPending: boolean): SubmitRoute {
+	if (/^\/attach(?:\s+(.*))?$/s.exec(text)) return "attach";
+	const isCommand = text.startsWith("/") && COMMANDS.some((cmd) => cmd.name === text.slice(1).split(/\s+/)[0]);
+	if (questionPending && text !== "") return isCommand ? "command" : "answer";
+	return text.startsWith("/") ? "command" : "prompt";
+}
+
+/**
+ * Idempotency key for a submission that may be retried: a failed send restores its text to the composer, so
+ * resubmitting the same text must reuse the requestId (the server dedupes on it); other text gets a fresh one.
+ */
+export class RequestIds {
+	private last: { text: string; id: string } | undefined;
+
+	/** The id for sending `text`: the previous one when it is the same text still awaiting success, else a new one. */
+	for(text: string): string {
+		if (this.last?.text !== text) this.last = { text, id: randomUUID() };
+		return this.last.id;
+	}
+
+	/** The send succeeded: the next submission is a new message. */
+	done(): void {
+		this.last = undefined;
+	}
+}
+
+/** Composer drafts per session (`""` = no session open), so typing in one session never leaks into another. */
+export class DraftStore {
+	private readonly drafts = new Map<string, string>();
+
+	constructor(private readonly cap = 50) {}
+
+	/** Remember `text` for `key` (blank text forgets it); the oldest drafts beyond the cap are dropped. */
+	stash(key: string, text: string): void {
+		this.drafts.delete(key);
+		if (text.trim() === "") return;
+		this.drafts.set(key, text);
+		for (const old of this.drafts.keys()) {
+			if (this.drafts.size <= this.cap) break;
+			this.drafts.delete(old);
+		}
+	}
+
+	/** Like `stash`, but never replaces an existing draft: for text recovered from a failed send, which must not clobber what the user typed since. */
+	stashIfEmpty(key: string, text: string): void {
+		if (this.drafts.has(key)) return;
+		this.stash(key, text);
+	}
+
+	/** Remove and return the draft for `key`. */
+	take(key: string): string | undefined {
+		const text = this.drafts.get(key);
+		this.drafts.delete(key);
+		return text;
+	}
+}
+
+/** `text` cut to at most `max` code points (never inside a surrogate pair), ending in `…` when cut. */
+export function shorten(text: string, max: number): string {
+	const points = Array.from(text);
+	return points.length > max ? `${points.slice(0, max - 1).join("")}…` : text;
+}
+
+/** Backs off a failing top-of-transcript history load: no retry until the user scrolls away from the top, or `delayMs` pass. */
+export class RetryGate {
+	private failedAt: number | undefined;
+	private away = false;
+
+	constructor(private readonly delayMs = 8000) {}
+
+	/** The load failed at `now`. */
+	failed(now: number): void {
+		this.failedAt = now;
+		this.away = false;
+	}
+
+	/** The load worked. */
+	ok(): void {
+		this.failedAt = undefined;
+	}
+
+	/** The user scrolled off the top. */
+	scrolledAway(): void {
+		this.away = true;
+	}
+
+	/** Whether a load may start at `now`. */
+	allows(now: number): boolean {
+		return this.failedAt === undefined || this.away || now - this.failedAt >= this.delayMs;
+	}
+}
+
+/** Notices when an aborted run actually stops (the abort request returns before the run does). */
+export class AbortWatch {
+	private at: number | undefined;
+
+	constructor(private readonly ttlMs = 30_000) {}
+
+	/** An abort was requested at `now`; only worth watching while the run is `running`. */
+	arm(now: number, running: boolean): void {
+		this.at = running ? now : undefined;
+	}
+
+	/** The abort request failed. */
+	disarm(): void {
+		this.at = undefined;
+	}
+
+	/** True once, the first time the run is seen stopped after `arm` (and not too long after). */
+	stopped(now: number, running: boolean): boolean {
+		if (this.at === undefined) return false;
+		if (now - this.at > this.ttlMs) {
+			this.at = undefined;
+			return false;
+		}
+		if (running) return false;
+		this.at = undefined;
+		return true;
+	}
+}
+
+/** An echo that is still unsettled this long after it was sent is dropped (a deduped retry or matching history never settles it). */
+export const ECHO_TTL_MS = 30_000;
+
+/** A sent message awaiting the watch: `seen` is how many identical user/queued blocks already existed when it was sent; `sentAt` is `Date.now()` then. */
+export type PendingEcho = { requestId: string; text: string; images: ImagePart[]; seen: number; sentAt: number };
+
+const sameText = (a: string, b: string): boolean => a.trim() === b.trim();
+
+/** How many user or queued blocks carry exactly `text` (modulo outer whitespace). */
+export function countUserBlocks(blocks: readonly Block[], text: string): number {
+	return blocks.filter((b) => (b.kind === "user" || b.kind === "queued") && sameText(b.text, text)).length;
+}
+
+/**
+ * The echoes still pending against `blocks`: one is settled (dropped) once more identical user/queued blocks exist than
+ * when it was sent, so the real block never shows next to its echo. The server does not return the requestId in entries,
+ * hence the text match. An echo older than `ECHO_TTL_MS` (at `now`) is dropped too.
+ */
+export function pendingEchoes(blocks: readonly Block[], echoes: readonly PendingEcho[], now = Date.now()): PendingEcho[] {
+	const counts = new Map<string, number>();
+	return echoes.filter((echo) => {
+		if (now - echo.sentAt >= ECHO_TTL_MS) return false;
+		const have = counts.get(echo.text) ?? countUserBlocks(blocks, echo.text);
+		counts.set(echo.text, have);
+		return have <= echo.seen;
+	});
+}
+
+/** The transcript block for a pending echo. */
+export function echoBlock(echo: PendingEcho): PendingBlock {
+	return { kind: "pending", key: `p:${echo.requestId}`, text: echo.text, ...(echo.images.length > 0 ? { images: echo.images } : {}) };
+}
+
+/**
+ * Whether a watch `end` reason is final: the session is deleted/not found or its source ended. Anything else (`closed`,
+ * `failed: …`, `listener_error: …`, `stopped`, `aborted`) leaves the session alive, so the socket reconnects.
+ */
+export function isTerminalEnd(reason: string): boolean {
+	if (/^(failed|listener_error):/.test(reason)) return false;
+	return /^ended$|delet|not[ _.-]?found/i.test(reason);
 }
 
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
@@ -64,9 +259,16 @@ export class SessionScreen {
 	replica: ConversationReplica | undefined;
 	workers: WorkerSummary[] = [];
 	watchState: SocketState = "closed";
+	/** Why the server ended the watch for good (see `isTerminalEnd`; no reconnect); cleared when the session is reopened or closed. */
+	watchEnded: string | undefined;
+	/** Set while ops frames are applied but not yet rebuilt: the transcript height before the first of them. */
+	private dirtyFrom: number | undefined;
+	private flushQueued = false;
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
-	private loadingEarlier = false;
-	private answering = false;
+	/** The replica whose earlier-history load is in flight (keyed by replica so a stale load never blocks another session). */
+	private loadingEarlier: ConversationReplica | undefined;
+	/** The in-flight answer (per target, so an answer pending in a closed session never blocks another). */
+	private answering: { target: SessionTarget | undefined } | undefined;
 	/** Stale guard for `refreshDetail`/`patch`: the latest detail fetch wins. */
 	private detailFetch = 0;
 	/** Stale guards for `refreshWorkers`: the latest fetch wins, and events newer than a fetch's start win over its result. */
@@ -74,7 +276,19 @@ export class SessionScreen {
 	private eventSeq = 0;
 	/** Numbers the images pasted with Ctrl+V (`pasted-1.png`). */
 	private pasteSeq = 0;
+	private readonly requestIds = new RequestIds();
+	private readonly drafts = new DraftStore();
 	private workerStamp = new Map<string, number>();
+	/** Sent messages the watch has not delivered yet (shown as local echoes at the transcript end). */
+	private echoes: PendingEcho[] = [];
+	/** Fires when the oldest echo reaches its TTL, so it goes away without waiting for a frame. */
+	private echoTimer: ReturnType<typeof setTimeout> | undefined;
+	private earlierRetry = new RetryGate();
+	private readonly abortWatch = new AbortWatch();
+	/** Output arrived while the view was scrolled up (cleared on return to the end). */
+	private newOutput = false;
+	/** Whether the view was following the end when transcript navigation started, so leaving it can resume following. */
+	private followBeforeSelect = true;
 
 	constructor(private readonly app: App) {
 		this.composer = new Composer(app.tui, {
@@ -88,7 +302,15 @@ export class SessionScreen {
 			target: () => (!this.target ? { kind: "default" } : this.target.worker ? { kind: "none" } : { kind: "session", id: this.target.id }),
 		});
 		this.questions = new QuestionPanel(app, () => this.target);
-		this.scroll = new TranscriptScroll(this.transcript, () => this.maybeLoadEarlier());
+		this.scroll = new TranscriptScroll(
+			this.transcript,
+			() => this.maybeLoadEarlier(),
+			() => this.earlierRetry.scrolledAway(),
+		);
+		this.composer.cue = () => {
+			if (this.scroll.isFollowingEnd) this.newOutput = false;
+			return this.newOutput ? "↓ new output" : "";
+		};
 		this.composer.onSubmit = (text) => this.submitted(text);
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
 	}
@@ -96,7 +318,8 @@ export class SessionScreen {
 	/** Watch a conversation: snapshot then ops; reconnects resume from the replica's window. */
 	open(target: SessionTarget): void {
 		const cur = this.target;
-		if (cur && this.replica && cur.id === target.id && cur.worker?.name === target.worker?.name) {
+		// A watch that ended (`end` frame) is gone while target/replica stay: that falls through to a full reopen.
+		if (cur && this.replica && this.watch && cur.id === target.id && cur.worker?.name === target.worker?.name) {
 			// Re-opening what is already open: keep the transcript, scroll and expanded state; just refresh.
 			void this.refreshDetail();
 			void this.refreshWorkers();
@@ -104,7 +327,8 @@ export class SessionScreen {
 			this.app.changed();
 			return;
 		}
-		this.close();
+		this.stashDraft();
+		this.reset();
 		const client = this.app.api();
 		const id = target.id;
 		this.target = target;
@@ -115,8 +339,18 @@ export class SessionScreen {
 			url: () => client.watchUrl(id, replica.resume),
 			onFrame: (frame) => this.onFrame(replica, frame),
 			onOpen: (reconnect) => {
-				if (reconnect) void this.app.refresh();
+				if (reconnect) {
+					// The snapshot that follows reflects everything the server has: no echo may outlive it.
+					if (replica === this.replica && this.echoes.length > 0) {
+						this.echoes = [];
+						this.rebuild();
+					}
+					void this.app.refresh();
+				}
 				void this.refreshWorkers();
+			},
+			onError: (message) => {
+				if (replica === this.replica) this.app.flash(`✗ ${message}`, 8000);
 			},
 			onState: (state, detail) => {
 				if (state === "waiting" && this.watchState === "open") this.app.flash(`watch: ${detail ?? "disconnected"}`);
@@ -128,11 +362,30 @@ export class SessionScreen {
 		void this.refreshDetail();
 		this.rebuild();
 		this.scroll.scrollToEnd();
+		this.restoreDraft();
 		this.app.changed();
 	}
 
 	/** Stop watching and clear the view. */
 	close(): void {
+		if (this.target) this.stashDraft();
+		this.reset();
+		this.restoreDraft();
+	}
+
+	/** Stash the composer text under the open session (or `""`) and clear the composer, ahead of switching away. */
+	private stashDraft(): void {
+		this.drafts.stash(this.target ? String(this.target.id) : "", this.composer.getExpandedText());
+		this.composer.clearAll();
+	}
+
+	/** Put back the draft of whatever is now open (or of no session), unless the composer already has text. */
+	private restoreDraft(): void {
+		const draft = this.drafts.take(this.target ? String(this.target.id) : "");
+		if (draft !== undefined && this.composer.getExpandedText().trim() === "") this.composer.setText(draft);
+	}
+
+	private reset(): void {
 		this.watch?.close();
 		this.watch = undefined;
 		this.target = undefined;
@@ -142,17 +395,31 @@ export class SessionScreen {
 		this.detailFetch++;
 		this.workersFetch++;
 		this.workerStamp.clear();
+		this.echoes = [];
+		clearTimeout(this.echoTimer);
+		this.echoTimer = undefined;
+		this.dirtyFrom = undefined;
+		this.newOutput = false;
+		this.followBeforeSelect = true;
+		this.loadingEarlier = undefined;
+		this.answering = undefined;
+		this.earlierRetry = new RetryGate();
+		this.abortWatch.disarm();
+		this.scroll.clearKeep();
 		this.strip.update([], undefined);
 		this.watchState = "closed";
+		this.watchEnded = undefined;
 		this.transcript.setEmptyText("No session open · Ctrl+N new session · Ctrl+L or ←← sessions · Ctrl+T workspaces · ? help");
 		this.transcript.update([]);
 	}
 
 	private onFrame(replica: ConversationReplica, frame: WatchFrame): void {
 		if (replica !== this.replica) return;
+		const heightBefore = this.dirtyFrom ?? this.transcript.lineCount();
 		switch (frame.t) {
 			case "snapshot":
 				replica.snapshot(frame.value);
+				this.echoes = [];
 				this.transcript.setEmptyText("empty conversation");
 				break;
 			case "ops":
@@ -163,26 +430,71 @@ export class SessionScreen {
 					this.watch?.reconnect();
 					return;
 				}
-				break;
+				// Several ops frames in one tick (a burst after a stall) share one rebuild, run when the tick ends.
+				this.dirtyFrom ??= heightBefore;
+				if (!this.flushQueued) {
+					this.flushQueued = true;
+					queueMicrotask(() => {
+						this.flushQueued = false;
+						if (this.dirtyFrom !== undefined && this.replica) this.afterFrame(this.replica, this.dirtyFrom);
+					});
+				}
+				return;
 			case "end":
 				this.app.flash(`watch ended: ${frame.reason}`);
-				if (/delet|not.found/i.test(frame.reason)) {
+				if (isTerminalEnd(frame.reason)) {
+					// The server will not resume this watch, so stop the socket (it would reconnect forever and flash each cycle).
+					// The transcript stays; opening the session again (no watch left) starts a fresh one.
 					this.watch?.close();
 					this.watch = undefined;
+					this.watchEnded = frame.reason;
+					this.transcript.setEmptyText(`○ watch ended: ${frame.reason}`);
 				}
+				// Any other reason (closed, failed: …, listener_error: …): the server closes the socket, which reconnects.
 				break;
 			case "pong":
 				return;
 		}
+		this.afterFrame(replica, heightBefore);
+	}
+
+	/** Rebuild after one or more applied frames; `heightBefore` is the transcript height before the first of them. */
+	private afterFrame(replica: ConversationReplica, heightBefore: number): void {
+		this.dirtyFrom = undefined;
 		this.rebuild();
+		if (!this.scroll.isFollowingEnd && this.transcript.lineCount() > heightBefore) this.newOutput = true;
+		if (this.abortWatch.stopped(Date.now(), replica.running)) this.app.flash("aborted");
 		this.app.changed();
 	}
 
 	/** Re-derive transcript blocks (after ops, or when pending approvals change). */
 	rebuild(): void {
 		if (!this.replica || !this.target) return;
-		this.transcript.update(this.replica.blocks(this.app.pendingCalls(this.target.id), this.app.askingCalls(this.target.id)));
+		const blocks = this.derive();
+		if (!blocks) return;
+		this.echoes = pendingEchoes(blocks, this.echoes);
+		this.scheduleEchoExpiry();
+		this.transcript.update([...blocks, ...this.echoes.map(echoBlock)]);
 		this.strip.update(this.workers, this.todo());
+	}
+
+	/** Re-arm the timer for the oldest echo's expiry (none when no echo is pending). */
+	private scheduleEchoExpiry(): void {
+		clearTimeout(this.echoTimer);
+		this.echoTimer = undefined;
+		if (this.echoes.length === 0) return;
+		const oldest = Math.min(...this.echoes.map((e) => e.sentAt));
+		this.echoTimer = setTimeout(() => {
+			this.echoTimer = undefined;
+			this.rebuild();
+			this.app.changed();
+		}, Math.max(0, oldest + ECHO_TTL_MS - Date.now()) + 1);
+		this.echoTimer.unref?.();
+	}
+
+	private derive(): Block[] | undefined {
+		if (!this.replica || !this.target) return undefined;
+		return this.replica.blocks(this.app.pendingCalls(this.target.id), this.app.askingCalls(this.target.id));
 	}
 
 	private todo(): { done: number; total: number } | undefined {
@@ -192,10 +504,19 @@ export class SessionScreen {
 		return { done, total: items.length };
 	}
 
+	/** Whether a pending approval is this session's: its own conversation, or one of its workers' (they carry the worker's conversation id). */
+	private ownsApproval(approval: PendingApproval): boolean {
+		const target = this.target;
+		if (!target) return false;
+		if (approval.conversationId === target.id) return true;
+		if (target.worker) return false;
+		return approval.sessionId === target.id || this.workers.some((w) => w.conversationId === approval.conversationId);
+	}
+
 	/** Session state as derived from the replica, pending approvals and live workers. */
 	state(): SessionState {
 		if (!this.target || !this.replica) return "idle";
-		if (this.app.approvals.some((a) => a.conversationId === this.target?.id)) return "waiting";
+		if (this.app.approvals.some((a) => this.ownsApproval(a))) return "waiting";
 		if (this.replica.running) return "running";
 		if (liveOf(this.replica.view?.docs).runFailure) return "failed";
 		return this.workers.some((w) => w.state === "starting" || w.state === "running") ? "working" : "idle";
@@ -215,7 +536,7 @@ export class SessionScreen {
 				: this.target.worker
 				? `worker ${this.target.worker.name} · read-only · Esc back`
 				: this.state() === "running" || this.state() === "waiting"
-					? "running · Enter steers · Ctrl+Q queues a follow-up · Esc clears / aborts when empty"
+					? "running · Enter steers · Ctrl+Q queues · Esc clears / aborts"
 					: "prompt · Enter sends · Shift+Enter newline · / commands";
 		this.composer.setLabel(label);
 	}
@@ -253,6 +574,7 @@ export class SessionScreen {
 		if (deleted) {
 			this.app.flash(`session #${id} was deleted`);
 			this.close();
+			this.drafts.take(String(id));
 			this.app.changed();
 			return;
 		}
@@ -294,12 +616,19 @@ export class SessionScreen {
 		const staged = this.composer.stagedImages();
 		if (text === "" && staged.length === 0) return;
 		if (text !== "") this.composer.addToHistory(text);
-		const attach = /^\/attach(?:\s+(.*))?$/s.exec(text);
-		if (attach) {
-			this.app.guard(() => this.attach((attach[1] ?? "").trim()));
+		const question = this.questions.current();
+		if (question && text === "") {
+			// Enter on staged images with a question open would steer them as an empty message and leave the question unanswered.
+			this.app.flash("answer the question first — images stay staged");
 			return;
 		}
-		if (text.startsWith("/")) {
+		const route = routeSubmit(text, question !== undefined);
+		if (route === "attach") {
+			const arg = /^\/attach(?:\s+(.*))?$/s.exec(text)?.[1] ?? "";
+			this.keepOnFail(text, () => this.attach(arg.trim()));
+			return;
+		}
+		if (route === "command") {
 			this.keepOnFail(text, async () => {
 				// Another flow is running: refuse loudly (the text stays in the composer) instead of dropping the command.
 				if (this.app.busy) throw new Error(BUSY_MESSAGE);
@@ -307,9 +636,8 @@ export class SessionScreen {
 			});
 			return;
 		}
-		const question = this.questions.current();
-		if (question && text !== "") {
-			this.app.guard(() => this.answerQuestion(question, text));
+		if (route === "answer" && question) {
+			this.keepOnFail(text, () => this.answerQuestion(question, text));
 			return;
 		}
 		if (!this.target) {
@@ -324,13 +652,24 @@ export class SessionScreen {
 		this.keepOnFail(text, () => this.send(text, running ? "steer" : "prompt"));
 	}
 
+	/** Whether `target` is (still) what the view shows; a reopen of the same session or worker counts as the same. */
+	private isCurrent(target: SessionTarget | undefined): boolean {
+		const cur = this.target;
+		return cur === target || (cur !== undefined && target !== undefined && cur.id === target.id && cur.worker?.name === target.worker?.name);
+	}
+
 	/** Run a flow for submitted text; if it fails (the error is flashed), put the text back unless the user has typed something new. */
 	private keepOnFail(text: string, flow: () => Promise<unknown>): void {
+		const submittedTo = this.target;
 		this.app.guard(async () => {
 			try {
 				await flow();
 			} catch (err) {
-				if (this.composer.getExpandedText().trim() === "") this.composer.setText(text);
+				// Only into the session the text was submitted to: the user may have switched away while the flow ran, in
+				// which case it waits in that session's draft (unless it already has one) for when they switch back.
+				if (this.isCurrent(submittedTo)) {
+					if (this.composer.getExpandedText().trim() === "") this.composer.setText(text);
+				} else this.drafts.stashIfEmpty(submittedTo ? String(submittedTo.id) : "", text);
 				throw err;
 			}
 		});
@@ -338,11 +677,12 @@ export class SessionScreen {
 
 	/** Answer an inline question (highlighted option or typed text), then refresh so the panel moves on or collapses. */
 	async answerQuestion(question: PendingQuestion, answer: string): Promise<void> {
-		if (this.answering) {
-			this.app.flash("still answering\u2026");
-			return;
-		}
-		this.answering = true;
+		// Throw (not flash+return) so `keepOnFail` puts the submitted text back instead of silently dropping it.
+		const target = this.target;
+		if (this.answering && this.answering.target === target) throw new Error("still answering\u2026");
+		const following = this.scroll.isFollowingEnd;
+		const mine = { target };
+		this.answering = mine;
 		try {
 			if (question.fields?.length) {
 				// A form: collect this field; send everything only after the last one.
@@ -352,14 +692,14 @@ export class SessionScreen {
 				this.app.flash(`answered ${answers.length} fields`);
 			} else {
 				await this.app.api().answer(question.callId, { answer, conversationId: question.conversationId });
-				this.app.flash(`answered: ${answer.length > 40 ? `${answer.slice(0, 39)}…` : answer}`);
+				this.app.flash(`answered: ${shorten(answer, 40)}`);
 			}
 		} finally {
-			this.answering = false;
+			if (this.answering === mine) this.answering = undefined;
 			// Refetch on success and failure (e.g. the question expired) so the panel self-heals.
 			await this.app.refreshQuestions();
 		}
-		this.scroll.scrollToEnd();
+		if (following && this.isCurrent(target)) this.scroll.scrollToEnd();
 	}
 
 	/** `/attach <path>` stages a local image for the next message; `/attach clear` drops the staged ones. */
@@ -382,7 +722,7 @@ export class SessionScreen {
 
 	/** Ctrl+V: stage the system clipboard's image; with no image, paste its text into the composer. */
 	async pasteClipboard(): Promise<void> {
-		if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
+		// The limit only matters for an image: a full list must not refuse a text paste (checked again once the clipboard is read).
 		const { available, image: data, text, wlPasteMissing } = await readClipboard();
 		if (data) {
 			const image = clipboardImage(data, this.pasteSeq + 1);
@@ -408,15 +748,39 @@ export class SessionScreen {
 		if (!target) throw new Error("no session open");
 		if (target.worker) throw new Error("worker transcripts are read-only · Esc back");
 		const images = [...this.composer.stagedImages()];
-		await this.app.api().input(target.id, {
-			content,
-			mode,
-			requestId: randomUUID(),
-			...(images.length > 0 ? { attachments: images.map((i) => i.attachment) } : {}),
-		});
-		this.composer.unstage(images);
-		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
+		const requestId = this.requestIds.for(content);
+		// Local echo: shown at once, dropped when the watch delivers the message (see `pendingEchoes`) or the send fails.
+		this.addEcho(requestId, content, images);
 		this.scroll.scrollToEnd();
+		try {
+			await this.app.api().input(target.id, {
+				content,
+				mode,
+				requestId,
+				...(images.length > 0 ? { attachments: images.map((i) => i.attachment) } : {}),
+			});
+		} catch (err) {
+			this.echoes = this.echoes.filter((e) => e.requestId !== requestId);
+			if (target === this.target) this.rebuild();
+			this.app.changed();
+			throw err;
+		}
+		this.requestIds.done();
+		if (mode !== "prompt") this.app.flash(mode === "steer" ? "steering…" : "queued as a follow-up");
+		// The user may have switched sessions while the request ran: the composer and scroll then belong to another one.
+		if (!this.isCurrent(target)) return;
+		this.composer.unstage(images);
+		this.scroll.scrollToEnd();
+	}
+
+	private addEcho(requestId: string, text: string, images: readonly { attachment: { data: string; mimeType: string } }[]): void {
+		const blocks = this.derive();
+		if (!blocks) return;
+		this.echoes = this.echoes.filter((e) => e.requestId !== requestId);
+		const earlier = this.echoes.filter((e) => e.text === text).length;
+		this.echoes.push({ requestId, text, images: images.map((i) => ({ data: i.attachment.data, mimeType: i.attachment.mimeType })), seen: countUserBlocks(blocks, text) + earlier, sentAt: Date.now() });
+		this.rebuild();
+		this.app.changed();
 	}
 
 	/** Ctrl+Q: send the composer text as a follow-up while running (a prompt when idle). */
@@ -427,9 +791,10 @@ export class SessionScreen {
 			return;
 		}
 		const running = this.state() === "running" || this.state() === "waiting";
+		const target = this.target;
 		await this.send(text, running ? "follow_up" : "prompt");
-		// Sent: clear the composer (unless the user has already edited it meanwhile).
-		if (this.composer.getExpandedText().trim() === text) this.composer.setText("");
+		// Sent: clear the composer (unless the user has switched session or edited it meanwhile).
+		if (this.isCurrent(target) && this.composer.getExpandedText().trim() === text) this.composer.setText("");
 		if (text !== "") this.composer.addToHistory(text);
 	}
 
@@ -452,8 +817,14 @@ export class SessionScreen {
 	async abort(): Promise<void> {
 		const target = this.target;
 		if (!target) return;
+		this.abortWatch.arm(Date.now(), this.replica?.running === true);
 		this.app.flash("aborting…");
-		await this.app.api().abort(target.id);
+		try {
+			await this.app.api().abort(target.id);
+		} catch (err) {
+			this.abortWatch.disarm();
+			throw err;
+		}
 	}
 
 	/** PATCH the open session, then refresh its detail and the list. */
@@ -471,17 +842,20 @@ export class SessionScreen {
 
 	/** Move the transcript selection; 0 enters navigation at the newest selectable block. */
 	moveSelection(delta: number): boolean {
+		const entering = !this.transcript.selecting;
+		const following = this.scroll.isFollowingEnd;
 		if (!this.transcript.moveSelection(delta)) return false;
+		if (entering) this.followBeforeSelect = following;
 		const line = this.transcript.selectedLine();
 		if (line !== undefined) this.scroll.scrollTo(Math.max(0, line - 2), { disableFollow: true });
 		this.app.tui.requestRender();
 		return true;
 	}
 
-	/** Leave navigation mode and follow the end again. */
+	/** Leave navigation mode; follows the end again only if the view was following it before navigation started. */
 	clearSelection(): void {
 		this.transcript.clearSelection();
-		this.scroll.scrollToEnd();
+		if (this.followBeforeSelect) this.scroll.scrollToEnd();
 		this.app.tui.requestRender();
 	}
 
@@ -497,6 +871,7 @@ export class SessionScreen {
 			const replica = this.replica;
 			this.app.guard(async () => {
 				await replica?.fillGap(action.after, action.upTo);
+				if (replica !== this.replica) return;
 				this.rebuild();
 				this.app.changed();
 			});
@@ -507,20 +882,31 @@ export class SessionScreen {
 	/** Load the page before the oldest entry held. */
 	async loadEarlier(): Promise<void> {
 		const replica = this.replica;
-		if (!replica || this.loadingEarlier) return;
-		this.loadingEarlier = true;
+		if (!replica || this.loadingEarlier === replica) return;
+		this.loadingEarlier = replica;
+		const retry = this.earlierRetry;
 		try {
 			await replica.loadEarlier();
+		} catch (err) {
+			retry.failed(Date.now());
+			throw err;
 		} finally {
-			this.loadingEarlier = false;
+			if (this.loadingEarlier === replica) this.loadingEarlier = undefined;
 		}
+		retry.ok();
+		// The session was closed or switched while the page loaded: nothing of it is on screen any more.
+		if (replica !== this.replica) return;
+		// The page lands above the viewport: remember how tall the content was so the view can stay on the same lines.
+		const before = this.transcript.lineCount();
 		this.rebuild();
+		const grown = this.transcript.lineCount() - before;
+		if (grown > 0) this.scroll.keepPosition(grown);
 		this.app.changed();
 	}
 
 	/** Load earlier history when the transcript is scrolled to its top. */
 	private maybeLoadEarlier(): void {
-		if (this.replica?.items[0]?.kind !== "earlier") return;
+		if (this.replica?.items[0]?.kind !== "earlier" || !this.earlierRetry.allows(Date.now())) return;
 		this.app.guard(() => this.loadEarlier());
 	}
 }

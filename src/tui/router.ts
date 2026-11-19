@@ -1,22 +1,9 @@
 import { matchesKey } from "@earendil-works/pi-tui";
 import type { SessionState } from "../api/types.js";
-import { DOUBLE_LEFT_WINDOW_MS, KEYS, matchesBinding } from "./keys.js";
+import { DOUBLE_LEFT_WINDOW_MS, type FlowHotkeyName, HOTKEY_TABLE, KEYS, matchesBinding } from "./keys.js";
 
-/** Hotkeys that open a flow (usually a modal); the interpreter maps each to its screen. */
-export type HotkeyName =
-	| "followUp"
-	| "approvals"
-	| "questions"
-	| "workers"
-	| "workerTranscript"
-	| "model"
-	| "modelCycle"
-	| "pasteImage"
-	| "newSession"
-	| "sessions"
-	| "workspaces"
-	| "settings"
-	| "help";
+/** Hotkeys that open a flow (usually a modal); the interpreter maps each to its screen. `help` is routed separately (empty composer only); the rest come from `HOTKEY_TABLE`. */
+export type HotkeyName = FlowHotkeyName | "help";
 
 /** What the key router decided; executed by `App.handleKey`. */
 export type KeyAction =
@@ -45,8 +32,6 @@ export type KeyAction =
 	/** Open the sessions list (Esc/← there continues up to the workspaces). */
 	| { type: "showSessions" }
 	| { type: "hotkey"; name: HotkeyName }
-	/** A flow-opening key while another flow runs: tell the user instead of dropping it silently. */
-	| { type: "busyFlash" }
 	| { type: "exit" };
 
 /** Everything the router needs to know; a plain snapshot, so routing is a pure function. */
@@ -69,33 +54,20 @@ export type RouteContext = {
 	questionOptions: boolean;
 	/** The key is a Kitty auto-repeat. */
 	repeating: boolean;
-	/** Another modal-opening flow is running. */
-	busy: boolean;
 	/** `Date.now()` and when the last bare Left on an empty composer happened (0: none). */
 	now: number;
 	lastLeft: number;
 };
 
-/** Hotkey bindings in dispatch order. */
-const HOTKEYS: readonly (readonly [HotkeyName, (data: string) => boolean])[] = [
-	["followUp", (d) => matchesBinding(d, KEYS.followUp)],
-	["approvals", (d) => matchesBinding(d, KEYS.approvals)],
-	["questions", (d) => matchesBinding(d, KEYS.questions)],
-	["workers", (d) => matchesBinding(d, KEYS.workers)],
-	["workerTranscript", (d) => matchesKey(d, KEYS.workerTranscript)],
-	["model", (d) => matchesBinding(d, KEYS.model)],
-	["modelCycle", (d) => matchesBinding(d, KEYS.modelCycle)],
-	["pasteImage", (d) => matchesBinding(d, KEYS.pasteImage)],
-	["newSession", (d) => matchesKey(d, KEYS.newSession)],
-	["sessions", (d) => matchesKey(d, KEYS.sessions)],
-	["workspaces", (d) => matchesKey(d, KEYS.workspaces)],
-	["settings", (d) => matchesKey(d, KEYS.settings)],
-];
+/** Hotkey bindings in dispatch order: the `flow` entries of `HOTKEY_TABLE`. */
+export const HOTKEYS: readonly (readonly [HotkeyName, (data: string) => boolean])[] = HOTKEY_TABLE.filter((e) => "flow" in e).map(
+	(e): readonly [HotkeyName, (data: string) => boolean] => [e.name as FlowHotkeyName, (data) => matchesBinding(data, e.keys)],
+);
 
-/** A flow-opening key: ignored when repeating, flashed while another flow runs, else `action`. */
+/** A flow-opening key: ignored when repeating, else `action` (the app refuses it with a busy flash while another flow runs). */
 function flow(ctx: RouteContext, action: KeyAction): KeyAction {
 	if (ctx.repeating) return { type: "consume" };
-	return ctx.busy ? { type: "busyFlash" } : action;
+	return action;
 }
 
 /**

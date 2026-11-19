@@ -47,6 +47,10 @@ describe("sanitizeText", () => {
 		expect(sanitizeText("a\x07b\x00c\x08d\x7fe\x1b\nf\x85g\x9bh\ni")).toBe("abcde\nfgh\ni");
 	});
 
+	it("strips bidi override and isolate controls", () => {
+		expect(sanitizeText("a\u202eb\u202ac\u202dd\u2066e\u2069f")).toBe("abcdef");
+	});
+
 	it("leaves ordinary and wide text alone", () => {
 		expect(sanitizeText("héllo 字 ✓\n  indented")).toBe("héllo 字 ✓\n  indented");
 	});

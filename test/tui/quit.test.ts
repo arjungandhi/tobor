@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { QUIT_WINDOW_MS, QuitGate } from "../../src/tui/keys.js";
+import { routeInterrupt } from "../../src/tui/router.js";
 
 describe("QuitGate", () => {
 	it("arms on the first press and quits on a second press inside the window", () => {
@@ -29,9 +30,21 @@ describe("QuitGate", () => {
 		expect(gate.press(200)).toBe(true);
 	});
 
-	it("still quits on a second press that does not arm", () => {
+	it("never quits on a press that does not arm, even inside the window, and disarms the gate", () => {
 		const gate = new QuitGate();
 		expect(gate.press(0)).toBe(false);
-		expect(gate.press(100, false)).toBe(true);
+		expect(gate.press(100, false)).toBe(false);
+		// the earlier arm is gone: the next idle press arms again instead of quitting
+		expect(gate.press(200)).toBe(false);
+		expect(gate.press(300)).toBe(true);
+	});
+
+	it("arm, then a modal-closing press, then idle: does not quit and re-arms", () => {
+		const gate = new QuitGate();
+		const press = (now: number, c: { modalOpen: boolean; composerEmpty: boolean }): boolean => gate.press(now, routeInterrupt(c).arm);
+		expect(press(0, { modalOpen: false, composerEmpty: true })).toBe(false);
+		expect(press(100, { modalOpen: true, composerEmpty: true })).toBe(false);
+		expect(press(200, { modalOpen: false, composerEmpty: true })).toBe(false);
+		expect(press(300, { modalOpen: false, composerEmpty: true })).toBe(true);
 	});
 });

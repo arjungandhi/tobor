@@ -110,10 +110,212 @@ export function usageOf(docs: WatchValue["docs"] | undefined): ViewUsage {
 	return { tokens, cost };
 }
 
+/** What one committed transcript item contributes: finished blocks, and tool calls/results that merge by call id. */
+type Fragment =
+	| { kind: "block"; block: Block }
+	| { kind: "call"; callId: string; name: string; args: unknown }
+	| { kind: "result"; callId: string; name: string; status: "done" | "error"; output: string; images: ImagePart[] };
+
+/** Fragments of an item: pure in the item, so cached per item/entry object (committed entries never change). */
+const fragmentCache = new WeakMap<object, readonly Fragment[]>();
+
+function fragmentsOf(item: TranscriptItem): readonly Fragment[] {
+	const key = item.kind === "entry" ? item.entry : item;
+	const cached = fragmentCache.get(key);
+	if (cached) return cached;
+	const frags = computeFragments(item);
+	fragmentCache.set(key, frags);
+	return frags;
+}
+
+function computeFragments(item: TranscriptItem): Fragment[] {
+	const frags: Fragment[] = [];
+	const block = (b: Block): void => void frags.push({ kind: "block", block: b });
+	if (item.kind === "earlier") {
+		block({ kind: "earlier", key: "earlier" });
+		return frags;
+	}
+	if (item.kind === "gap") {
+		block({ kind: "gap", key: `gap:${item.after}`, after: item.after, upTo: item.upTo });
+		return frags;
+	}
+	const entry = item.entry;
+	const message = messageOf(entry);
+	switch (entry.kind) {
+		case "pi.user": {
+			const images = imagesOf(message?.content);
+			block({ kind: "user", key: `u:${entry.id}`, text: textOf(message?.content, false), ...(images.length > 0 ? { images } : {}) });
+			break;
+		}
+		case "pi.assistant": {
+			if (!message) break;
+			const prefix = `a:${entry.id}`;
+			for (const [i, part] of (Array.isArray(message.content) ? message.content : []).entries()) {
+				if (part.type === "text" && part.text) block({ kind: "assistant", key: `${prefix}:${i}`, text: part.text, streaming: false });
+				else if (part.type === "thinking" && part.thinking) block({ kind: "thinking", key: `${prefix}:${i}`, text: part.thinking, streaming: false });
+				else if (part.type === "toolCall") frags.push({ kind: "call", callId: part.id || `${prefix}:${i}`, name: part.name ?? "tool", args: part.arguments });
+			}
+			if (message.stopReason === "error") {
+				block({ kind: "notice", key: `n:${entry.id}`, level: "error", text: `model error: ${message.errorMessage ?? "unknown"}` });
+			} else if (message.stopReason === "aborted") {
+				block({ kind: "notice", key: `n:${entry.id}`, level: "warning", text: "aborted" });
+			} else if (message.stopReason === "length") {
+				block({ kind: "notice", key: `n:${entry.id}`, level: "warning", text: "answer cut off at the output limit" });
+			}
+			break;
+		}
+		case "pi.tool-result":
+			if (!message) break;
+			frags.push({
+				kind: "result",
+				callId: message.toolCallId ?? `r:${entry.id}`,
+				name: message.toolName ?? "tool",
+				status: message.isError ? "error" : "done",
+				output: textOf(message.content, false),
+				images: imagesOf(message.content),
+			});
+			break;
+		case "pi.reset":
+			block({ kind: "notice", key: `n:${entry.id}`, level: "info", text: "context reset" });
+			break;
+		case "pi.compaction":
+			block({ kind: "notice", key: `n:${entry.id}`, level: "info", text: "earlier context compacted" });
+			break;
+	}
+	return frags;
+}
+
+/** The blocks of the committed items so far. Tool blocks are replaced (never mutated) when a result lands, so handed-out blocks stay valid. */
+type Committed = { items: readonly TranscriptItem[]; blocks: Block[]; tools: Map<string, number> };
+
+function extend(state: Committed, items: readonly TranscriptItem[]): void {
+	const { blocks, tools } = state;
+	for (let i = state.items.length; i < items.length; i++) {
+		for (const frag of fragmentsOf(items[i] as TranscriptItem)) {
+			if (frag.kind === "block") {
+				blocks.push(frag.block);
+				continue;
+			}
+			const at = tools.get(frag.callId);
+			const existing = at === undefined ? undefined : (blocks[at] as ToolBlock);
+			if (frag.kind === "call") {
+				if (at === undefined || !existing) {
+					tools.set(frag.callId, blocks.length);
+					blocks.push({ kind: "tool", key: `t:${frag.callId}`, callId: frag.callId, name: frag.name, args: frag.args, status: "pending", output: "" });
+				} else blocks[at] = { ...existing, args: frag.args };
+				continue;
+			}
+			const base: ToolBlock = existing ?? { kind: "tool", key: `t:${frag.callId}`, callId: frag.callId, name: frag.name, args: undefined, status: "done", output: "" };
+			const block: ToolBlock = { ...base, status: frag.status, output: frag.output, ...(frag.images.length > 0 ? { images: frag.images } : {}) };
+			if (at === undefined) {
+				tools.set(frag.callId, blocks.length);
+				blocks.push(block);
+			} else blocks[at] = block;
+		}
+	}
+	state.items = items;
+}
+
+/**
+ * Derives transcript blocks, incrementally: per-entry fragments are cached by entry (entries never change once
+ * committed), and when the items only grew at the end just the new ones are folded into the previous committed blocks.
+ * Unchanged entries keep their block objects across derivations. Live state (`pi.live`), approvals and the inbox are
+ * layered over a copy on every call, as they change with every frame.
+ */
+export class BlockDeriver {
+	private committed: Committed | undefined;
+
+	derive(
+		items: readonly TranscriptItem[],
+		docs: WatchValue["docs"] | undefined,
+		pending: ReadonlySet<string> = new Set(),
+		asking: ReadonlySet<string> = new Set(),
+	): Block[] {
+		const base = this.commit(items);
+		const out = base.blocks.slice();
+		const extra = new Map<string, number>();
+		const find = (callId: string): number | undefined => extra.get(callId) ?? base.tools.get(callId);
+		const addTool = (callId: string, name: string, args: unknown, status: ToolStatus): number => {
+			const found = find(callId);
+			if (found !== undefined) return found;
+			extra.set(callId, out.length);
+			out.push({ kind: "tool", key: `t:${callId}`, callId, name, args, status, output: "" });
+			return out.length - 1;
+		};
+		const edit = (at: number, patch: Partial<ToolBlock>): ToolBlock => {
+			const block = { ...(out[at] as ToolBlock), ...patch };
+			out[at] = block;
+			return block;
+		};
+
+		const live = liveOf(docs);
+		const partial = live.generation?.message as Message | undefined;
+		if (partial) {
+			const parts = Array.isArray(partial.content) ? partial.content : [];
+			for (const [i, part] of parts.entries()) {
+				if (part.type === "text" && part.text) out.push({ kind: "assistant", key: `live:${i}`, text: part.text, streaming: true });
+				else if (part.type === "thinking" && part.thinking) out.push({ kind: "thinking", key: `live:${i}`, text: part.thinking, streaming: true });
+				else if (part.type === "toolCall") edit(addTool(part.id || `live:${i}`, part.name ?? "tool", part.arguments, "streaming"), { args: part.arguments });
+			}
+		}
+		for (const slot of live.tools ?? []) {
+			const at = addTool(slot.callId, slot.name, undefined, "pending");
+			const block = out[at] as ToolBlock;
+			if (block.status === "done" || block.status === "error") continue;
+			edit(at, {
+				status: slot.status === "done" ? "done" : slot.status === "running" ? "running" : "pending",
+				output: slot.output ?? "",
+				...(slot.droppedLines ? { droppedLines: slot.droppedLines } : {}),
+			});
+		}
+		// Only calls awaiting approval or an answer change here, so visit those instead of every tool.
+		for (const callId of new Set([...pending, ...asking])) {
+			const at = find(callId);
+			if (at === undefined) continue;
+			const { status } = out[at] as ToolBlock;
+			if ((status === "pending" || status === "streaming") && pending.has(callId)) edit(at, { status: "approval" });
+			else if ((status === "pending" || status === "streaming" || status === "running") && asking.has(callId)) edit(at, { status: "question" });
+		}
+		if (live.generation?.retry) {
+			out.push({ kind: "notice", key: "live:retry", level: "warning", text: `retrying: ${live.generation.retry.error}` });
+		}
+		if (live.compactions?.length) out.push({ kind: "notice", key: "live:compacting", level: "info", text: "compacting context…" });
+		if (live.compactionFailure) {
+			out.push({ kind: "notice", key: "live:compaction-failure", level: "warning", text: `compaction failed: ${live.compactionFailure.error}` });
+		}
+		if (live.runFailure) {
+			const { reason, detail, taskId } = live.runFailure;
+			out.push({ kind: "notice", key: `fail:${taskId}`, level: "error", text: `run ended without an answer: ${reason}${detail ? ` — ${detail}` : ""}` });
+		}
+		for (const item of queuedOf(docs)) {
+			const images = imagesOf(item.content);
+			out.push({ kind: "queued", key: `q:${item.id}`, text: textOf(item.content, false), mode: item.mode, ...(images.length > 0 ? { images } : {}) });
+		}
+		return out;
+	}
+
+	/** The committed blocks for `items`: reused as is, extended when the items only grew at the end, else rebuilt (from cached fragments). */
+	private commit(items: readonly TranscriptItem[]): Committed {
+		const prev = this.committed;
+		// Dropped while folding so a throw cannot leave a half-extended state behind.
+		this.committed = undefined;
+		let state: Committed;
+		if (prev && prev.items.length <= items.length && prev.items.every((item, i) => item === items[i])) {
+			state = prev;
+		} else {
+			state = { items: [], blocks: [], tools: new Map() };
+		}
+		if (state.items !== items) extend(state, items);
+		this.committed = state;
+		return state;
+	}
+}
+
 /**
  * Derive transcript blocks from transcript items and the view's docs. Tool calls are keyed by call id so a call keeps
  * its block from the streaming partial through its live slot to its result entry. `pending` holds call ids awaiting
- * operator approval and `asking` those of `ask_user` calls awaiting an answer.
+ * operator approval and `asking` those of `ask_user` calls awaiting an answer. (One-shot; a replica keeps a
+ * `BlockDeriver` to derive incrementally.)
  */
 export function deriveBlocks(
 	items: readonly TranscriptItem[],
@@ -121,115 +323,7 @@ export function deriveBlocks(
 	pending: ReadonlySet<string> = new Set(),
 	asking: ReadonlySet<string> = new Set(),
 ): Block[] {
-	const blocks: Block[] = [];
-	const tools = new Map<string, ToolBlock>();
-
-	const addTool = (callId: string, name: string, args: unknown, status: ToolStatus, key = `t:${callId}`): ToolBlock => {
-		const existing = tools.get(callId);
-		if (existing) return existing;
-		const block: ToolBlock = { kind: "tool", key, callId, name, args, status, output: "" };
-		tools.set(callId, block);
-		blocks.push(block);
-		return block;
-	};
-
-	const addAssistant = (message: Message, prefix: string, streaming: boolean): void => {
-		const parts = Array.isArray(message.content) ? message.content : [];
-		for (const [i, part] of parts.entries()) {
-			if (part.type === "text" && part.text) blocks.push({ kind: "assistant", key: `${prefix}:${i}`, text: part.text, streaming });
-			else if (part.type === "thinking" && part.thinking) {
-				blocks.push({ kind: "thinking", key: `${prefix}:${i}`, text: part.thinking, streaming });
-			} else if (part.type === "toolCall") {
-				const callId = part.id || `${prefix}:${i}`;
-				const block = addTool(callId, part.name ?? "tool", part.arguments, streaming ? "streaming" : "pending");
-				block.args = part.arguments;
-			}
-		}
-	};
-
-	for (const item of items) {
-		if (item.kind === "earlier") {
-			blocks.push({ kind: "earlier", key: "earlier" });
-			continue;
-		}
-		if (item.kind === "gap") {
-			blocks.push({ kind: "gap", key: `gap:${item.after}`, after: item.after, upTo: item.upTo });
-			continue;
-		}
-		const entry = item.entry;
-		const message = messageOf(entry);
-		switch (entry.kind) {
-			case "pi.user":
-				{
-				const images = imagesOf(message?.content);
-				blocks.push({ kind: "user", key: `u:${entry.id}`, text: textOf(message?.content, false), ...(images.length > 0 ? { images } : {}) });
-			}
-				break;
-			case "pi.assistant": {
-				if (!message) break;
-				addAssistant(message, `a:${entry.id}`, false);
-				if (message.stopReason === "error") {
-					blocks.push({ kind: "notice", key: `n:${entry.id}`, level: "error", text: `model error: ${message.errorMessage ?? "unknown"}` });
-				} else if (message.stopReason === "aborted") {
-					blocks.push({ kind: "notice", key: `n:${entry.id}`, level: "warning", text: "aborted" });
-				} else if (message.stopReason === "length") {
-					blocks.push({ kind: "notice", key: `n:${entry.id}`, level: "warning", text: "answer cut off at the output limit" });
-				}
-				break;
-			}
-			case "pi.tool-result": {
-				if (!message) break;
-				const callId = message.toolCallId ?? `r:${entry.id}`;
-				const block = addTool(callId, message.toolName ?? "tool", undefined, "done");
-				block.status = message.isError ? "error" : "done";
-				block.output = textOf(message.content, false);
-				const images = imagesOf(message.content);
-				if (images.length > 0) block.images = images;
-				break;
-			}
-			case "pi.reset":
-				blocks.push({ kind: "notice", key: `n:${entry.id}`, level: "info", text: "context reset" });
-				break;
-			case "pi.compaction":
-				blocks.push({ kind: "notice", key: `n:${entry.id}`, level: "info", text: "earlier context compacted" });
-				break;
-		}
-	}
-
-	const live = liveOf(docs);
-	const partial = live.generation?.message as Message | undefined;
-	if (partial) addAssistant(partial, "live", true);
-	for (const slot of live.tools ?? []) {
-		const block = addTool(slot.callId, slot.name, undefined, "pending");
-		if (block.status === "done" || block.status === "error") continue;
-		if (slot.status === "done") block.status = "done";
-		else if (slot.status === "running") block.status = "running";
-		else block.status = "pending";
-		block.output = slot.output ?? "";
-		if (slot.droppedLines) block.droppedLines = slot.droppedLines;
-	}
-	for (const block of tools.values()) {
-		if ((block.status === "pending" || block.status === "streaming") && pending.has(block.callId)) block.status = "approval";
-		else if ((block.status === "pending" || block.status === "streaming" || block.status === "running") && asking.has(block.callId)) {
-			block.status = "question";
-		}
-	}
-	if (live.generation?.retry) {
-		blocks.push({ kind: "notice", key: "live:retry", level: "warning", text: `retrying: ${live.generation.retry.error}` });
-	}
-	if (live.compactions?.length) blocks.push({ kind: "notice", key: "live:compacting", level: "info", text: "compacting context…" });
-	if (live.compactionFailure) {
-		blocks.push({ kind: "notice", key: "live:compaction-failure", level: "warning", text: `compaction failed: ${live.compactionFailure.error}` });
-	}
-	if (live.runFailure) {
-		const { reason, detail, taskId } = live.runFailure;
-		blocks.push({ kind: "notice", key: `fail:${taskId}`, level: "error", text: `run ended without an answer: ${reason}${detail ? ` — ${detail}` : ""}` });
-	}
-	for (const item of queuedOf(docs)) {
-		const images = imagesOf(item.content);
-		blocks.push({ kind: "queued", key: `q:${item.id}`, text: textOf(item.content, false), mode: item.mode, ...(images.length > 0 ? { images } : {}) });
-	}
-	return blocks;
+	return new BlockDeriver().derive(items, docs, pending, asking);
 }
 
 /** Page loader for `GET /api/sessions/:id/entries`, in pi-durable `EntryLoader` form. */
@@ -244,6 +338,7 @@ export type EntriesFetcher = (query: {
 export class ConversationReplica {
 	private value: WatchValue | undefined;
 	private readonly transcript: ConversationTranscript;
+	private readonly deriver = new BlockDeriver();
 	private current: TranscriptView | undefined;
 
 	constructor(fetchEntries: EntriesFetcher) {
@@ -261,15 +356,19 @@ export class ConversationReplica {
 
 	/** Replace the view with a `{t:"snapshot"}` value (first connect or reconnect). */
 	snapshot(value: WatchValue): void {
+		// Both before either is assigned: a merge() that throws must not leave `value` and the transcript disagreeing.
+		const current = this.transcript.merge(value);
 		this.value = value;
-		this.current = this.transcript.merge(value);
+		this.current = current;
 	}
 
 	/** Apply one `{t:"ops"}` batch. */
 	apply(ops: readonly Op[]): void {
 		if (this.value === undefined) throw new Error("ops before snapshot");
-		this.value = applyImmutable(this.value, ops);
-		this.current = this.transcript.merge(this.value);
+		const value = applyImmutable(this.value, ops);
+		const current = this.transcript.merge(value);
+		this.value = value;
+		this.current = current;
 	}
 
 	/** The current view (window), if a snapshot arrived. */
@@ -306,6 +405,6 @@ export class ConversationReplica {
 
 	/** Derived transcript blocks. */
 	blocks(pending?: ReadonlySet<string>, asking?: ReadonlySet<string>): Block[] {
-		return deriveBlocks(this.items, this.value?.docs, pending, asking);
+		return this.deriver.derive(this.items, this.value?.docs, pending, asking);
 	}
 }

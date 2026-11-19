@@ -1,5 +1,6 @@
 import type { WhoamiResponse } from "../../api/types.js";
 import type { App } from "../app.js";
+import { navigate } from "../nav.js";
 import { showSessions } from "./sessions.js";
 import { c } from "../theme.js";
 import {
@@ -30,49 +31,109 @@ function whoamiLines(w: WhoamiResponse | undefined, ws: Workspace): string[] {
 	];
 }
 
+/** How long the first show waits for probes before painting the rows (answers from nodes on this machine arrive well within it). */
+const PROBE_HEAD_START_MS = 200;
+/** How long `g` waits for every probe to finish: the 1.5 s probe timeout plus a margin, so each row ends up reachable or unreachable. */
+const PROBE_SETTLE_MS = 2000;
+
 /**
  * The workspace list with reachability (each probed via `/api/whoami`, 1.5 s timeout). `switch` (startup picker,
- * Ctrl+T): Enter/→ opens the workspace. `manage` (settings): Enter opens the edit menu. Both: a add, e edit.
+ * Ctrl+T): Enter/→ opens the workspace. `manage` (settings): Enter opens the edit menu. Both: a add, e edit, d forget, g re-probe.
  * `switch` is the top tier of the hierarchy workspaces → sessions → session: Enter/→ goes down to that workspace's
  * sessions list (connecting first when it is not the connected one), Esc/← closes the picker (back to the open session, if any).
+ *
+ * The rows paint at once: probes run in the background and are cached for the life of the picker, so a row still
+ * waiting shows "probing…" until the list is next shown (any action, or `g`, which also probes everything again and
+ * waits for those probes to finish, so every row has a real state afterwards).
+ * An empty list is shown as such (`a add`); it never opens the add wizard by itself.
  */
 export async function showWorkspaces(app: App, mode: "switch" | "manage" = "switch", focus?: string): Promise<void> {
-	const config = app.config;
-	if (config.workspaces.length === 0) {
-		const added = await addWorkspace(app);
-		return added ? showWorkspaces(app, mode, added.name) : undefined;
-	}
-	app.flash("probing workspaces…");
-	const probes = await Promise.all(config.workspaces.map((ws) => probe(ws)));
-	const current = app.workspace;
-	const items = config.workspaces.map((ws, i) => ({
-		value: ws.name,
-		label: `${ws.name === current?.name ? c.accent("● ") : "  "}${ws.name}${ws.name === config.default ? c.dim(" (default)") : ""}`,
-		description: `${formatAddress(ws).padEnd(22)} ${reachability(probes[i])}`,
-	}));
-	const preselect = focus ?? current?.name ?? config.default;
-	const lines = mode === "switch" && current ? whoamiLines(app.whoami, current) : [c.dim(`${config.workspaces.length} workspace(s) · ${app.configPath}`)];
-	const picked = await app.pick(mode === "switch" ? "workspaces" : "manage workspaces", items, {
-		lines,
-		hint: mode === "switch" ? "→/Enter sessions · a add · e edit · ←/Esc back" : "Enter edit · a add · Esc back",
-		keys: mode === "switch" ? ["a", "e", "left", "right"] : ["a", "e"],
-		selected: Math.max(0, config.workspaces.findIndex((w) => w.name === preselect)),
+	const probes = new Map<string, { address: string; settled: boolean; who: WhoamiResponse | undefined }>();
+	let pending: Promise<unknown>[] = [];
+	/** Start a probe for every workspace without a fresh result (all of them when `force`). */
+	const startProbes = (force: boolean): void => {
+		for (const ws of app.config.workspaces) {
+			const address = formatAddress(ws);
+			const known = probes.get(ws.name);
+			if (!force && known?.address === address) continue;
+			const entry = { address, settled: false, who: undefined as WhoamiResponse | undefined };
+			probes.set(ws.name, entry);
+			pending.push(
+				probe(ws).then((who) => {
+					entry.who = who;
+					entry.settled = true;
+				}),
+			);
+		}
+	};
+	/** Wait for the in-flight probes, at most `ms`; the probes still running after that keep showing "probing…". */
+	const waitProbes = async (ms: number): Promise<void> => {
+		if (pending.length === 0) return;
+		await Promise.race([Promise.all(pending), new Promise((resolve) => setTimeout(resolve, ms))]);
+		pending = [];
+	};
+	await navigate<string>(app, {
+		view: async () => {
+			const config = app.config;
+			startProbes(false);
+			await waitProbes(PROBE_HEAD_START_MS);
+			const current = app.workspace;
+			return {
+				title: mode === "switch" ? "workspaces" : "manage workspaces",
+				items: config.workspaces.map((ws) => {
+					const result = probes.get(ws.name);
+					return {
+						value: ws.name,
+						label: `${ws.name === current?.name ? c.accent("● ") : "  "}${ws.name}${ws.name === config.default ? c.dim(" (default)") : ""}`,
+						description: `${formatAddress(ws).padEnd(22)} ${result?.settled ? reachability(result.who) : c.dim("◌ probing…")}`,
+					};
+				}),
+				lines: mode === "switch" && current ? whoamiLines(app.whoami, current) : [c.dim(`${config.workspaces.length} workspace(s) · ${app.configPath}`)],
+				hint: mode === "switch" ? "→/Enter sessions · a add · e edit · d forget · g refresh · ←/Esc back" : "Enter/e edit · a add · d forget · g refresh · Esc back",
+				emptyHint: "a add · Esc back",
+				keys: mode === "switch" ? ["a", "e", "d", "g", "left", "right"] : ["a", "e", "d", "g"],
+				initial: focus ?? current?.name ?? config.default,
+			};
+		},
+		key: (name) => name,
+		onPick: async (picked) => {
+			if (picked.key === "left") return "close";
+			if (picked.key === "g") {
+				startProbes(true);
+				await waitProbes(PROBE_SETTLE_MS);
+				return "refresh";
+			}
+			if (picked.key === "a") {
+				await addWorkspace(app);
+				return "refresh";
+			}
+			const name = picked.value;
+			if (!name) return "stay";
+			if (picked.key === "d") {
+				await forgetWorkspace(app, name);
+				return "refresh";
+			}
+			if (picked.key === "e" || mode === "manage") {
+				await editWorkspace(app, name);
+				return "refresh";
+			}
+			const ws = findWorkspace(app.config, name);
+			if (!ws) return "refresh";
+			if (ws.name === app.workspace?.name && app.whoami) await showSessions(app);
+			else app.connect(ws);
+			return "close";
+		},
 	});
-	if (!picked || picked.key === "left") return;
-	if (picked.key === "a") {
-		const added = await addWorkspace(app);
-		return showWorkspaces(app, mode, added?.name);
-	}
-	const name = picked.value;
-	if (!name) return;
-	if (picked.key === "e" || mode === "manage") {
-		const next = await editWorkspace(app, name);
-		return showWorkspaces(app, mode, next);
-	}
-	const ws = findWorkspace(config, name);
-	if (!ws) return;
-	if (ws.name === current?.name && app.whoami) return showSessions(app);
-	app.connect(ws);
+}
+
+/** Confirm, then forget a workspace (the node is not touched). Resolves whether it was removed. */
+async function forgetWorkspace(app: App, name: string): Promise<boolean> {
+	const ws = findWorkspace(app.config, name);
+	if (!ws) return false;
+	if (!(await app.confirm(`remove ${name}`, [`Forget ${name} (${formatAddress(ws)})? The node is not touched.`]))) return false;
+	app.updateConfig(removeWorkspace(app.config, name));
+	app.flash(`removed workspace ${name}`);
+	return true;
 }
 
 /** Ask for a host:port; an empty answer keeps `initial` (default 127.0.0.1:7879). */
@@ -161,10 +222,7 @@ async function editWorkspace(app: App, name: string): Promise<string | undefined
 			app.updateConfig(setDefault(app.config, isDefault ? undefined : name));
 			return name;
 		case "remove":
-			if (!(await app.confirm(`remove ${name}`, [`Forget ${name} (${formatAddress(ws)})? The node is not touched.`]))) return name;
-			app.updateConfig(removeWorkspace(app.config, name));
-			app.flash(`removed workspace ${name}`);
-			return undefined;
+			return (await forgetWorkspace(app, name)) ? undefined : name;
 		default:
 			return name;
 	}

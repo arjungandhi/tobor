@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { type Document, isMap, isScalar, parseDocument, type YAMLMap } from "yaml";
@@ -160,8 +160,13 @@ export function saveClientConfig(path: string, config: ClientConfig): void {
 function writeAtomic(path: string, text: string): void {
 	mkdirSync(dirname(path), { recursive: true });
 	const tmp = `${path}.${process.pid}.tmp`;
-	writeFileSync(tmp, text, { mode: 0o600 });
-	renameSync(tmp, path);
+	try {
+		writeFileSync(tmp, text, { mode: 0o600 });
+		renameSync(tmp, path);
+	} catch (err) {
+		rmSync(tmp, { force: true });
+		throw err;
+	}
 }
 
 /** Apply `fn` to the config's YAML document and revalidate. */
@@ -269,30 +274,100 @@ export function workspaceAt(config: ClientConfig, address: Address): Workspace |
 	return config.workspaces.find((w) => w.host === address.host && w.port === address.port);
 }
 
-/** Runtime state in state.json. */
-export type State = { workspaces: Record<string, { last_session?: number }> };
+/** Last session of a workspace: a plain id (old state.json, address unknown) or the id with the node it belongs to. */
+type StoredSession = number | { id: number; address: string };
 
-/** Read state.json; missing or unreadable state is empty. */
-export function loadState(path: string): State {
+/** Runtime state in state.json. */
+export type State = { workspaces: Record<string, { last_session?: StoredSession }> };
+
+let stateError: string | undefined;
+
+/** The problem `loadState` hit since the last call (corrupt or unreadable state.json), once; for the caller to surface. */
+export function takeStateError(): string | undefined {
+	const err = stateError;
+	stateError = undefined;
+	return err;
+}
+
+/** Move a corrupt state file aside (`.corrupt`, then `.corrupt.<timestamp>`) so a later write cannot clobber it. */
+function backupCorrupt(path: string): string | undefined {
+	let backup = `${path}.corrupt`;
+	if (existsSync(backup)) backup = `${backup}.${new Date().toISOString().replace(/[:.]/g, "-")}`;
 	try {
-		const data = JSON.parse(readFileSync(path, "utf8")) as Partial<State>;
-		return { workspaces: typeof data.workspaces === "object" && data.workspaces !== null ? data.workspaces : {} };
+		renameSync(path, backup);
+		return backup;
 	} catch {
-		return { workspaces: {} };
+		return undefined;
 	}
 }
 
-/** Session last opened in workspace `name`. */
-export function lastSession(path: string, name: string): number | undefined {
-	const id = loadState(path).workspaces[name]?.last_session;
-	return typeof id === "number" ? id : undefined;
+/** Read state.json. `readable` is false when the file exists but could not be read (a write would clobber it). */
+function readState(path: string): { state: State; readable: boolean } {
+	let text: string;
+	try {
+		text = readFileSync(path, "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { state: { workspaces: {} }, readable: true };
+		stateError = `cannot read ${path}: ${(err as Error).message}`;
+		return { state: { workspaces: {} }, readable: false };
+	}
+	let data: unknown;
+	try {
+		data = JSON.parse(text);
+		if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error("expected an object");
+		const list = (data as { workspaces?: unknown }).workspaces;
+		if (list !== undefined && (typeof list !== "object" || list === null || Array.isArray(list))) throw new Error("workspaces must be an object");
+	} catch (err) {
+		const backup = backupCorrupt(path);
+		stateError = `${path} is corrupt (${(err as Error).message}); ${backup ? `saved as ${backup}` : "could not back it up"}, starting with empty state`;
+		return { state: { workspaces: {} }, readable: backup !== undefined };
+	}
+	const workspaces = (data as { workspaces?: State["workspaces"] }).workspaces ?? {};
+	return { state: { workspaces }, readable: true };
 }
 
-/** Record (or with `undefined`, clear) the session last opened in workspace `name`. */
-export function setLastSession(path: string, name: string, id: number | undefined): void {
-	const state = loadState(path);
+/** Read state.json; missing state is empty. Corrupt state is backed up (see `takeStateError`) and read as empty. */
+export function loadState(path: string): State {
+	return readState(path).state;
+}
+
+function parseStored(value: unknown): { id: number; address?: string } | undefined {
+	if (typeof value === "number") return { id: value };
+	if (typeof value !== "object" || value === null) return undefined;
+	const { id, address } = value as { id?: unknown; address?: unknown };
+	if (typeof id !== "number") return undefined;
+	return typeof address === "string" ? { id, address } : { id };
+}
+
+/**
+ * Session last opened in workspace `name`. With `address` (the workspace's current node) a session recorded for a
+ * different node is ignored; an old-format value without an address is adopted for `address` and stamped with it.
+ */
+export function lastSession(path: string, name: string, address?: Address): number | undefined {
+	const stored = parseStored(loadState(path).workspaces[name]?.last_session);
+	if (!stored) return undefined;
+	if (address === undefined) return stored.id;
+	const current = formatAddress(address);
+	if (stored.address === undefined) {
+		try {
+			setLastSession(path, name, stored.id, address);
+		} catch {
+			// Best effort: the value is still usable this time.
+		}
+		return stored.id;
+	}
+	return stored.address === current ? stored.id : undefined;
+}
+
+/**
+ * Record (or with `undefined`, clear) the session last opened in workspace `name`, tied to the node `address` it was
+ * opened on (without one the old plain-id format is written).
+ */
+export function setLastSession(path: string, name: string, id: number | undefined, address?: Address): void {
+	const { state, readable } = readState(path);
+	if (!readable) return;
 	const { last_session: _, ...rest } = state.workspaces[name] ?? {};
-	state.workspaces[name] = id === undefined ? rest : { ...rest, last_session: id };
+	state.workspaces[name] = id === undefined ? rest : { ...rest, last_session: address ? { id, address: formatAddress(address) } : id };
 	writeAtomic(path, `${JSON.stringify(state, null, "\t")}\n`);
 }
 
@@ -345,7 +420,8 @@ export function migrateLegacy(env: NodeJS.ProcessEnv = process.env): string | un
 	if (!existsSync(legacy) || existsSync(target)) return undefined;
 	const { yaml, lastSessions, skipped } = convertLegacy(readFileSync(legacy, "utf8"));
 	writeAtomic(target, yaml);
-	for (const [name, id] of Object.entries(lastSessions)) setLastSession(statePath(env), name, id);
+	const migrated = parseClientConfig(yaml, target);
+	for (const [name, id] of Object.entries(lastSessions)) setLastSession(statePath(env), name, id, findWorkspace(migrated, name));
 	renameSync(legacy, `${legacy}.migrated`);
 	return `migrated ${legacy} → ${target}${skipped.length ? `; skipped unparseable workspaces: ${skipped.join(", ")}` : ""}`;
 }

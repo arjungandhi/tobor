@@ -1,6 +1,6 @@
 import { Markdown, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { argsSummary, ToolSlotView } from "../../src/tui/components/tool-slot.js";
+import { argsSummary, ToolSlotView, wrapTail } from "../../src/tui/components/tool-slot.js";
 import { Transcript } from "../../src/tui/components/transcript.js";
 import type { Block, ToolBlock } from "../../src/tui/replica.js";
 import { pdfPath } from "../../src/tui/screens/artifacts.js";
@@ -97,7 +97,43 @@ describe("ToolSlotView", () => {
 		view.toggle();
 		const expanded = plain(view.render(50));
 		expect(expanded).toContain("  line 1");
-		expect(expanded).toContain("   ⋮ 100 earlier lines");
+		expect(expanded).toContain("   … first 100 lines hidden");
+	});
+
+	it("expanded output keeps the tail when it exceeds the row cap, and says the first lines are hidden", () => {
+		const long = Array.from({ length: 400 }, (_, i) => `row ${i + 1}`).join("\n");
+		const view = new ToolSlotView(tool({ output: long }));
+		view.toggle();
+		const lines = plain(view.render(50));
+		expect(lines[2]).toBe("   … first 100 lines hidden");
+		expect(lines[3]).toBe("  row 101");
+		expect(lines.at(-1)).toBe("  row 400");
+		expect(lines).toHaveLength(2 + 1 + 300);
+	});
+
+	it("wrapTail counts wrapped rows, and a partly cut line is not counted as hidden", () => {
+		expect(wrapTail(["a", "bbbbbb", "c"], 3, 3)).toEqual({ rows: ["bbb", "bbb", "c"], hidden: 1 });
+		expect(wrapTail(["a", "bbbbbb", "c"], 3, 2)).toEqual({ rows: ["bbb", "c"], hidden: 1 });
+		expect(wrapTail(["a", "b"], 3, 5)).toEqual({ rows: ["a", "b"], hidden: 0 });
+	});
+
+	it("expanded view shows a multi-line command in full, while collapsed shows only its first line", () => {
+		const view = new ToolSlotView(tool({ args: { command: "set -e\necho one\necho two" } }));
+		expect(plain(view.render(50))).toEqual(["", " ◐ bash $ set -e"]);
+		view.toggle();
+		expect(plain(view.render(50)).slice(1)).toEqual([" ◐ bash $ set -e", "  $ set -e", "  echo one", "  echo two"]);
+	});
+
+	it("a single-line command is not repeated when expanded, other args still are", () => {
+		const view = new ToolSlotView(tool({ args: { command: "make test" } }));
+		view.toggle();
+		expect(plain(view.render(50))).toHaveLength(2);
+		const withTimeout = new ToolSlotView(tool({ args: { command: "a\nb", timeout: 5 } }));
+		withTimeout.toggle();
+		const text = plain(withTimeout.render(50)).join("\n");
+		expect(text).toContain("  b");
+		expect(text).toContain('"timeout": 5');
+		expect(text).not.toContain('"command"');
 	});
 
 	it("marks approval, strips terminal escapes from output, and fits the width", () => {

@@ -39,7 +39,7 @@ describe("QuestionPanel", () => {
 	};
 	const single: PendingQuestion = { ...q("single", 1, 1, 20), question: "Proceed?", options: ["yes", "no"] };
 	const panel = (...questions: PendingQuestion[]) => {
-		const app = { questions, sessions: [], whoami: undefined } as unknown as App;
+		const app = { questions, sessions: [], whoami: undefined, now: () => Date.now() } as unknown as App;
 		return new QuestionPanel(app, () => ({ id: 1 }));
 	};
 
@@ -83,7 +83,7 @@ describe("QuestionPanel", () => {
 	});
 
 	it("lists every field in the question card", () => {
-		const card = plain(questionCard({ sessions: [], whoami: undefined } as unknown as App, form));
+		const card = plain(questionCard({ sessions: [], whoami: undefined, now: () => Date.now() } as unknown as App, form));
 		expect(card).toContain("Set up the service");
 		expect(card).toContain("1. Which language?");
 		expect(card).toContain("3. Notes?");
