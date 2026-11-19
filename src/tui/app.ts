@@ -46,6 +46,7 @@ import {
 	saveClientConfig,
 	setLastSession,
 	type Start,
+	takeStateError,
 	type Workspace,
 	workspaceAt,
 } from "./workspaces.js";
@@ -427,10 +428,12 @@ export class App {
 
 	/** Workspace `from` is now called `to`: relabel the connection and move its state. */
 	renamedWorkspace(from: string, to: string): void {
-		const last = lastSession(this.statePath, from);
+		// The renamed workspace's node (updateConfig already ran), so the session stays tied to it.
+		const address = findWorkspace(this.config, to);
+		const last = lastSession(this.statePath, from, address);
 		try {
 			setLastSession(this.statePath, from, undefined);
-			if (last !== undefined) setLastSession(this.statePath, to, last);
+			if (last !== undefined) setLastSession(this.statePath, to, last, address);
 		} catch (err) {
 			this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 		}
@@ -452,11 +455,21 @@ export class App {
 			if (this.stopped || this.modals.length > 0 || this.flowActive) return;
 			this.openInitial();
 		}, 0);
+		this.flashStateError();
 	}
 
 	/** The session last opened on the connected workspace (state.json), for default cursors. */
 	lastSessionId(): SessionId | undefined {
-		return this.workspace ? lastSession(this.statePath, this.workspace.name) : undefined;
+		if (!this.workspace) return undefined;
+		const last = lastSession(this.statePath, this.workspace.name, this.workspace);
+		this.flashStateError();
+		return last;
+	}
+
+	/** Flash (once) the problem reading state.json, if any: a corrupt file was backed up and state restarted empty. */
+	private flashStateError(): void {
+		const problem = takeStateError();
+		if (problem) this.flash(`✗ ${problem}`, 8000);
 	}
 
 	private cancelRefreshRetry(): void {
@@ -558,9 +571,9 @@ export class App {
 	openSession(id: SessionId): void {
 		const summary = this.sessions.find((s) => s.id === id);
 		this.session.open({ id, title: summary?.title ?? `#${id}` });
-		if (this.workspace && lastSession(this.statePath, this.workspace.name) !== id) {
+		if (this.workspace && lastSession(this.statePath, this.workspace.name, this.workspace) !== id) {
 			try {
-				setLastSession(this.statePath, this.workspace.name, id);
+				setLastSession(this.statePath, this.workspace.name, id, this.workspace);
 			} catch (err) {
 				this.flash(`✗ saving ${this.statePath}: ${(err as Error).message}`);
 			}
@@ -583,6 +596,7 @@ export class App {
 				this.approvalsSeq.event++;
 				const { approval } = event;
 				if (!this.approvals.some((a) => a.callId === approval.callId && a.conversationId === approval.conversationId)) {
+		this.flashStateError();
 					this.approvals = [...this.approvals, approval];
 				}
 				const where = approval.worker ? `${approval.worker} in #${approval.sessionId}` : `#${approval.sessionId}`;
