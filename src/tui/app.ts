@@ -154,7 +154,6 @@ function cleanStatusText(message: string): string {
 	return Array.from(text).slice(0, 300).join("");
 }
 
-/** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 /** How often pending approvals/questions are refetched while any exist (a backstop against missed events). */
 export const PENDING_POLL_MS = 60_000;
 /** How often the events socket is checked for staleness (status line indicator). */
@@ -165,6 +164,7 @@ export function refreshRetryDelay(failures: number): number {
 	return Math.min(2000 * 2 ** Math.max(0, failures), 30_000);
 }
 
+/** `SelectItem` value prefix of a slash command row in `App.pick` (item rows have their index as value). */
 const COMMAND_PREFIX = "cmd:";
 
 /** Set when a slash command is run from the sessions list: `sessionId` is the highlighted row (undefined on an empty list). */
