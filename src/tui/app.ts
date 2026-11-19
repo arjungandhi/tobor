@@ -160,7 +160,7 @@ const LIST_TARGETABLE = new Set(["title", "archive", "complete", "approval"]);
 /** One choice of `App.pick`. */
 export type PickItem<T> = { value: T; label: string; description?: string };
 
-/** Result of `App.pick`: the chosen value and the key that chose it (`enter` or one of `keys`); `command` is a slash command row chosen with `commands` (no value). */
+/** Result of `App.pick`: the chosen value and the key that chose it (`enter` or one of `keys`); `command` is a slash command row chosen with `commands`, and its `value` is the row that was highlighted when the filter started (so a command can act on it). */
 export type Picked<T> = { key: string; value?: T; command?: string };
 
 /** The TUI: owns the renderer, the active node connection, shared lists, modals and global keys. */
@@ -898,7 +898,7 @@ export class App {
 		};
 		const chosen = (key: string): void => {
 			const item = list.getSelectedItem();
-			if (item?.value.startsWith(COMMAND_PREFIX)) return finish({ key, command: item.value.slice(COMMAND_PREFIX.length) });
+			if (item?.value.startsWith(COMMAND_PREFIX)) return finish({ key, command: item.value.slice(COMMAND_PREFIX.length), ...(anchor === undefined ? {} : { value: anchor }) });
 			if (!item && items.length > 0) return; // a filter without matches: Enter does nothing
 			const picked = item ? items[Number(item.value)] : undefined;
 			finish(picked ? { key, value: picked.value } : items.length === 0 ? { key } : undefined);
@@ -906,6 +906,8 @@ export class App {
 		// SelectList has no setItems and its setFilter is a prefix match on value, so a filter rebuilds the list from
 		// the matching entries; their values stay the original indexes, so a choice maps back to `items`.
 		let shown = entries;
+		/** The item row highlighted when the filter started: what a slash command chosen from the filter acts on. */
+		let anchor: T | undefined;
 		let builtRows = rows();
 		const makeList = (): SelectList => {
 			const next = new SelectList(shown, builtRows, selectListTheme, { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 48 });
@@ -986,6 +988,8 @@ export class App {
 					return false;
 				}
 				if (items.length > 0 && data === "/") {
+					const at = list.getSelectedItem();
+					anchor = at && !at.value.startsWith(COMMAND_PREFIX) ? items[Number(at.value)]?.value : undefined;
 					query = "";
 					refilter();
 					return true;
