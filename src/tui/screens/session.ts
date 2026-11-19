@@ -113,8 +113,6 @@ export class SessionScreen {
 		this.transcript.setEmptyText("loading…");
 		this.watch = new ReconnectingSocket<WatchFrame>({
 			url: () => client.watchUrl(id, replica.resume),
-			headers: () => client.authHeaders(),
-			onUnauthorized: (sent) => client.retryAfter401(sent),
 			onFrame: (frame) => this.onFrame(replica, frame),
 			onOpen: (reconnect) => {
 				if (reconnect) void this.app.refresh();

@@ -1,12 +1,8 @@
-import { createInterface } from "node:readline";
-import { Writable } from "node:stream";
 import type { CliArgs } from "../cli.js";
 import {
-	checkToken,
 	configPath,
 	findWorkspace,
 	formatAddress,
-	insecureTokenWarning,
 	loadClientConfig,
 	migrateLegacy,
 	parseAddress,
@@ -16,21 +12,7 @@ import {
 	setDefault,
 } from "./workspaces.js";
 
-/** Read one line from the terminal without echoing it. */
-function readSecret(prompt: string): Promise<string> {
-	process.stderr.write(prompt);
-	const rl = createInterface({ input: process.stdin, output: new Writable({ write: (_chunk, _enc, done) => done() }), terminal: true });
-	return new Promise((resolve) => {
-		rl.once("line", (line) => {
-			process.stderr.write("\n");
-			resolve(line);
-			rl.close();
-		});
-		rl.once("close", () => resolve(""));
-	});
-}
-
-/** `tobor workspace list|add <name> <host:port> [--token T]|remove <name>|use <name>` on the client config.yml. */
+/** `tobor workspace list|add <name> <host:port>|remove <name>|use <name>` on the client config.yml. */
 export async function run(args: CliArgs): Promise<number> {
 	const notice = migrateLegacy();
 	if (notice) process.stderr.write(`${notice}\n`);
@@ -39,11 +21,7 @@ export async function run(args: CliArgs): Promise<number> {
 	const [action, ...rest] = args.positionals;
 	const arity: Record<string, number> = { list: 0, add: 2, remove: 1, use: 1 };
 	if (action === undefined || arity[action] === undefined || rest.length !== arity[action]) {
-		process.stderr.write("usage: tobor workspace list | add <name> <host:port> [--token <token>] | remove <name> | use <name>\n");
-		return 2;
-	}
-	if (args.flags.token !== undefined && action !== "add") {
-		process.stderr.write("tobor workspace: --token only applies to add\n");
+		process.stderr.write("usage: tobor workspace list | add <name> <host:port> | remove <name> | use <name>\n");
 		return 2;
 	}
 	const [name, address] = rest as [string, string];
@@ -56,26 +34,14 @@ export async function run(args: CliArgs): Promise<number> {
 				}
 				const width = Math.max(...config.workspaces.map((w) => w.name.length));
 				for (const w of config.workspaces) {
-					process.stdout.write(`${w.name === config.default ? "*" : " "} ${w.name.padEnd(width)}  ${formatAddress(w)}${w.token ? "  (token)" : ""}\n`);
+					process.stdout.write(`${w.name === config.default ? "*" : " "} ${w.name.padEnd(width)}  ${formatAddress(w)}\n`);
 				}
 				return 0;
 			}
-			case "add": {
+			case "add":
 				if (findWorkspace(config, name)) throw new Error(`workspace ${name} already exists`);
-				const parsed = parseAddress(address);
-				// Connection mode: --token means a token-gated proxy; an https address on a terminal is asked (empty: direct).
-				let token = typeof args.flags.token === "string" ? checkToken(args.flags.token) : undefined;
-				if (token === undefined && parsed.host.startsWith("https://") && process.stdin.isTTY && process.stderr.isTTY) {
-					const typed = (await readSecret(`${name}: bearer token if ${parsed.host} is behind an auth proxy (empty: direct, no token): `)).trim();
-					if (typed !== "") token = checkToken(typed);
-				}
-				if (token !== undefined) {
-					const warning = insecureTokenWarning(parsed);
-					if (warning) process.stderr.write(`${warning}\n`);
-				}
-				config = putWorkspace(config, name, parsed, token);
+				config = putWorkspace(config, name, parseAddress(address));
 				break;
-			}
 			case "remove":
 				config = removeWorkspace(config, name);
 				break;
@@ -89,7 +55,7 @@ export async function run(args: CliArgs): Promise<number> {
 		return 1;
 	}
 	const ws = findWorkspace(config, name);
-	const done = { add: `added ${name} (${ws ? formatAddress(ws) : ""}${ws?.token ? ", with token" : ""})`, remove: `removed ${name}`, use: `default workspace: ${name}` }[action as "add" | "remove" | "use"];
+	const done = { add: `added ${name} (${ws ? formatAddress(ws) : ""})`, remove: `removed ${name}`, use: `default workspace: ${name}` }[action as "add" | "remove" | "use"];
 	process.stdout.write(`${done}\n`);
 	return 0;
 }

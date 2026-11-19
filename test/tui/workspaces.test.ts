@@ -6,8 +6,6 @@ import {
 	baseUrl,
 	configPath,
 	convertLegacy,
-	findWorkspace,
-	insecureTokenWarning,
 	lastSession,
 	loadClientConfig,
 	migrateLegacy,
@@ -21,7 +19,6 @@ import {
 	setDefault,
 	setLastSession,
 	setPref,
-	setToken,
 	statePath,
 } from "../../src/tui/workspaces.js";
 
@@ -59,11 +56,6 @@ describe("addresses", () => {
 
 	it.each(["", "ftp://host", "host:7879/api", "http://user@host", "host:notaport"])("rejects %j", (input) => {
 		expect(() => parseAddress(input)).toThrow();
-	});
-
-	it("warns about a token over plain http only", () => {
-		expect(insecureTokenWarning({ host: "h", port: 1 })).toContain("unencrypted");
-		expect(insecureTokenWarning({ host: "https://x.org", port: 443 })).toBeUndefined();
 	});
 
 	it("baseUrl", () => {
@@ -148,59 +140,6 @@ describe("edits keep comments and unknown keys", () => {
 		expect(() => renameWorkspace(cfg, "personal", "work")).toThrow("already exists");
 		expect(() => removeWorkspace(cfg, "nope")).toThrow("no workspace named nope");
 		expect(() => setDefault(cfg, "nope")).toThrow("no workspace named nope");
-	});
-});
-
-describe("workspace tokens", () => {
-	const TOKENED = "# nodes\nworkspaces:\n  proxied: { host: https://t.example.org, port: 443, token: s3cret-_.~+/= } # behind caddy\n  plain: { host: h, port: 1 }\n";
-
-	it("parses an optional token", () => {
-		const cfg = parseClientConfig(TOKENED);
-		expect(cfg.workspaces).toEqual([
-			{ name: "proxied", host: "https://t.example.org", port: 443, token: "s3cret-_.~+/=" },
-			{ name: "plain", host: "h", port: 1 },
-		]);
-	});
-
-	it.each([
-		["numeric", "workspaces:\n  a: { host: h, token: 12345 }\n"],
-		["with a space", "workspaces:\n  a: { host: h, token: 'a b' }\n"],
-		["non-ascii", "workspaces:\n  a: { host: h, token: 'tökén' }\n"],
-	])("rejects a %s token", (_label, text) => {
-		expect(() => parseClientConfig(text, "/x/config.yml")).toThrow("/x/config.yml: workspaces.a");
-	});
-
-	it("an empty token means none", () => {
-		expect(parseClientConfig("workspaces:\n  a: { host: h, token: '' }\n").workspaces).toEqual([{ name: "a", host: "h", port: 7879 }]);
-	});
-
-	it("put/set/clear keep comments, other workspaces and the token across renames", () => {
-		let cfg = putWorkspace(parseClientConfig(TOKENED), "new", { host: "n", port: 2 }, "  tok  ");
-		expect(findWorkspace(cfg, "new")?.token).toBe("tok");
-		cfg = setToken(cfg, "plain", "abc");
-		cfg = renameWorkspace(cfg, "proxied", "edge");
-		expect(cfg.text).toContain("# nodes");
-		expect(cfg.text).toContain("# behind caddy");
-		expect(findWorkspace(cfg, "edge")?.token).toBe("s3cret-_.~+/=");
-		expect(findWorkspace(cfg, "plain")?.token).toBe("abc");
-		cfg = setToken(cfg, "plain", undefined);
-		expect(findWorkspace(cfg, "plain")).toEqual({ name: "plain", host: "h", port: 1 });
-		expect(() => setToken(cfg, "nope", "x")).toThrow("no workspace named nope");
-		expect(() => setToken(cfg, "plain", "a b")).toThrow("token");
-	});
-
-	it("keeps the token while the address is unchanged and drops it when the address moves", () => {
-		let cfg = putWorkspace(parseClientConfig(TOKENED), "proxied", { host: "https://t.example.org", port: 443 });
-		expect(findWorkspace(cfg, "proxied")?.token).toBe("s3cret-_.~+/=");
-		cfg = putWorkspace(cfg, "proxied", { host: "https://other.example.org", port: 443 });
-		expect(findWorkspace(cfg, "proxied")?.token).toBeUndefined();
-		cfg = putWorkspace(cfg, "proxied", { host: "https://other.example.org", port: 443 }, "fresh");
-		expect(findWorkspace(cfg, "proxied")?.token).toBe("fresh");
-	});
-
-	it("quotes a numeric-looking token so it round-trips as a string", () => {
-		const cfg = putWorkspace({ text: "", workspaces: [], prefs: {} }, "a", { host: "h", port: 1 }, "12345");
-		expect(findWorkspace(cfg, "a")?.token).toBe("12345");
 	});
 });
 

@@ -42,7 +42,6 @@ import {
 	lastSession,
 	saveClientConfig,
 	setLastSession,
-	setToken,
 	type Start,
 	type Workspace,
 	workspaceAt,
@@ -53,7 +52,7 @@ import { showApprovals } from "./screens/approvals.js";
 import { showQuestions } from "./screens/questions.js";
 import { showArtifacts } from "./screens/artifacts.js";
 import { showFiles } from "./screens/files.js";
-import { askToken, offerSave, showWorkspaces } from "./screens/workspaces.js";
+import { offerSave, showWorkspaces } from "./screens/workspaces.js";
 import { showLogin } from "./screens/login.js";
 import { newSession } from "./screens/new-session.js";
 import { showSchedules } from "./screens/schedules.js";
@@ -191,8 +190,6 @@ export class App {
 	/** Fetch/event counters per shared list: a fetch is applied only if nothing newer started or happened meanwhile. */
 	private readonly sessionsSeq = { fetch: 0, event: 0 };
 	private readonly approvalsSeq = { fetch: 0, event: 0 };
-	/** The token prompt currently open (one at a time, however many requests got a 401). */
-	private tokenPrompt: Promise<boolean> | undefined;
 	private readonly onFatal = (err: unknown): void => this.fatal(err);
 
 	constructor(
@@ -293,12 +290,10 @@ export class App {
 		this.sessions = [];
 		this.approvals = [];
 		this.questions = [];
-		const client: ApiClient = new ApiClient(baseUrl(workspace), workspace.token, () => this.requestToken(client));
+		const client = new ApiClient(baseUrl(workspace));
 		this.client = client;
 		this.events = new ReconnectingSocket<EventsFrame>({
 			url: () => client.eventsUrl(),
-			headers: () => client.authHeaders(),
-			onUnauthorized: (sent) => client.retryAfter401(sent),
 			onFrame: (frame) => {
 				if (frame.t === "event") this.onEvent(frame.event);
 			},
@@ -319,36 +314,6 @@ export class App {
 			if (generation === this.generation) this.openInitial();
 		});
 		this.changed();
-	}
-
-	/**
-	 * The node answered 401: prompt for its bearer token, save it on the workspace and resolve true so the caller retries;
-	 * false when cancelled or when `client` is no longer the connected one. Concurrent callers share one prompt; a token
-	 * the node refused is asked for again (the caller retries, gets 401 again and lands here once more).
-	 */
-	private requestToken(client: ApiClient): Promise<boolean> {
-		if (client !== this.client || !this.workspace) return Promise.resolve(false);
-		this.tokenPrompt ??= this.promptToken(client).finally(() => {
-			this.tokenPrompt = undefined;
-		});
-		return this.tokenPrompt;
-	}
-
-	private async promptToken(client: ApiClient): Promise<boolean> {
-		const workspace = this.workspace;
-		if (!workspace) return false;
-		const token = await askToken(this, workspace.name, client.token !== undefined ? "rejected" : "required", workspace);
-		if (token === undefined || client !== this.client) return false;
-		client.token = token;
-		this.workspace = { ...workspace, token };
-		if (findWorkspace(this.config, workspace.name)) {
-			this.updateConfig(setToken(this.config, workspace.name, token));
-			this.flash(`saved token for ${workspace.name}`);
-		} else {
-			this.flash("token kept for this session; save the workspace to keep it");
-		}
-		this.changed();
-		return true;
 	}
 
 	/** Replace the client config and write it to config.yml. */

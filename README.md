@@ -54,7 +54,6 @@ from the CLI or the settings screen keep its comments and unknown keys:
 workspaces:
   personal: { host: 127.0.0.1, port: 7879 }
   work:     { host: 127.0.0.1, port: 7881 }
-  edge:     { host: https://tobor.example.org, port: 443, token: s3cret }  # token: optional bearer token
 default: personal     # preselected in the picker
 confirm_auto: true    # ask before switching to auto approval
 editor: nvim          # /files editor (else $VISUAL, $EDITOR, vi)
@@ -64,21 +63,9 @@ pdf_dir: ~/Downloads  # artifact PDFs
 `tobor <name>` opens a workspace, else `TOBOR_WORKSPACE`, else a picker showing each workspace's reachability; with
 no workspaces a first-run wizard adds one. `tobor host:port` connects to an unsaved node and offers to save it.
 `Ctrl+T` switches workspace; settings (`Ctrl+,`) → Workspaces adds, renames, re-addresses, removes and sets the
-default. `tobor workspace list|add <name> <host:port> [--token <token>]|remove <name>|use <name>` does the same from
-the shell (`use` sets `default`). Runtime state (last open session per workspace) lives in `$XDG_STATE_HOME/tobor/state.json`. An old
+default. `tobor workspace list|add <name> <host:port>|remove <name>|use <name>` does the same from the shell (`use`
+sets `default`). Runtime state (last open session per workspace) lives in `$XDG_STATE_HOME/tobor/state.json`. An old
 `tui.json` is migrated once and renamed `tui.json.migrated`.
-
-Connection modes are chosen when a workspace is added (first-run wizard, picker `a`, `tobor workspace add`): *direct*
-(plain `host:port`, no token; the default) or *token-gated proxy* (asks for the bearer token right away and stores it). The
-mode is not a config field: a workspace with a `token` is in token mode. An `https://` address preselects token mode in the
-TUI; `tobor workspace add` takes `--token`, or on a terminal asks for one (input hidden, empty = direct) when the address is
-https. Re-addressing a workspace asks again, since the token is dropped when the host or port changes.
-
-A workspace behind a reverse proxy that demands `Authorization: Bearer <token>` takes an optional `token`: it is sent on
-every request to that workspace's own base URL (REST, WebSockets, the reachability probe) and nowhere else. When a node
-answers 401 the TUI asks for the token, saves it in `config.yml` and retries; a wrong token is asked for again. Settings
-→ Workspaces → edit → "set token" changes it. Non-interactive commands (`tobor upgrade|restart <workspace>`) print an
-error naming the token instead of prompting.
 
 ## systemd (user unit)
 

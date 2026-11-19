@@ -54,8 +54,7 @@ const COMMANDS: Record<string, Command> = {
 	},
 	workspace: {
 		usage: "tobor workspace <action>",
-		summary: "saved nodes: list | add <name> <host:port> [--token T] | remove <name> | use <name> (sets default)",
-		valueFlags: ["token"],
+		summary: "saved nodes: list | add <name> <host:port> | remove <name> | use <name> (sets default)",
 		positionals: [1, 3],
 		load: () => import("./tui/workspace-cli.js"),
 	},

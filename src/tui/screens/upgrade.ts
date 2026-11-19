@@ -1,5 +1,5 @@
 import type { App } from "../app.js";
-import { mismatchHint, upgradeErrorMessage, WAIT_UNAUTHORIZED_MESSAGE, waitForNode } from "../node-upgrade.js";
+import { mismatchHint, upgradeErrorMessage, waitForNode } from "../node-upgrade.js";
 import { probe } from "../workspaces.js";
 import { BUILD, VERSION } from "../../version.js";
 import { c } from "../theme.js";
@@ -51,7 +51,6 @@ async function reconnect(app: App, client: NonNullable<App["client"]>, change: s
 		const before = app.whoami;
 		const result = await waitForNode({ probe: () => probe(workspace), ...(before ? { before } : {}) });
 		if (client !== app.client) return;
-		if (result.status === "unauthorized") return app.flash(`✗ ${workspace.name}: ${WAIT_UNAUTHORIZED_MESSAGE}`);
 		if (result.status === "timeout") return app.flash(`✗ ${workspace.name} did not come back within 60 s; the TUI keeps retrying`);
 		await app.refresh();
 		if (client !== app.client) return;
