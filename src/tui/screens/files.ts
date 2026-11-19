@@ -4,24 +4,52 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ApiRequestError } from "../client.js";
 import type { App } from "../app.js";
+import { navigate } from "../nav.js";
 import { c } from "../theme.js";
 
-/** Agent files: browse `.tobor/`; Enter on a file opens the editor (prefs `editor`, `$VISUAL`, `$EDITOR`, vi) on a temp copy and PUTs it back when changed. */
+/** Agent files: browse `.tobor/`, one level per directory (Esc / ← go up one directory, Esc at the root closes); Enter on a file opens the editor (prefs `editor`, `$VISUAL`, `$EDITOR`, vi) on a temp copy and PUTs it back when changed. */
 export async function showFiles(app: App, dir = ""): Promise<void> {
 	const listing = await app.api().file(dir);
 	if (listing.type === "file") return editFile(app, listing.path);
-	const entries = [...listing.entries].sort((a, b) => Number(b.type === "dir") - Number(a.type === "dir") || a.name.localeCompare(b.name));
-	const items = [
-		...(dir ? [{ value: "..", label: "..", description: "up" }] : []),
-		...entries.map((e) => ({ value: e.name, label: e.type === "dir" ? c.accent(`${e.name}/`) : e.name, description: e.type })),
-	];
-	const picked = await app.pick(`.tobor/${dir}`, items, { hint: "Enter open · Esc close" });
-	if (!picked?.value) return;
-	if (picked.value === "..") return showFiles(app, dir.split("/").slice(0, -1).join("/"));
-	const path = dir ? `${dir}/${picked.value}` : picked.value;
-	if (entries.find((e) => e.name === picked.value)?.type === "dir") return showFiles(app, path);
-	await editFile(app, path);
-	return showFiles(app, dir);
+	// ← on a directory the screen was opened at (not just reached) climbs from there.
+	while ((await browse(app, dir)) === "up" && dir) dir = parentDir(dir);
+}
+
+function parentDir(dir: string): string {
+	return dir.split("/").slice(0, -1).join("/");
+}
+
+/** One directory as a list. Resolves "up" for ←, "close" for Esc; subdirectories are nested browses, so coming back lands on the directory you left. */
+function browse(app: App, dir: string): Promise<"close" | "up"> {
+	const kinds = new Map<string, string>();
+	return navigate<string>(app, {
+		view: async () => {
+			const listing = await app.api().file(dir);
+			if (listing.type === "file") throw new Error(`${dir} is a file`);
+			const entries = [...listing.entries].sort((a, b) => Number(b.type === "dir") - Number(a.type === "dir") || a.name.localeCompare(b.name));
+			kinds.clear();
+			for (const e of entries) kinds.set(e.name, e.type);
+			return {
+				title: `.tobor/${dir}`,
+				items: entries.map((e) => ({ value: e.name, label: e.type === "dir" ? c.accent(`${e.name}/`) : e.name, description: e.type })),
+				hint: `Enter open${dir ? " · ← up" : ""} · Esc back`,
+				emptyHint: dir ? "← up · Esc back" : "Esc back",
+				keys: dir ? ["left"] : [],
+			};
+		},
+		key: (name) => name,
+		onPick: async (picked) => {
+			if (picked.key === "left") return "up";
+			if (picked.value === undefined) return "stay";
+			const path = dir ? `${dir}/${picked.value}` : picked.value;
+			if (kinds.get(picked.value) === "dir") {
+				await browse(app, path); // Esc and ← both come back to this directory
+				return "stay";
+			}
+			await editFile(app, path);
+			return "refresh"; // the directory is re-read (a saved file may have changed it) with the cursor on the edited file
+		},
+	});
 }
 
 async function editFile(app: App, path: string): Promise<void> {
