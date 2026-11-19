@@ -84,7 +84,7 @@ async function answerOne(app: App, chosen: PendingQuestion): Promise<boolean> {
 	} catch (err) {
 		// Expired or answered elsewhere (404/409): drop the stale row and stay in the list.
 		const gone = err instanceof ApiRequestError && (err.status === 404 || err.status === 409);
-		app.flash(gone ? "already resolved" : err instanceof Error ? err.message : String(err));
+		app.flash(gone ? "already resolved" : `✗ ${err instanceof Error ? err.message : String(err)}`);
 	}
 	return true;
 }
