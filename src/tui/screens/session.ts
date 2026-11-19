@@ -242,6 +242,9 @@ export class SessionScreen {
 	watchState: SocketState = "closed";
 	/** Why the server ended the watch (terminal: no reconnect); cleared when the session is reopened or closed. */
 	watchEnded: string | undefined;
+	/** Set while ops frames are applied but not yet rebuilt: the transcript height before the first of them. */
+	private dirtyFrom: number | undefined;
+	private flushQueued = false;
 	private watch: ReconnectingSocket<WatchFrame> | undefined;
 	/** The replica whose earlier-history load is in flight (keyed by replica so a stale load never blocks another session). */
 	private loadingEarlier: ConversationReplica | undefined;
@@ -362,6 +365,7 @@ export class SessionScreen {
 		this.workersFetch++;
 		this.workerStamp.clear();
 		this.echoes = [];
+		this.dirtyFrom = undefined;
 		this.newOutput = false;
 		this.followBeforeSelect = true;
 		this.loadingEarlier = undefined;
@@ -378,7 +382,7 @@ export class SessionScreen {
 
 	private onFrame(replica: ConversationReplica, frame: WatchFrame): void {
 		if (replica !== this.replica) return;
-		const heightBefore = this.transcript.lineCount();
+		const heightBefore = this.dirtyFrom ?? this.transcript.lineCount();
 		switch (frame.t) {
 			case "snapshot":
 				replica.snapshot(frame.value);
@@ -392,7 +396,16 @@ export class SessionScreen {
 					this.watch?.reconnect();
 					return;
 				}
-				break;
+				// Several ops frames in one tick (a burst after a stall) share one rebuild, run when the tick ends.
+				this.dirtyFrom ??= heightBefore;
+				if (!this.flushQueued) {
+					this.flushQueued = true;
+					queueMicrotask(() => {
+						this.flushQueued = false;
+						if (this.dirtyFrom !== undefined && this.replica) this.afterFrame(this.replica, this.dirtyFrom);
+					});
+				}
+				return;
 			case "end":
 				// Terminal: the server will not resume this watch, so stop the socket (it would reconnect forever and flash each
 				// cycle). The transcript stays; opening the session again (no watch left) starts a fresh one.
@@ -405,9 +418,15 @@ export class SessionScreen {
 			case "pong":
 				return;
 		}
+		this.afterFrame(replica, heightBefore);
+	}
+
+	/** Rebuild after one or more applied frames; `heightBefore` is the transcript height before the first of them. */
+	private afterFrame(replica: ConversationReplica, heightBefore: number): void {
+		this.dirtyFrom = undefined;
 		this.rebuild();
 		if (!this.scroll.isFollowingEnd && this.transcript.lineCount() > heightBefore) this.newOutput = true;
-		if (this.replica && this.abortWatch.stopped(Date.now(), this.replica.running)) this.app.flash("aborted");
+		if (this.abortWatch.stopped(Date.now(), replica.running)) this.app.flash("aborted");
 		this.app.changed();
 	}
 

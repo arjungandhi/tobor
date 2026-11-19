@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PendingApproval, WatchValue, WorkerSummary } from "../../src/api/types.js";
 import type { App } from "../../src/tui/app.js";
 import { ConversationReplica } from "../../src/tui/replica.js";
+import { initialView, streamingOps } from "./scenario.js";
 import { SessionScreen, type SessionTarget } from "../../src/tui/screens/session.js";
 
 const emptyView = { conversation: 1, docs: {}, entries: [] } as unknown as WatchValue;
@@ -158,5 +159,33 @@ describe("wrong-session side effects", () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(unstage).not.toHaveBeenCalled();
 		expect(scrolled).not.toHaveBeenCalled();
+	});
+});
+
+describe("ops frame coalescing", () => {
+	it("rebuilds once for several ops frames in the same tick, and applies them all", async () => {
+		const { screen, internals, replica } = setup();
+		internals.onFrame(replica, { t: "snapshot", value: initialView() });
+		const rebuild = vi.spyOn(screen, "rebuild");
+		const [first, second, third] = streamingOps();
+		internals.onFrame(replica, { t: "ops", ops: first });
+		internals.onFrame(replica, { t: "ops", ops: second });
+		internals.onFrame(replica, { t: "ops", ops: third });
+		expect(rebuild).not.toHaveBeenCalled();
+		await Promise.resolve();
+		expect(rebuild).toHaveBeenCalledTimes(1);
+		const live = replica.blocks().filter((b) => b.kind === "assistant" && b.streaming);
+		expect(live.length).toBeGreaterThan(0);
+	});
+
+	it("a closed session drops its pending rebuild", async () => {
+		const { screen, internals, replica } = setup();
+		internals.onFrame(replica, { t: "snapshot", value: initialView() });
+		const rebuild = vi.spyOn(screen, "rebuild");
+		internals.onFrame(replica, { t: "ops", ops: streamingOps()[0] as never });
+		screen.close();
+		rebuild.mockClear();
+		await Promise.resolve();
+		expect(rebuild).not.toHaveBeenCalled();
 	});
 });
