@@ -36,7 +36,7 @@ import type {
 import { ApiClient, ReconnectingSocket, type SocketState } from "./client.js";
 import { commandRows } from "./command-rows.js";
 import { Band } from "./components/band.js";
-import { type Progress, type Severity, StatusLine, StatusSlot } from "./components/status.js";
+import { FLASH_MS, type Progress, type Severity, severityOf, StatusLine, StatusSlot } from "./components/status.js";
 import {
 	baseUrl,
 	type ClientConfig,
@@ -931,11 +931,11 @@ export class App {
 
 	/**
 	 * Show a modal and focus it; `cancel` dismisses it as Esc would (used by `Ctrl+C`). Returns a function that closes it.
-	 * Every modal is full-screen: a 100% × 100% overlay at the top-left; a Panel stretches to the terminal height, so
-	 * every viewport cell is painted and no transcript shows through.
+	 * Every modal is a full-width overlay at the top-left; a Panel stretches to the terminal height minus the status row,
+	 * so no transcript shows through and the status line (messages, progress) stays visible and is never painted over.
 	 */
 	openModal(component: Component, cancel: () => void): () => void {
-		if (component instanceof Panel) component.stretch(() => this.terminal.rows);
+		if (component instanceof Panel) component.stretch(() => Math.max(1, this.terminal.rows - 1));
 		const handle = this.tui.showOverlay(component, { width: "100%", maxHeight: "100%", anchor: "top-left" });
 		this.modals.push({ handle, cancel });
 		this.tui.requestRender();
@@ -947,9 +947,9 @@ export class App {
 		};
 	}
 
-	/** Rows available for a list inside a full-screen modal with `extra` other lines (border, footer and the gap above the list take 4). */
+	/** Rows available for a list inside a modal with `extra` other lines (border, footer, the gap above the list and the status row take 5). */
 	listRows(extra: number): number {
-		return Math.max(3, this.terminal.rows - 4 - extra);
+		return Math.max(3, this.terminal.rows - 5 - extra);
 	}
 
 	/**

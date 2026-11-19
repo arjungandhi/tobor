@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DraftStore, RequestIds, routeSubmit } from "../../src/tui/screens/session.js";
+import { DraftStore, RequestIds, routeSubmit, shorten } from "../../src/tui/screens/session.js";
 
 describe("routeSubmit", () => {
 	it("sends plain text as a prompt and slash text as a command when no question is pending", () => {
@@ -77,5 +77,18 @@ describe("DraftStore", () => {
 		expect(drafts.take("1")).toBeUndefined();
 		expect(drafts.take("2")).toBe("b");
 		expect(drafts.take("3")).toBe("c");
+	});
+});
+
+describe("shorten", () => {
+	it("keeps short text and cuts long text by code points with an ellipsis", () => {
+		expect(shorten("hello", 10)).toBe("hello");
+		expect(shorten("abcdef", 4)).toBe("abc…");
+	});
+
+	it("never splits a surrogate pair", () => {
+		const text = "😀".repeat(10);
+		expect(shorten(text, 5)).toBe(`${"😀".repeat(4)}…`);
+		expect(shorten("😀".repeat(5), 5)).toBe("😀".repeat(5));
 	});
 });

@@ -104,6 +104,12 @@ export class DraftStore {
 	}
 }
 
+/** `text` cut to at most `max` code points (never inside a surrogate pair), ending in `…` when cut. */
+export function shorten(text: string, max: number): string {
+	const points = Array.from(text);
+	return points.length > max ? `${points.slice(0, max - 1).join("")}…` : text;
+}
+
 /** What the Session view shows: a session, or a worker conversation opened from its director. */
 export type SessionTarget = {
 	id: SessionId;
@@ -205,7 +211,7 @@ export class SessionScreen {
 	/** Stash the composer text under the open session (or `""`) and clear the composer, ahead of switching away. */
 	private stashDraft(): void {
 		this.drafts.stash(this.target ? String(this.target.id) : "", this.composer.getExpandedText());
-		this.composer.setText("");
+		this.composer.clearAll();
 	}
 
 	/** Put back the draft of whatever is now open (or of no session), unless the composer already has text. */
@@ -297,7 +303,7 @@ export class SessionScreen {
 				: this.target.worker
 				? `worker ${this.target.worker.name} · read-only · Esc back`
 				: this.state() === "running" || this.state() === "waiting"
-					? "running · Enter steers · Ctrl+Q queues a follow-up · Esc clears / aborts when empty"
+					? "running · Enter steers · Ctrl+Q queues · Esc clears / aborts"
 					: "prompt · Enter sends · Shift+Enter newline · / commands";
 		this.composer.setLabel(label);
 	}
@@ -378,6 +384,11 @@ export class SessionScreen {
 		if (text === "" && staged.length === 0) return;
 		if (text !== "") this.composer.addToHistory(text);
 		const question = this.questions.current();
+		if (question && text === "") {
+			// Enter on staged images with a question open would steer them as an empty message and leave the question unanswered.
+			this.app.flash("answer the question first — images stay staged");
+			return;
+		}
 		const route = routeSubmit(text, question !== undefined);
 		if (route === "attach") {
 			const arg = /^\/attach(?:\s+(.*))?$/s.exec(text)?.[1] ?? "";
@@ -434,7 +445,7 @@ export class SessionScreen {
 				this.app.flash(`answered ${answers.length} fields`);
 			} else {
 				await this.app.api().answer(question.callId, { answer, conversationId: question.conversationId });
-				this.app.flash(`answered: ${answer.length > 40 ? `${answer.slice(0, 39)}…` : answer}`);
+				this.app.flash(`answered: ${shorten(answer, 40)}`);
 			}
 		} finally {
 			this.answering = false;
@@ -464,7 +475,7 @@ export class SessionScreen {
 
 	/** Ctrl+V: stage the system clipboard's image; with no image, paste its text into the composer. */
 	async pasteClipboard(): Promise<void> {
-		if (this.composer.stagedImages().length >= MAX_ATTACHMENTS) throw new Error(`at most ${MAX_ATTACHMENTS} attachments per message · /attach clear`);
+		// The limit only matters for an image: a full list must not refuse a text paste (checked again once the clipboard is read).
 		const { available, image: data, text, wlPasteMissing } = await readClipboard();
 		if (data) {
 			const image = clipboardImage(data, this.pasteSeq + 1);
