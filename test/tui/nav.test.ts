@@ -102,6 +102,25 @@ describe("navigate", () => {
 		expect(seen).toEqual([undefined]);
 	});
 
+	it("initial puts the cursor on that row for the first show only", async () => {
+		const views = [rows("a", "b", "c"), rows("z", "a", "b", "c")];
+		const { app, shows } = host([choose(2), () => undefined]);
+		await navigate(app, { view: () => ({ title: "t", items: views.shift() ?? [], initial: "c" }), key, onPick: () => "refresh" });
+		expect(shows[0]?.selected).toBe(2);
+		// the cursor followed the row picked ("c", by key), not `initial`
+		expect(shows[1]).toEqual({ ids: ["z", "a", "b", "c"], selected: 3 });
+	});
+
+	it("initial is not reapplied after an empty-list key press, and an unknown initial means the first row", async () => {
+		const { app, shows } = host([() => ({ key: "n" }), () => undefined]);
+		await navigate(app, { view: () => ({ title: "t", items: rows("a", "b"), initial: "b", keys: ["n"] }), key, onPick: () => "stay" });
+		expect(shows[0]?.selected).toBe(1);
+		expect(shows[1]?.selected).toBeUndefined();
+		const gone = host([() => undefined]);
+		await navigate(gone.app, { view: () => ({ title: "t", items: rows("a", "b"), initial: "nope" }), key, onPick: () => "stay" });
+		expect(gone.shows[0]?.selected).toBe(0);
+	});
+
 	it("propagates an error of the first view()", async () => {
 		const { app } = host([]);
 		await expect(

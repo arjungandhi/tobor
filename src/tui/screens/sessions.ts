@@ -36,13 +36,13 @@ export async function showSessions(app: App, archived = false): Promise<void> {
 async function sessionsTier(app: App, archived: boolean): Promise<"up" | "done"> {
 	const client = app.api();
 	let opened = false;
-	let first = true;
 	await navigate<SessionSummary>(app, {
 		view: async () => {
 			const sessions = archived ? (await client.sessions(true)).filter((s) => s.archived) : await client.sessions();
 			if (!archived) app.sessions = sessions;
 			const now = app.now();
-			const view = {
+			const open = app.session.target?.id ?? app.lastSessionId();
+			return {
 				title: archived ? "archived sessions" : `sessions on ${app.workspace?.name ?? ""}`,
 				items: sessions.map((s) => ({
 					value: s,
@@ -53,12 +53,8 @@ async function sessionsTier(app: App, archived: boolean): Promise<"up" | "done">
 				emptyHint: `n new · s schedules · h ${archived ? "active" : "archived"} · ←/Esc back`,
 				keys: ["n", "r", "a", "d", "s", "h", "left", "right"],
 				commands: true,
+				initial: open === undefined ? undefined : String(open),
 			};
-			if (!first) return view;
-			first = false;
-			// Only the first show: afterwards `navigate` keeps the cursor on the row by id. (`selected` is passed through to `app.pick`.)
-			const open = app.session.target?.id ?? app.lastSessionId();
-			return Object.assign(view, { selected: Math.max(0, sessions.findIndex((s) => s.id === open)) });
 		},
 		key: (s) => String(s.id),
 		onPick: async (picked) => {

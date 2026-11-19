@@ -68,14 +68,13 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 		await Promise.race([Promise.all(pending), new Promise((resolve) => setTimeout(resolve, PROBE_HEAD_START_MS))]);
 		pending = [];
 	};
-	let first = true;
 	await navigate<string>(app, {
 		view: async () => {
 			const config = app.config;
 			startProbes(false);
 			await headStart();
 			const current = app.workspace;
-			const view = {
+			return {
 				title: mode === "switch" ? "workspaces" : "manage workspaces",
 				items: config.workspaces.map((ws) => {
 					const result = probes.get(ws.name);
@@ -89,12 +88,8 @@ export async function showWorkspaces(app: App, mode: "switch" | "manage" = "swit
 				hint: mode === "switch" ? "→/Enter sessions · a add · e edit · d forget · g refresh · ←/Esc back" : "Enter/e edit · a add · d forget · g refresh · Esc back",
 				emptyHint: "a add · Esc back",
 				keys: mode === "switch" ? ["a", "e", "d", "g", "left", "right"] : ["a", "e", "d", "g"],
+				initial: focus ?? current?.name ?? config.default,
 			};
-			if (!first) return view;
-			first = false;
-			// Only the first show: afterwards `navigate` keeps the cursor on the row by name. (`selected` is passed through to `app.pick`.)
-			const preselect = focus ?? current?.name ?? config.default;
-			return Object.assign(view, { selected: Math.max(0, config.workspaces.findIndex((w) => w.name === preselect)) });
 		},
 		key: (name) => name,
 		onPick: async (picked) => {

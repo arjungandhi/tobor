@@ -19,11 +19,13 @@ export type NavView<T> = {
 	emptyHint?: string;
 	keys?: string[];
 	commands?: boolean;
+	/** Key (via `key()`) of the row the cursor starts on. Honoured for the first show only; afterwards the cursor follows the row it was on. An unknown key means the first row. */
+	initial?: string;
 };
 
 /** The two `App` members `navigate` needs (so it can be tested with a fake). */
 export type NavHost = {
-	pick<T>(title: string, items: PickItem<T>[], options?: Omit<NavView<T>, "title" | "items"> & { selected?: number }): Promise<Picked<T> | undefined>;
+	pick<T>(title: string, items: PickItem<T>[], options?: Omit<NavView<T>, "title" | "items" | "initial"> & { selected?: number }): Promise<Picked<T> | undefined>;
 	flash(message: string): void;
 };
 
@@ -41,6 +43,7 @@ export type NavHost = {
  *   (not void, so a forgotten refresh is a compile error). Esc on the list resolves `"close"` without calling it.
  * - A handler that throws (or rejects) never leaves the list: the error is flashed as `✗ message` and the list re-shows at
  *   the same row, as `"stay"` (rows are not reloaded, since the failed action may not have changed anything).
+ * - `view().initial` names the row the cursor starts on (first show only; later shows keep the cursor by `key`).
  * - The filter text is not retained across re-shows; only the cursor is.
  * - Resolves `"close"` or `"up"`; it never rejects unless the first `view()` throws.
  *
@@ -59,6 +62,7 @@ export async function navigate<T>(
 	/** Row identity and position of the cursor at the last pick (undefined before the first one). */
 	let cursor: { key: string; index: number } | undefined;
 	let reload = false;
+	let firstShow = true;
 	for (;;) {
 		if (reload) {
 			reload = false;
@@ -68,8 +72,14 @@ export async function navigate<T>(
 				app.flash(errorText(err)); // keep showing the previous rows
 			}
 		}
-		const { title, items, ...options } = view;
-		const picked = await app.pick(title, items, { ...options, ...(cursor ? { selected: cursorIndex(items, cursor, screen.key) } : {}) });
+		const { title, items, initial, ...options } = view;
+		const selected = cursor
+			? cursorIndex(items, cursor, screen.key)
+			: firstShow && initial !== undefined
+				? Math.max(0, items.findIndex((item) => screen.key(item.value) === initial))
+				: undefined;
+		firstShow = false;
+		const picked = await app.pick(title, items, { ...options, ...(selected !== undefined ? { selected } : {}) });
 		if (!picked) return "close";
 		if (picked.value !== undefined) {
 			const index = items.findIndex((item) => item.value === picked.value);
