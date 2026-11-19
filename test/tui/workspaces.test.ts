@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,7 +19,9 @@ import {
 	setDefault,
 	setLastSession,
 	setPref,
+	loadState,
 	statePath,
+	takeStateError,
 } from "../../src/tui/workspaces.js";
 
 const dirs: string[] = [];
@@ -212,6 +214,72 @@ describe("state.json", () => {
 		migrateLegacy(env);
 		expect(lastSession(statePath(env), "personal", { host: "127.0.0.1", port: 7879 })).toBe(9);
 		expect(lastSession(statePath(env), "personal", { host: "elsewhere", port: 7879 })).toBeUndefined();
+	});
+});
+
+describe("state.json corruption", () => {
+	function statePathWith(content: string): string {
+		const path = statePath({ XDG_STATE_HOME: join(tempDir(), "state") });
+		mkdirSync(join(path, ".."), { recursive: true });
+		writeFileSync(path, content);
+		takeStateError();
+		return path;
+	}
+
+	it("backs up a corrupt file, reports it once and starts empty", () => {
+		const path = statePathWith("{ not json");
+		expect(loadState(path)).toEqual({ workspaces: {} });
+		expect(readFileSync(`${path}.corrupt`, "utf8")).toBe("{ not json");
+		const err = takeStateError();
+		expect(err).toContain("corrupt");
+		expect(err).toContain(`${path}.corrupt`);
+		expect(takeStateError()).toBeUndefined();
+		// Later loads do not re-report or re-back-up.
+		expect(loadState(path)).toEqual({ workspaces: {} });
+		expect(takeStateError()).toBeUndefined();
+	});
+
+	it("a write after corruption cannot clobber the backup", () => {
+		const path = statePathWith("garbage");
+		setLastSession(path, "work", 3);
+		expect(readFileSync(`${path}.corrupt`, "utf8")).toBe("garbage");
+		expect(lastSession(path, "work")).toBe(3);
+	});
+
+	it("keeps earlier backups, adding a timestamp suffix", () => {
+		const path = statePathWith("first");
+		loadState(path);
+		writeFileSync(path, "second");
+		loadState(path);
+		const files = readdirSync(join(path, "..")).filter((f) => f.startsWith("state.json.corrupt"));
+		expect(files).toHaveLength(2);
+		expect(readFileSync(`${path}.corrupt`, "utf8")).toBe("first");
+		const stamped = files.find((f) => f !== "state.json.corrupt")!;
+		expect(readFileSync(join(path, "..", stamped), "utf8")).toBe("second");
+	});
+
+	it("treats valid JSON of the wrong shape as corrupt", () => {
+		for (const bad of ["[]", "null", '{"workspaces":[]}', '"x"']) {
+			const path = statePathWith(bad);
+			expect(loadState(path)).toEqual({ workspaces: {} });
+			expect(readFileSync(`${path}.corrupt`, "utf8")).toBe(bad);
+			expect(takeStateError()).toContain("corrupt");
+		}
+	});
+
+	it("a missing file is empty with no error", () => {
+		const path = statePath({ XDG_STATE_HOME: join(tempDir(), "state") });
+		takeStateError();
+		expect(loadState(path)).toEqual({ workspaces: {} });
+		expect(takeStateError()).toBeUndefined();
+	});
+
+	it("saves atomically: no temp file left behind, content replaced whole", () => {
+		const path = statePathWith(JSON.stringify({ workspaces: { a: { last_session: 1 } } }));
+		setLastSession(path, "b", 2);
+		expect(readdirSync(join(path, ".."))).toEqual(["state.json"]);
+		expect(JSON.parse(readFileSync(path, "utf8")).workspaces).toEqual({ a: { last_session: 1 }, b: { last_session: 2 } });
+		expect(statSync(path).mode & 0o777).toBe(0o600);
 	});
 });
 
