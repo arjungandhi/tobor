@@ -111,7 +111,8 @@ export class SessionScreen {
 	/** Watch a conversation: snapshot then ops; reconnects resume from the replica's window. */
 	open(target: SessionTarget): void {
 		const cur = this.target;
-		if (cur && this.replica && cur.id === target.id && cur.worker?.name === target.worker?.name) {
+		// A watch that ended (`end` frame) is gone while target/replica stay: that falls through to a full reopen.
+		if (cur && this.replica && this.watch && cur.id === target.id && cur.worker?.name === target.worker?.name) {
 			// Re-opening what is already open: keep the transcript, scroll and expanded state; just refresh.
 			void this.refreshDetail();
 			void this.refreshWorkers();
