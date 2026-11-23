@@ -1,4 +1,4 @@
-import type { ToolRegistration } from "@earendil-works/pi-durable";
+import type { ToolPark, ToolRegistration } from "@earendil-works/pi-durable";
 import type { WriteToolInput } from "@earendil-works/pi-durable/tools";
 import type { Schema } from "@earendil-works/pi-schema";
 import type { FileToolDeps } from "./filetools.js";
@@ -27,6 +27,11 @@ export function stripCopiedPrefixes(content: string): string {
 	return rows.map((row) => row.replace(/^\d+:/, "")).join("\n");
 }
 
+/** Whether `execute()` returned a park rather than a result (pi-durable keeps its own guard private). */
+function isPark(returned: Awaited<ReturnType<WriteTool["execute"]>>): returned is ToolPark {
+	return returned.sleep !== undefined || returned.wait !== undefined;
+}
+
 /** Wrap pi-durable's `write` (keeping its file queue): strip copied prefixes, record `seen = "all"`, prepend `[path#TAG]`. */
 export function writeWrapper(deps: FileToolDeps): (tool: WriteTool) => WriteTool {
 	return (tool) => ({
@@ -35,7 +40,7 @@ export function writeWrapper(deps: FileToolDeps): (tool: WriteTool) => WriteTool
 			const content = stripCopiedPrefixes(args.content);
 			const result = await tool.execute({ ...args, content }, api, ctx);
 			const env = api.env;
-			if (result.isError || !env) return result;
+			if (isPark(result) || result.isError || !env) return result;
 			const abs = await env.absolutePath(args.path, ctx);
 			const file = decodeText(new TextEncoder().encode(content));
 			if (!abs.ok || !file) return result;

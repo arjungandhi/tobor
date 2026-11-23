@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { ConversationId, ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
+import type { ConversationId, ToolExecutionApi, ToolExecutionResult, ToolPark } from "@earendil-works/pi-durable";
 import { err, type ExecutionEnv, FileError, type FileInfo, ok, type Result } from "@earendil-works/pi-durable/env";
 import { createWriteTool } from "@earendil-works/pi-durable/tools";
 import { basename, dirname, join, resolve } from "node:path";
@@ -123,7 +123,12 @@ export interface Reply {
 	diagnostics: readonly { code?: string }[];
 }
 
-const toReply = (r: ToolExecutionResult): Reply => ({
+const toReply = (r: ToolExecutionResult | ToolPark): Reply => {
+	if (r.sleep !== undefined || r.wait !== undefined) throw new Error("unexpected tool park");
+	return reply(r as ToolExecutionResult);
+};
+
+const reply = (r: ToolExecutionResult): Reply => ({
 	text: (r.output ?? []).map((c) => (c.type === "text" ? c.text : `<${c.type}>`)).join("\n"),
 	isError: r.isError === true,
 	details: (r.details ?? {}) as Record<string, unknown>,

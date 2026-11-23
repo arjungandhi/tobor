@@ -6,7 +6,7 @@ import { c, markdownTheme, thinkingStyle } from "../theme.js";
 export class AssistantBlock implements Component {
 	private readonly markdown: Markdown;
 	private text: string;
-	private cache: { source: string[]; lines: string[] } | undefined;
+	private cache: { source: readonly string[]; lines: string[] } | undefined;
 
 	constructor(
 		text: string,

@@ -359,7 +359,8 @@ export async function showSettings(app: App): Promise<void> {
 		},
 		invalidate: () => list.invalidate(),
 		render: (width) => {
-			const lines = list.render(width);
+			// Copy: pi-tui 1.6 returns a cached readonly array that must not be mutated in place.
+			const lines = [...list.render(width)];
 			if (lines.some((line) => line.includes(HINT_MARK))) lines.splice(-2, 2);
 			return lines;
 		},
